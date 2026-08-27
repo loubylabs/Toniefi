@@ -24,8 +24,14 @@ const state = {
   slug: null,      // the collection steps 3-5 act on
   collection: null,
   tonies: [],
+  openTonie: null, // "<householdId>:<tonieId>" of the expanded Tonie, if any
   pollTimer: null,
 };
+
+/* One chapter write at a time. A whole-list PUT does not compose with
+   another one, and a blur that fires `change` followed by the click that
+   caused the blur hands out two of them. */
+let savingTonie = false;
 
 /* ------------------------------------------------------------- plumbing */
 
@@ -389,7 +395,7 @@ function renderTrackList(data) {
       <button class="btn danger small" data-del="${esc(t.name)}">Remove</button>
     </li>`).join("");
 
-  wireDragAndDrop(host);
+  wireDragAndDrop(host, () => persistOrder(host));
 
   host.querySelectorAll("input.tt").forEach((input) => {
     input.addEventListener("change", async () => {
@@ -414,14 +420,14 @@ function renderTrackList(data) {
   });
 }
 
-function wireDragAndDrop(host) {
+function wireDragAndDrop(host, onDrop) {
   let dragged = null;
   host.querySelectorAll("li").forEach((li) => {
     li.addEventListener("dragstart", () => { dragged = li; li.classList.add("dragging"); });
     li.addEventListener("dragend", () => {
       li.classList.remove("dragging");
       host.querySelectorAll("li").forEach((x) => x.classList.remove("over"));
-      persistOrder(host);
+      onDrop();
     });
     li.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -575,6 +581,8 @@ $("#refreshLibrary").addEventListener("click", async () => {
 
 /* -------------------------------------------------------------- tonies */
 
+const tonieKey = (t) => `${t.householdId}:${t.id}`;
+
 async function loadTonies() {
   const host = $("#tonieList");
   busy(host, "Loading...");
@@ -588,14 +596,137 @@ async function loadTonies() {
     host.innerHTML = `<div class="empty">No Creative Tonies found on this account.</div>`;
     return;
   }
-  host.innerHTML = state.tonies.map((t) => `
-    <div class="item" style="cursor:default">
-      <div class="row tight">
-        <span class="title grow">${esc(t.name || "Creative Tonie")}</span>
-        <span class="badge">${t.chapter_count} chapters - ${esc(t.time_free)} free</span>
+  renderTonies();
+}
+
+function renderTonies() {
+  const host = $("#tonieList");
+  host.innerHTML = state.tonies.map((t) => {
+    const open = state.openTonie === tonieKey(t);
+    return `
+    <div class="item tonie" data-key="${esc(tonieKey(t))}">
+      <div class="tonie-head">
+        <div class="row tight">
+          <span class="caret">${open ? "&#9662;" : "&#9656;"}</span>
+          <span class="title grow">${esc(t.name || "Creative Tonie")}</span>
+          <span class="badge">${t.chapter_count} chapters - ${esc(t.time_free)} free</span>
+        </div>
+        <div class="meta">${esc(t.householdName || "")}</div>
       </div>
-      <div class="meta">${esc(t.householdName || "")}</div>
-    </div>`).join("");
+      ${open ? tonieBody(t) : ""}
+    </div>`;
+  }).join("");
+
+  wireTonies();
+}
+
+function tonieBody(t) {
+  if (!t.chapters.length) {
+    return `<div class="tonie-body"><div class="empty">Nothing on this Tonie yet.</div></div>`;
+  }
+  return `
+    <div class="tonie-body">
+      <div class="row tight" style="margin-bottom:8px">
+        <span class="grow"></span>
+        <button class="btn danger small" data-clear="1">Clear all</button>
+      </div>
+      <ul class="tracklist">
+        ${t.chapters.map((c, i) => `
+          <li draggable="true" data-id="${esc(c.id)}">
+            <span class="grip">&#8942;&#8942;</span>
+            <span class="idx">${i + 1}</span>
+            <input class="tt" value="${esc(c.title)}">
+            ${c.transcoding ? `<span class="badge warn">processing</span>` : ""}
+            <span class="dur">${esc(c.duration)}</span>
+            <button class="btn danger small" data-del="${esc(c.id)}">Remove</button>
+          </li>`).join("")}
+      </ul>
+    </div>`;
+}
+
+function wireTonies() {
+  const host = $("#tonieList");
+
+  /* The toggle lives on .tonie-head, and .tonie-body is its SIBLING rather
+     than its child, so a click on a title input, a grip or a button cannot
+     bubble into the toggle and collapse the row mid-edit. */
+  host.querySelectorAll(".tonie-head").forEach((head) => {
+    head.addEventListener("click", () => {
+      const key = head.closest(".tonie").dataset.key;
+      state.openTonie = state.openTonie === key ? null : key;
+      renderTonies();
+    });
+  });
+
+  const open = state.tonies.find((t) => tonieKey(t) === state.openTonie);
+  if (!open) return;
+  const list = host.querySelector(".tonie-body ul.tracklist");
+  if (!list) return;
+
+  const fromDom = () => Array.from(list.querySelectorAll("li")).map((li) => ({
+    id: li.dataset.id,
+    title: li.querySelector("input.tt").value,
+  }));
+
+  wireDragAndDrop(list, () => saveChapters(open, fromDom()));
+
+  list.querySelectorAll("input.tt").forEach((input) => {
+    input.addEventListener("change", () => saveChapters(open, fromDom()));
+  });
+
+  list.querySelectorAll("[data-del]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const chapter = open.chapters.find((c) => c.id === btn.dataset.del);
+      if (!window.confirm(
+        `Remove "${chapter.title}" from "${open.name || "this Tonie"}"?\n\n` +
+        `This cannot be undone. Your library on disk is not touched.`)) return;
+      saveChapters(open, fromDom().filter((c) => c.id !== btn.dataset.del));
+    });
+  });
+
+  const clear = host.querySelector("[data-clear]");
+  if (clear) {
+    clear.addEventListener("click", () => {
+      if (!window.confirm(
+        `Clear all ${open.chapters.length} chapters from ` +
+        `"${open.name || "this Tonie"}"?\n\n` +
+        `This cannot be undone. Your library on disk is not touched.`)) return;
+      saveChapters(open, []);
+    });
+  }
+}
+
+async function saveChapters(tonie, chapters) {
+  if (savingTonie) return; // a save is already in flight; the panel is disabled
+  savingTonie = true;
+
+  const body = $("#tonieList .tonie-body");
+  if (body) {
+    body.classList.add("saving");
+    body.querySelectorAll("input, button").forEach((el) => { el.disabled = true; });
+  }
+
+  const url = `/api/tonies/${encodeURIComponent(tonie.householdId)}`
+    + `/${encodeURIComponent(tonie.id)}/chapters`;
+  try {
+    const updated = await api(url, {
+      method: "PUT",
+      body: JSON.stringify({
+        base_ids: tonie.chapters.map((c) => c.id),
+        chapters,
+      }),
+    });
+    // No fix-ups here. The response is already a full /api/tonies entry,
+    // household fields included, because the server stamps them.
+    state.tonies = state.tonies.map((t) => (tonieKey(t) === tonieKey(tonie) ? updated : t));
+    renderTonies();
+    toast("Saved to the Tonie", "good");
+  } catch (err) {
+    toast(err.message, "bad");
+    await loadTonies(); // redraw from the truth, never from what we hoped
+  } finally {
+    savingTonie = false;
+  }
 }
 
 $("#refreshTonies").addEventListener("click", loadTonies);

@@ -298,3 +298,13 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
 }
 .opt label { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
 .opt .note { margin-top: 6px; }
+
+.item.tonie { cursor: default; }
+.tonie-head { cursor: pointer; }
+.tonie-head .caret { color: var(--muted); font-size: 12px; width: 14px; }
+.tonie-body {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.tonie-body.saving { pointer-events: none; opacity: .5; }
