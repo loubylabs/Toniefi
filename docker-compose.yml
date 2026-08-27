@@ -1,3 +1,7 @@
+# One file for every host. It runs as-is on Docker Desktop (macOS, Windows) and
+# on plain Linux, keeping the library beside the repo. Unraid, or anyone who
+# wants the library elsewhere, overrides the paths in a .env file next to this
+# one. See .env.example.
 services:
   toniefi:
     build: .
@@ -5,25 +9,38 @@ services:
     container_name: toniefi
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Change TONIEFI_PORT if 8080 is already taken on your machine.
+      - "${TONIEFI_PORT:-8080}:8080"
+    # Root by default, which is what Docker Desktop wants: it maps ownership
+    # back to you on the host. On plain Linux, set TONIEFI_UID/TONIEFI_GID to
+    # your own ids, or everything the container writes into the library lands
+    # owned by root and you cannot delete it without sudo.
+    user: "${TONIEFI_UID:-0}:${TONIEFI_GID:-0}"
     environment:
       # Leave these unset to enter credentials in the UI instead.
       TONIES_USERNAME: "${TONIES_USERNAME:-}"
       TONIES_PASSWORD: "${TONIES_PASSWORD:-}"
       # A Creative Tonie holds 90 minutes; headroom guards against rounding.
-      TONIE_LIMIT_SECONDS: "5400"
-      TONIE_HEADROOM_SECONDS: "30"
-      WORKER_THREADS: "2"
-      # Match these to your Unraid share's owner so files aren't root-owned.
-      PUID: "99"
-      PGID: "100"
+      TONIE_LIMIT_SECONDS: "${TONIE_LIMIT_SECONDS:-5400}"
+      TONIE_HEADROOM_SECONDS: "${TONIE_HEADROOM_SECONDS:-30}"
+      WORKER_THREADS: "${WORKER_THREADS:-2}"
+      # Which YouTube clients yt-dlp may ask as. See the README when a link
+      # reports itself unavailable despite playing in a browser.
+      YTDLP_PLAYER_CLIENTS: "${YTDLP_PLAYER_CLIENTS:-default,android}"
     volumes:
-      # Your audiobook library on the array.
-      - /mnt/user/media/toniefi:/library
+      # Your audiobooks. Relative paths resolve against this file's directory.
+      - ${TONIEFI_LIBRARY:-./library}:/library
       # Job history and saved settings.
-      - /mnt/user/appdata/toniefi:/data
-      # Scratch space for downloads and transcodes -- cache, not the array.
+      - ${TONIEFI_DATA:-./data}:/data
+      # Scratch space for downloads and transcodes: cache, not permanent.
+      # It is RAM, so keep it below what the Docker VM actually has.
       - type: tmpfs
         target: /work
         tmpfs:
-          size: 4g
+          size: ${TONIEFI_WORK_SIZE:-2g}
+          # World-writable and sticky, like /tmp. Without this the tmpfs comes
+          # up owned by root at 0755, and every ingest fails with a permission
+          # error the moment TONIEFI_UID puts the app on a non-root account.
+          # Keep the leading zero: a bare 1777 is read as decimal and lands on
+          # a useless 0o3361.
+          mode: 01777

@@ -20,12 +20,45 @@ Paste  ->  Extract  ->  Forge  ->  Review  ->  Send
 
 ## Quick start
 
-You need `ffmpeg` and Python 3.10 or newer. Everything else installs itself.
+Two ways to run it on your own machine. Both put the library in `library/`
+beside the repo, so you can switch between them and see the same collections.
+
+### With Docker
+
+Nothing to install but Docker itself. Docker Desktop is enough on macOS and
+Windows; on Linux, Docker Engine.
+
+```bash
+git clone https://github.com/loubylabs/Toniefi.git
+cd Toniefi
+docker compose up -d --build
+```
+
+Open <http://127.0.0.1:8080>. `docker compose logs -f` follows it, and
+`docker compose down` stops it.
+
+Nothing needs configuring first. `docker-compose.yml` defaults every path and
+port, and creates `library/` and `data/` for you on first run. Copy
+`.env.example` to `.env` only when you want to change something.
+
+**On Linux, set your user id first**, or the container writes root-owned files
+into your library and you need `sudo` to delete them:
+
+```bash
+printf 'TONIEFI_UID=%s\nTONIEFI_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
+docker compose up -d --build
+```
+
+Docker Desktop maps ownership back to you already, so macOS and Windows can
+skip that.
+
+### Without Docker
+
+Faster to restart while you are changing code. You need `ffmpeg` and Python
+3.10 or newer; everything else installs itself.
 
 ```bash
 brew install ffmpeg                 # macOS. Debian: sudo apt install ffmpeg
-git clone https://github.com/loubylabs/Toniefi.git
-cd Toniefi
 ./run-local.sh
 ```
 
@@ -36,8 +69,13 @@ app. On each run it creates `.venv/` if missing, installs and **upgrades** the
 dependencies, creates `library/`, `data/` and `work/`, and starts the server.
 Override the port with `PORT=9000 ./run-local.sh`.
 
+### Either way
+
 You do not need a myTonies account to try it. Without one, steps 1 to 4 still
 work and you end up with tidy MP3s in `library/`; only **Send** needs to log in.
+
+Run only one of the two at a time. They both want port 8080, and two writers
+on one SQLite job database is asking for trouble.
 
 ## Feeding it a YouTube link
 
@@ -142,12 +180,23 @@ which matters more for an audiobook than squeezing out the last three minutes.
 
 ## Running it on Unraid
 
+Same compose file as everywhere else. Only the `.env` differs, because the
+library belongs on the array rather than beside the repo.
+
 1. Copy the repo to the server, e.g. `/mnt/user/appdata/toniefi/src`.
-2. Point the `/library` volume in `docker-compose.yml` at the share where you
-   want audiobooks to live.
+2. Write a `.env` next to `docker-compose.yml`:
+
+   ```bash
+   TONIEFI_LIBRARY=/mnt/user/media/toniefi
+   TONIEFI_DATA=/mnt/user/appdata/toniefi
+   TONIEFI_UID=99
+   TONIEFI_GID=100
+   ```
+
+   The two ids are Unraid's `nobody:users`, which is what its shares expect.
 3. `docker compose up -d --build`
 4. Open `http://<tower>:8080` and add your myTonies account on Settings, or
-   set `TONIES_USERNAME` / `TONIES_PASSWORD` in a `.env` first, which keeps
+   put `TONIES_USERNAME` / `TONIES_PASSWORD` in that same `.env`, which keeps
    them out of the database.
 
 Reaching it from off the network is a Tailscale job, not this app's. It binds
@@ -155,8 +204,23 @@ plain HTTP on 8080 with no authentication of its own. Do not port-forward it.
 
 ## Configuration
 
-Every setting is an environment variable. `run-local.sh` fills in the three
-paths for you; only override them if you want the library somewhere else.
+### Compose settings
+
+These shape the container and only apply to the Docker path. Put them in a
+`.env` beside `docker-compose.yml`; see `.env.example`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TONIEFI_LIBRARY` | `./library` | Host path for the audiobooks |
+| `TONIEFI_DATA` | `./data` | Host path for the job database and settings |
+| `TONIEFI_PORT` | `8080` | Host port to publish on |
+| `TONIEFI_UID` / `TONIEFI_GID` | `0` (root) | Who the container runs as. Set to your own ids on Linux |
+| `TONIEFI_WORK_SIZE` | `2g` | Scratch space. It is RAM, so stay under what the Docker VM has |
+
+### Application settings
+
+These are read by the app itself, so they work on both paths. `run-local.sh`
+fills in the three directories for you.
 
 | Variable | Default | Purpose |
 |---|---|---|
