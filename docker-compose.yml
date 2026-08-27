@@ -1,0 +1,29 @@
+services:
+  toniefi:
+    build: .
+    image: toniefi:latest
+    container_name: toniefi
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Leave these unset to enter credentials in the UI instead.
+      TONIES_USERNAME: "${TONIES_USERNAME:-}"
+      TONIES_PASSWORD: "${TONIES_PASSWORD:-}"
+      # A Creative Tonie holds 90 minutes; headroom guards against rounding.
+      TONIE_LIMIT_SECONDS: "5400"
+      TONIE_HEADROOM_SECONDS: "30"
+      WORKER_THREADS: "2"
+      # Match these to your Unraid share's owner so files aren't root-owned.
+      PUID: "99"
+      PGID: "100"
+    volumes:
+      # Your audiobook library on the array.
+      - /mnt/user/media/toniefi:/library
+      # Job history and saved settings.
+      - /mnt/user/appdata/toniefi:/data
+      # Scratch space for downloads and transcodes -- cache, not the array.
+      - type: tmpfs
+        target: /work
+        tmpfs:
+          size: 4g

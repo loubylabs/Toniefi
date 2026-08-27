@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toniefi</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Toniefi</h1>
+    <span class="sub" id="statusLine">&hellip;</span>
+    <span class="spacer"></span>
+    <span class="sub" id="credLine"></span>
+  </header>
+
+  <nav>
+    <button data-tab="new" class="active">New</button>
+    <button data-tab="library">Library</button>
+    <button data-tab="tonies">My Tonies</button>
+    <button data-tab="jobs">Activity</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+
+  <main>
+    <!-- ======================================================= wizard -->
+    <section id="tab-new">
+      <div class="stepper" id="stepper"></div>
+
+      <!-- ------------------------------------------------ 1. paste -->
+      <div class="step-panel" data-step="1">
+        <div class="card">
+          <h3>Paste a link</h3>
+          <p class="note" style="margin-bottom:12px">
+            A video or playlist URL. Toniefi reads it first and tells you what it
+            found &mdash; nothing downloads until you say so.
+          </p>
+          <div class="row">
+            <input class="grow" id="pasteUrl" placeholder="https://&hellip;">
+            <button class="btn" id="probeBtn">Look it up</button>
+          </div>
+          <div id="probeResult" style="margin-top:16px"></div>
+        </div>
+
+        <div class="card">
+          <h3>Or start from LibriVox</h3>
+          <p class="note" style="margin-bottom:12px">
+            Volunteer-read public domain books. Free to download, free to put on a
+            Tonie, no rights question to think about.
+          </p>
+          <div class="row">
+            <input class="grow" id="lvQuery" placeholder="Search by title, e.g. Peter Pan">
+            <button class="btn ghost" id="lvSearch">Search</button>
+          </div>
+          <div class="list" id="lvResults" style="margin-top:14px"></div>
+        </div>
+
+        <div class="card">
+          <h3>Or upload files</h3>
+          <div class="row">
+            <input type="file" id="fileInput" accept="audio/*" multiple class="grow">
+            <input id="uploadTitle" placeholder="Collection name">
+            <button class="btn ghost" id="uploadGo">Upload</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---------------------------------------------- 2. extract -->
+      <div class="step-panel" data-step="2" hidden>
+        <div class="card">
+          <h3>Extract</h3>
+          <div id="extractSummary"></div>
+          <div class="opt-grid" style="margin-top:14px">
+            <div class="opt">
+              <label><input type="checkbox" id="optChapters" checked> Split at chapter markers</label>
+              <p class="note">When the upload has chapters, each becomes its own track
+                instead of one long blob.</p>
+            </div>
+            <div class="opt">
+              <label style="font-weight:500">Collection name</label>
+              <input id="extractTitle" style="width:100%;margin-top:8px">
+            </div>
+          </div>
+          <div id="extractProgress"></div>
+          <div class="wizard-actions">
+            <button class="btn ghost" data-goto="1">Back</button>
+            <span class="spacer"></span>
+            <button class="btn" id="extractGo">Pull the audio</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------ 3. forge -->
+      <div class="step-panel" data-step="3" hidden>
+        <div class="card">
+          <h3>Forge</h3>
+          <p class="note" style="margin-bottom:14px">
+            Clean-up passes. Each one is optional and they run in this order:
+            trim, level, retitle, split.
+          </p>
+          <div class="opt-grid">
+            <div class="opt">
+              <label><input type="checkbox" id="optNormalize" checked> Level the volume</label>
+              <p class="note">Loudness-matches every track to &minus;16 LUFS so chapter 3
+                isn't twice as loud as chapter 2.</p>
+            </div>
+            <div class="opt">
+              <label><input type="checkbox" id="optClean" checked> Clean up titles</label>
+              <p class="note">Strips "FULL AUDIOBOOK", "[HD]", channel-name prefixes and
+                similar upload cruft.</p>
+            </div>
+            <div class="opt">
+              <label><input type="checkbox" id="optSplit" checked> Split anything too long</label>
+              <p class="note">Breaks tracks over the Tonie limit into even parts.</p>
+            </div>
+            <div class="opt">
+              <label style="font-weight:500">Trim every track</label>
+              <div class="row tight" style="margin-top:8px">
+                <input id="optTrimHead" type="number" min="0" value="0" style="width:74px">
+                <span class="note">s off the front</span>
+              </div>
+              <div class="row tight" style="margin-top:6px">
+                <input id="optTrimTail" type="number" min="0" value="0" style="width:74px">
+                <span class="note">s off the end</span>
+              </div>
+            </div>
+          </div>
+          <div id="forgeProgress"></div>
+          <div class="wizard-actions">
+            <button class="btn ghost" data-goto="2">Back</button>
+            <span class="spacer"></span>
+            <button class="btn ghost" id="forgeSkip">Skip</button>
+            <button class="btn" id="forgeGo">Forge it</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ----------------------------------------------- 4. review -->
+      <div class="step-panel" data-step="4" hidden>
+        <div class="card">
+          <div class="preview">
+            <img id="reviewCover" alt="" hidden>
+            <div class="body">
+              <div class="row">
+                <input class="grow" id="reviewTitle">
+                <button class="btn ghost small" id="reviewRename">Rename</button>
+              </div>
+              <div class="facts" id="reviewFacts"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>How it lands on Tonies</h3>
+          <div id="reviewPlan"></div>
+        </div>
+
+        <div class="card">
+          <h3>Chapters</h3>
+          <p class="note" style="margin-bottom:12px">Drag to reorder. Click a title to edit it.</p>
+          <ul class="tracklist" id="reviewTracks"></ul>
+          <div class="wizard-actions">
+            <button class="btn ghost" data-goto="3">Back to Forge</button>
+            <span class="spacer"></span>
+            <button class="btn" data-goto="5">Send to a Tonie</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------- 5. send -->
+      <div class="step-panel" data-step="5" hidden>
+        <div class="card">
+          <h3>Send to a Tonie</h3>
+          <div id="sendPlan"></div>
+          <div id="sendProgress"></div>
+          <div class="wizard-actions">
+            <button class="btn ghost" data-goto="4">Back</button>
+            <span class="spacer"></span>
+            <button class="btn ghost small" id="sendRefresh">Refresh Tonies</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================== library -->
+    <section id="tab-library" hidden>
+      <div class="row" style="margin-bottom:14px">
+        <h2 class="grow">Collections</h2>
+        <button class="btn ghost small" id="refreshLibrary">Rescan</button>
+      </div>
+      <div class="list" id="collections"></div>
+    </section>
+
+    <!-- ======================================================= tonies -->
+    <section id="tab-tonies" hidden>
+      <div class="row" style="margin-bottom:14px">
+        <h2 class="grow">Creative Tonies</h2>
+        <button class="btn ghost small" id="refreshTonies">Refresh</button>
+      </div>
+      <div class="list" id="tonieList"></div>
+    </section>
+
+    <!-- ========================================================= jobs -->
+    <section id="tab-jobs" hidden>
+      <h2>Activity</h2>
+      <p class="hint">Extraction, forging and uploads run in the background.</p>
+      <div class="list" id="jobList"></div>
+    </section>
+
+    <!-- ===================================================== settings -->
+    <section id="tab-settings" hidden>
+      <div class="card">
+        <h3>myTonies account</h3>
+        <p class="note" style="margin-bottom:12px">
+          Used to sign in to the Tonie Cloud so Toniefi can list your Creative Tonies
+          and upload to them. Setting <code>TONIES_USERNAME</code> and
+          <code>TONIES_PASSWORD</code> as environment variables is preferable &mdash;
+          credentials saved here are stored in plain text in the app's SQLite database.
+          Two-factor accounts will not work with this login method.
+        </p>
+        <div class="row">
+          <input class="grow" id="credUser" placeholder="Email" autocomplete="username">
+          <input class="grow" id="credPass" type="password" placeholder="Password" autocomplete="current-password">
+          <button class="btn" id="credSave">Save</button>
+          <button class="btn ghost" id="credTest">Test login</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>About</h3>
+        <p class="note">
+          Toniefi talks to the private API behind the myTonies web app. It is not an
+          official or supported interface and this project is not affiliated with
+          tonies / Boxine. If an upload starts failing, the API most likely changed &mdash;
+          your library on disk is untouched either way, and the myTonies web app
+          remains a working fallback.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
