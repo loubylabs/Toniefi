@@ -514,8 +514,13 @@ async function renderSend() {
 
 $("#sendRefresh").addEventListener("click", async () => {
   /* A failed refresh must not leave the old free-space figures looking
-     confirmed. Marking them stale sends the next prompt back to the server. */
-  if (await loadTonies()) return toast("Refreshed", "good");
+     confirmed. Marking them stale sends the next prompt back to the server.
+     A superseded refresh says nothing at all: a newer click is still running
+     and it owns the report, so a second "Refreshed" here would be claiming
+     credit for figures this click never installed. */
+  const loaded = await loadTonies();
+  if (loaded === null) return;
+  if (loaded === true) return toast("Refreshed", "good");
   state.toniesStale = true;
   toast("Could not refresh from myTonies. The figures below may be out of date.", "bad");
 });
@@ -528,7 +533,15 @@ async function choosePushTarget(groupIndex) {
      behind one token-guarded writer, so a slow refresh can never land after
      a save and undo it. */
   if (!state.tonies.length || state.toniesStale) {
-    if (!(await loadTonies())) return toast(toniesError || "Could not reach myTonies.", "bad");
+    const loaded = await loadTonies();
+    if (loaded === false) return toast(toniesError || "Could not reach myTonies.", "bad");
+    /* Superseded, so this call refreshed nothing. If the figures are still
+       flagged stale, a finished push has already moved them and no load has
+       replaced them yet: offering them would prompt the user to choose a
+       Tonie on free space that is known to be wrong. */
+    if (loaded === null && state.toniesStale) {
+      return toast("Still refreshing from myTonies. Try again in a moment.", "bad");
+    }
   }
   if (!state.tonies.length) return toast("No Creative Tonies on this account", "bad");
 
@@ -616,6 +629,16 @@ $("#refreshLibrary").addEventListener("click", async () => {
 
 const tonieKey = (t) => `${t.householdId}:${t.id}`;
 
+/* Three outcomes, and a caller has to tell them apart:
+     true   this call installed its result, so the figures are fresh
+     false  this call genuinely failed, and toniesError says how
+     null   this call was superseded and applied nothing at all
+   `null` is not success. A superseded load leaves whatever the newer load or
+   the save put in state.tonies, which may be older than what this caller
+   asked for, so reporting `true` would put a green tick under stale figures.
+   It is not failure either: the newer writer is the one that reports. So the
+   caller says nothing, and every check on the result is `===`, because null
+   is falsy and a truthiness test would read it as a failure. */
 async function loadTonies() {
   const host = $("#tonieList");
   const token = ++toniesLoadToken;
@@ -624,13 +647,13 @@ async function loadTonies() {
   try {
     fetched = await api("/api/tonies");
   } catch (err) {
-    if (token !== toniesLoadToken) return true; // superseded; its owner reports
+    if (token !== toniesLoadToken) return null; // superseded; its owner reports
     toniesError = err.message;
     host.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
     return false;
   }
   // A load that started before a save must not overwrite the save's result.
-  if (token !== toniesLoadToken) return true;
+  if (token !== toniesLoadToken) return null;
   toniesError = "";
   state.tonies = fetched;
   state.toniesStale = false;
@@ -712,6 +735,21 @@ function wireTonies() {
       const key = head.closest(".tonie").dataset.key;
       state.openTonie = state.openTonie === key ? null : key;
       renderTonies();
+      /* renderTonies rewrites the whole list, so the header that was just
+         activated is gone and focus falls back to the body: a keyboard user
+         could open a row and then not close it. Put focus on the replacement
+         header instead. This lives here and not in `clickable`, because the
+         other two panels navigate away and must not steal focus. A mouse
+         click lands here too, harmlessly: the ring is :focus-visible, which
+         a pointer-only interaction does not paint. (It does persist if the
+         user was on the keyboard a moment ago, which is the browser's own
+         rule for a scripted focus, and what a real button does too.) The
+         key is
+         "<householdId>:<tonieId>", and a colon is a selector operator, hence
+         CSS.escape. */
+      const replacement = host.querySelector(
+        `.tonie[data-key="${CSS.escape(key)}"] .tonie-head`);
+      if (replacement) replacement.focus();
     });
   });
 
