@@ -1,9 +1,9 @@
 """Two Creative Tonie operations, sharing one Tonie Cloud client.
 
-Send takes a group of library tracks, uploads them and appends a chapter
-per track. The chapter layer rewrites the chapter list a Tonie already has
-(rename, reorder, remove, clear); it uploads nothing and never reads the
-library on disk.
+The chapter layer rewrites the chapter list a Tonie already has (rename,
+reorder, remove, clear); it uploads nothing and never reads the library on
+disk. Send takes a group of library tracks, uploads them and appends a
+chapter per track.
 """
 from __future__ import annotations
 

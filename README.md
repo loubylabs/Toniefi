@@ -31,7 +31,9 @@ reloads rather than overwriting their change.
 Renaming trims surrounding spaces and caps a title at 128 characters, which is
 what the Tonie Cloud accepts. That only ever applies to a title you actually
 changed. Chapters you did not touch are written back exactly as they were, so
-reordering one chapter never rewrites the names of the others.
+reordering one chapter never rewrites the names of the others. Emptying a name
+does nothing: the chapter keeps the title it already has, so a slipped
+keystroke cannot leave a chapter unnamed.
 
 ## Quick start
 

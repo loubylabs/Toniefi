@@ -1,7 +1,9 @@
 """TonieCloud.get_tonie: the guard against a 2xx with no body.
 
 _request returns None for an empty response (app/tonies.py:114-115), and a
-non-dict there would surface as an AttributeError, a 500, at every caller.
+non-dict there would surface as an AttributeError: a 500 at the chapter-write
+caller, and a failed job with an ugly message at the send caller, which runs
+in a worker that catches Exception rather than in an HTTP request.
 get_tonie is the one place that guard belongs, so it is tested directly here,
 against a monkeypatched _request rather than the network.
 """
