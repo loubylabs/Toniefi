@@ -353,19 +353,22 @@ def _matrix_cases() -> list[tuple[str, frozenset, float, float]]:
     """Build (scenario, kept_ids, present, surviving) rows.
 
     `present` is chosen per scenario, not as one fixed number reused
-    everywhere: it must never sit below `surviving`, because no return value
-    could then satisfy both "never below what survives" and "never rises
-    above the Cloud's own figure" at once, and that is a contradiction in the
-    inputs, not a bug to catch. Anchoring the low end of the tier list on
-    `surviving` itself keeps every case satisfiable while still covering
-    secondsPresent above, equal to, and below the reported total wherever
-    that comparison is meaningful for the scenario.
+    everywhere, and the tier list now reaches below `surviving` as well as
+    above it. A gate finding showed that `present < surviving` is a real,
+    reachable case, not a contradiction in the inputs: the code floors the
+    result at `surviving` regardless of how low `present` sits, so the two
+    corrected invariants below both still hold there. Anchoring one tier at
+    `max(0.0, surviving - margin)` keeps every case satisfiable while
+    covering secondsPresent above, equal to, and below both `surviving` and
+    the reported total wherever those comparisons are meaningful for the
+    scenario.
     """
     cases = []
     for name, kept_ids in _SCENARIOS:
         surviving = sum(secs for cid, secs in _POOL.items() if cid in kept_ids)
         margin = 20.0
         presents = sorted({
+            max(0.0, surviving - margin),
             surviving,
             max(surviving, _REPORTED_TOTAL - margin),
             _REPORTED_TOTAL,
@@ -390,8 +393,12 @@ def test_seconds_present_invariants_hold_across_the_matrix(
     numbers. Three point-case fixes in this same block were each correct and
     incomplete, so this asserts the rules themselves across a matrix of
     drop counts, a dropped chapter reporting 0, a surviving chapter
-    reporting 0, and secondsPresent on both sides of the reported total,
-    rather than pinning one more set of hand-picked outputs.
+    reporting 0, and secondsPresent above, equal to, and below both
+    `surviving` and the reported total, rather than pinning one more set of
+    hand-picked outputs.
+
+    A gate finding corrected invariant 2 and surfaced a genuine conflict
+    between invariants 1 and 4: see the assertions below for both.
     """
     chapters = [
         {"id": cid, "title": cid, "file": f"f-{cid}", "seconds": secs,
@@ -409,17 +416,50 @@ def test_seconds_present_invariants_hold_across_the_matrix(
     assert resp.status_code == 200
     result = resp.json()["seconds_present"]
 
-    # 1. Never below what survives.
-    assert result >= surviving
-    # 2. Never rises: this endpoint only ever removes chapters, so
-    # occupancy cannot grow past what the Cloud reported going in.
-    assert result <= present
+    # 1. Never below what survives, except in the no-drop case, where
+    # invariant 4 governs instead: present can sit below surviving there,
+    # and the figure must still pass through untouched.
+    if kept_ids != frozenset(_POOL):
+        assert result >= surviving
+    # 2. Never rises, unless the survivors themselves report more. The
+    # figure feeds a fits-or-not decision, so understating occupancy is
+    # safe and overstating it is not: when the two totals disagree, the
+    # higher one wins, which is why the cap is max(present, surviving)
+    # rather than present alone.
+    assert result <= max(present, surviving)
     # 3. Clearing is exact.
     if not kept_ids:
         assert result == 0.0
-    # 4. A save that drops nothing does not move the figure.
+    # 4. A save that drops nothing does not move the figure, even when
+    # present sits below what the survivors report: no audio moved, and
+    # inventing a better figure is not this endpoint's business. This is
+    # the one case where invariant 1 does not hold, and this rule wins.
     if kept_ids == frozenset(_POOL):
         assert result == present
+
+
+def test_seconds_present_the_survivors_can_outrank_the_cloud(client, monkeypatch):
+    """The diff gate's own scenario, named on its own rather than folded
+    only into the matrix: secondsPresent=80, chapters a=60 b=70 c=0 d=40,
+    remove b. The survivors a, c, d report 100 between them, above the
+    Cloud's 80, and the higher figure wins: understating free space is
+    safe, overstating it invites a push that will not fit.
+    """
+    chapters = [
+        {"id": cid, "title": cid, "file": f"f-{cid}", "seconds": secs,
+         "transcoding": secs == 0.0}
+        for cid, secs in _POOL.items()
+    ]
+    stub = StubCloud(chapters)
+    stub.seconds_present_override = 80.0
+    monkeypatch.setattr(push, "client_from_settings", lambda: stub)
+
+    base = [{"id": cid, "title": cid} for cid in _POOL]
+    requested = [{"id": cid, "title": cid} for cid in _POOL if cid != "b"]
+
+    resp = client.put(URL, json={"base": base, "chapters": requested})
+    assert resp.status_code == 200
+    assert resp.json()["seconds_present"] == 100.0
 
 
 def test_a_failed_response_build_writes_nothing(client, cloud, monkeypatch):
