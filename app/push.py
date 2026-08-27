@@ -63,6 +63,37 @@ def merge_chapters(
     return out
 
 
+def describe_tonie(tonie: dict[str, Any]) -> dict[str, Any]:
+    """Decorate one Creative Tonie for the front end.
+
+    Both GET /api/tonies and the chapter write return this shape, so the
+    browser can swap a single Tonie in place after a save.
+    """
+    raw = tonie.get("chapters") or []
+    tonie["chapters"] = [
+        {
+            "id": chapter.get("id"),
+            "title": chapter.get("title") or "",
+            "seconds": float(chapter.get("seconds") or 0),
+            # A chapter mid-transcode reports no length. Blank beats "0m 00s".
+            "duration": (
+                audio.human_duration(float(chapter.get("seconds") or 0))
+                if float(chapter.get("seconds") or 0) else ""
+            ),
+            "transcoding": bool(chapter.get("transcoding")),
+        }
+        for chapter in raw
+    ]
+    tonie["chapter_count"] = len(raw)
+
+    seconds = float(tonie.get("secondsPresent") or 0)
+    tonie["seconds_present"] = seconds
+    tonie["time_used"] = audio.human_duration(seconds)
+    tonie["seconds_free"] = max(0, config.TONIE_LIMIT_SECONDS - seconds)
+    tonie["time_free"] = audio.human_duration(tonie["seconds_free"])
+    return tonie
+
+
 def client_from_settings() -> tonies.TonieCloud:
     """Env vars win; the UI-stored credentials are the fallback."""
     from . import db

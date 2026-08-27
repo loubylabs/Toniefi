@@ -265,14 +265,7 @@ def list_tonies() -> list[dict[str, Any]]:
         client.close()
     except tonies.TonieCloudError as exc:
         raise fail(400, str(exc)) from exc
-    for tonie in result:
-        tonie["chapter_count"] = len(tonie.get("chapters", []))
-        seconds = float(tonie.get("secondsPresent") or 0)
-        tonie["seconds_present"] = seconds
-        tonie["time_used"] = audio.human_duration(seconds)
-        tonie["seconds_free"] = max(0, config.TONIE_LIMIT_SECONDS - seconds)
-        tonie["time_free"] = audio.human_duration(tonie["seconds_free"])
-    return result
+    return [push.describe_tonie(tonie) for tonie in result]
 
 
 @app.post("/api/push")
