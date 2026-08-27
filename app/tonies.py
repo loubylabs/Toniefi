@@ -140,7 +140,10 @@ class TonieCloud:
     def get_tonie(self, household_id: str, tonie_id: str) -> dict[str, Any]:
         tonie = self._request("GET", f"/households/{household_id}/creativetonies/{tonie_id}")
         # A 2xx with an empty body is not a Tonie. Returning None here would
-        # surface as an AttributeError and a 500 at every caller.
+        # surface as an AttributeError: a 500 at the chapter-write caller, a
+        # failed job with an ugly message at the send caller, which runs in
+        # a worker that catches Exception (app/jobs.py) rather than an HTTP
+        # request.
         if not isinstance(tonie, dict):
             raise TonieCloudError(f"Tonie Cloud returned no Tonie for {tonie_id}.")
         return tonie

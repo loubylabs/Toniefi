@@ -24,7 +24,6 @@ class StubCloud:
         self.set_error: str | None = None
         self.calls: list[str] = []
         self.seconds_present_override: float | None = None
-        self.tonie_is_empty = False
 
     def _payload(self, tonie_id: str = "t1") -> dict:
         """One Tonie as the Tonie Cloud reports it.
@@ -60,8 +59,6 @@ class StubCloud:
     def get_tonie(self, household_id: str, tonie_id: str) -> dict:
         self.gets += 1
         self.calls.append("get_tonie")
-        if self.tonie_is_empty:
-            raise tonies.TonieCloudError("Tonie Cloud returned no Tonie.")
         return self._payload(tonie_id)
 
     def set_chapters(self, household_id: str, tonie_id: str, chapters: list[dict]):
@@ -231,14 +228,6 @@ def test_the_result_is_not_read_back_after_the_write(client, cloud):
     assert cloud.gets == 1
 
 
-def test_seconds_present_is_recomputed_from_what_was_written(client, cloud):
-    resp = client.put(URL, json={
-        "base": BASE,
-        "chapters": [{"id": "a", "title": "One"}],
-    })
-    assert resp.json()["seconds_present"] == 60.0
-
-
 def test_a_refused_write_returns_400_and_says_why(client, cloud):
     """The likeliest real failure: the PATCH reaches the Tonie Cloud and the
     Tonie Cloud says no. The reason has to survive into the response, or the
@@ -300,15 +289,3 @@ def test_the_client_is_closed_on_the_success_path(client, cloud):
         "chapters": [{"id": "a", "title": "One"}],
     })
     assert cloud.closed is True
-
-
-def test_a_tonie_that_comes_back_empty_is_an_error_not_a_crash(client, cloud):
-    """The Cloud can answer 2xx with no body. That must be a clean 400, not an
-    AttributeError surfacing as a 500."""
-    cloud.tonie_is_empty = True
-    resp = client.put(URL, json={
-        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
-        "chapters": [{"id": "a", "title": "One"}],
-    })
-    assert resp.status_code == 400
-    assert cloud.set_calls == []

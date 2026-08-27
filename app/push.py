@@ -171,7 +171,11 @@ def set_tonie_chapters(
         # Clearing is exact. Otherwise keep the Cloud's own figure and subtract
         # only what was removed: recomputing from the remaining chapters would
         # drop whatever the Cloud counts for a chapter that is still
-        # transcoding and so reports no length of its own.
+        # transcoding and so reports no length of its own. The mirror case is
+        # cosmetic, not a bug: removing a chapter that is itself still
+        # transcoding subtracts its own seconds, 0, even though the Cloud's
+        # secondsPresent may already count it, so this figure can read a
+        # little high until the next GET /api/tonies corrects it.
         tonie["secondsPresent"] = 0 if not merged else max(0, present - dropped)
         tonie["householdId"] = household_id
         tonie["householdName"] = household_name
