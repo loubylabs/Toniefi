@@ -28,6 +28,7 @@ const state = {
   openTonie: null, // "<householdId>:<tonieId>" of the expanded Tonie, if any
   pollTimer: null,
 };
+let toniesLoadToken = 0; // bumped by any load or save that supersedes an older one
 
 /* One chapter write at a time. A whole-list PUT does not compose with
    another one, and a blur that fires `change` followed by the click that
@@ -497,8 +498,11 @@ async function renderSend() {
 }
 
 $("#sendRefresh").addEventListener("click", async () => {
-  await loadTonies(); // fetches unconditionally, and clears the stale flag
-  toast("Refreshed", "good");
+  /* A failed refresh must not leave the old free-space figures looking
+     confirmed. Marking them stale sends the next prompt back to the server. */
+  if (await loadTonies()) return toast("Refreshed", "good");
+  state.toniesStale = true;
+  toast("Could not refresh from myTonies. The figures below may be out of date.", "bad");
 });
 
 async function choosePushTarget(groupIndex) {
@@ -546,6 +550,7 @@ async function choosePushTarget(groupIndex) {
            the list, which renderTonies would draw as a Tonie-less account. */
         state.toniesStale = true;
       },
+      onFail: () => { state.toniesStale = true; },
     });
   } catch (err) {
     busy(host, "");
@@ -597,19 +602,26 @@ const tonieKey = (t) => `${t.householdId}:${t.id}`;
 
 async function loadTonies() {
   const host = $("#tonieList");
+  const token = ++toniesLoadToken;
   busy(host, "Loading...");
+  let fetched;
   try {
-    state.tonies = await api("/api/tonies");
-    state.toniesStale = false;
+    fetched = await api("/api/tonies");
   } catch (err) {
+    if (token !== toniesLoadToken) return true; // superseded; its owner reports
     host.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
-    return;
+    return false;
   }
+  // A load that started before a save must not overwrite the save's result.
+  if (token !== toniesLoadToken) return true;
+  state.tonies = fetched;
+  state.toniesStale = false;
   if (!state.tonies.length) {
     host.innerHTML = `<div class="empty">No Creative Tonies found on this account.</div>`;
-    return;
+    return true;
   }
   renderTonies();
+  return true;
 }
 
 function renderTonies() {
@@ -706,9 +718,10 @@ function wireTonies() {
 
   list.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const chapter = open.chapters.find((c) => c.id === btn.dataset.del);
+      const row = btn.closest("li");
+      const name = row.querySelector("input.tt").value || "this chapter";
       if (!window.confirm(
-        `Remove "${chapter.title}" from "${open.name || "this Tonie"}"?\n\n` +
+        `Remove "${name}" from "${open.name || "this Tonie"}"?\n\n` +
         `This cannot be undone. Your library on disk is not touched.`)) return;
       saveChapters(open, fromDom().filter((c) => c.id !== btn.dataset.del));
     });
@@ -766,6 +779,7 @@ async function saveChapters(tonie, chapters) {
   }
   // No fix-ups here. The response is already a full /api/tonies entry,
   // household fields included, because the server stamps them.
+  toniesLoadToken++; // any load still in flight is older than this write
   state.tonies = state.tonies.map((t) => (tonieKey(t) === tonieKey(tonie) ? updated : t));
   renderTonies();
   toast("Saved to the Tonie", "good");
