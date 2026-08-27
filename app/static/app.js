@@ -74,6 +74,20 @@ function busy(host, message) {
     : "";
 }
 
+/* A div with a click handler is invisible to the keyboard. These three sites
+   are styled as panels rather than buttons, so they stay divs and borrow a
+   button's semantics instead. */
+function clickable(el, onActivate) {
+  el.setAttribute("role", "button");
+  el.setAttribute("tabindex", "0");
+  el.addEventListener("click", onActivate);
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault(); // Space would scroll the page
+    onActivate(e);
+  });
+}
+
 /* ----------------------------------------------------------------- tabs */
 
 $$("nav button").forEach((btn) => {
@@ -108,7 +122,7 @@ function renderStepper() {
 
   $("#stepper").querySelectorAll("[data-step-to]").forEach((el) => {
     const target = Number(el.dataset.stepTo);
-    if (target <= state.reached) el.addEventListener("click", () => goto(target));
+    if (target <= state.reached) clickable(el, () => goto(target));
   });
 }
 
@@ -581,7 +595,7 @@ async function loadCollections() {
   }).join("");
 
   host.querySelectorAll(".item").forEach((el) => {
-    el.addEventListener("click", () => {
+    clickable(el, () => {
       state.slug = el.dataset.slug;
       state.reached = 5;
       goto(4);
@@ -694,7 +708,7 @@ function wireTonies() {
      than its child, so a click on a title input, a grip or a button cannot
      bubble into the toggle and collapse the row mid-edit. */
   host.querySelectorAll(".tonie-head").forEach((head) => {
-    head.addEventListener("click", () => {
+    clickable(head, () => {
       const key = head.closest(".tonie").dataset.key;
       state.openTonie = state.openTonie === key ? null : key;
       renderTonies();
