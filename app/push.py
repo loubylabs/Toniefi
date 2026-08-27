@@ -148,7 +148,8 @@ def set_tonie_chapters(
     client = client_from_settings()
     try:
         tonie = client.get_tonie(household_id, tonie_id)
-        merged = merge_chapters(tonie.get("chapters") or [], base, requested)
+        current = tonie.get("chapters") or []
+        merged = merge_chapters(current, base, requested)
 
         # get_tonie does not carry the household, but a GET /api/tonies entry
         # does, and this response has to match it for every caller, not just
@@ -160,23 +161,30 @@ def set_tonie_chapters(
                 break
 
         kept = {c.get("id") for c in merged}
-        dropped = sum(
-            float(c.get("seconds") or 0)
-            for c in (tonie.get("chapters") or [])
-            if c.get("id") not in kept
-        )
         present = float(tonie.get("secondsPresent") or 0)
+        reported = sum(float(c.get("seconds") or 0) for c in current)
+        surviving = sum(
+            float(c.get("seconds") or 0) for c in current if c.get("id") in kept
+        )
+        dropped = [c for c in current if c.get("id") not in kept]
+
+        # The Cloud's secondsPresent already counts audio that a chapter still
+        # transcoding does not yet report a length for, so the two figures
+        # differ by a remainder that belongs to those unfinished chapters.
+        # Attribute that remainder to the survivors only when every dropped
+        # chapter reported a real duration; if any dropped chapter reported
+        # none, it may have owned part of the remainder and there is no way to
+        # split it, so drop the remainder rather than bill it to chapters that
+        # did not earn it. Erring low is the safer direction: this figure feeds
+        # the free-space readout, and overstating what a Tonie holds is what
+        # sends a user's next push into a refusal.
+        unaccounted = max(0.0, present - reported)
+        if any(not float(c.get("seconds") or 0) for c in dropped):
+            unaccounted = 0.0
 
         tonie["chapters"] = merged
-        # Clearing is exact. Otherwise keep the Cloud's own figure and subtract
-        # only what was removed: recomputing from the remaining chapters would
-        # drop whatever the Cloud counts for a chapter that is still
-        # transcoding and so reports no length of its own. The mirror case is
-        # cosmetic, not a bug: removing a chapter that is itself still
-        # transcoding subtracts its own seconds, 0, even though the Cloud's
-        # secondsPresent may already count it, so this figure can read a
-        # little high until the next GET /api/tonies corrects it.
-        tonie["secondsPresent"] = 0 if not merged else max(0, present - dropped)
+        # Clearing is exact: nothing survives, so there is nothing to carry.
+        tonie["secondsPresent"] = 0.0 if not merged else surviving + unaccounted
         tonie["householdId"] = household_id
         tonie["householdName"] = household_name
 

@@ -273,12 +273,53 @@ def test_removing_a_chapter_subtracts_only_that_chapter(client, cloud):
 
 
 def test_clearing_sets_seconds_present_to_zero(client, cloud):
+    """The Cloud reports 200 while the chapters only account for 130, so the
+    general rule would hand the 70 remainder to somebody. Nothing survives a
+    clear, so the answer is exactly 0 and not the remainder."""
     cloud.seconds_present_override = 200.0
     resp = client.put(URL, json={
         "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
         "chapters": [],
     })
     assert resp.json()["seconds_present"] == 0
+
+
+@pytest.mark.parametrize(
+    "b_seconds, requested, expected",
+    [
+        # Nothing is dropped, so every second the Cloud counts still belongs
+        # to a chapter that is staying. The figure must not move.
+        (0.0, [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}], 130.0),
+        # `b` reported its full 70s, so the Cloud's total is fully accounted
+        # for and removing it leaves exactly `a`.
+        (70.0, [{"id": "a", "title": "One"}], 60.0),
+        # `b` is mid-transcode and reported nothing, yet the Cloud already
+        # counts 70s nobody claims. That remainder is probably `b`'s, and it
+        # cannot be split, so it leaves with `b` rather than inflating `a`.
+        (0.0, [{"id": "a", "title": "One"}], 60.0),
+        # Nothing survives, so there is nothing to attribute anything to.
+        (0.0, [], 0.0),
+    ],
+    ids=["rename-moves-nothing", "drop-a-finished-chapter",
+         "drop-a-transcoding-chapter", "clear-everything"],
+)
+def test_seconds_present_attributes_the_clouds_remainder(
+    client, cloud, b_seconds, requested, expected
+):
+    """The Cloud's secondsPresent and the chapters' own reported seconds
+    disagree while anything is still transcoding, and the difference belongs
+    to the chapters that have not finished. Removing a transcoding chapter
+    used to subtract its reported 0 from the Cloud's total and hand back a
+    figure counting audio that had just left the Tonie.
+    """
+    cloud.chapters[1]["seconds"] = b_seconds
+    cloud.chapters[1]["transcoding"] = b_seconds == 0.0
+    cloud.seconds_present_override = 130.0
+
+    resp = client.put(URL, json={"base": BASE, "chapters": requested})
+
+    assert resp.status_code == 200
+    assert resp.json()["seconds_present"] == expected
 
 
 def test_a_failed_response_build_writes_nothing(client, cloud, monkeypatch):
@@ -325,3 +366,35 @@ def test_the_client_is_closed_on_the_success_path(client, cloud):
         "chapters": [{"id": "a", "title": "One"}],
     })
     assert cloud.closed is True
+
+
+def test_an_empty_cloud_response_is_a_400_and_writes_nothing(client, monkeypatch):
+    """The guard and the route have to compose, so neither half is stubbed.
+
+    A real TonieCloud is installed with only its _request monkeypatched, so
+    the empty body raises the real TonieCloudError from the real get_tonie
+    and the route maps the real exception type. Proving the guard against the
+    client alone would still pass if a refactor lifted get_tonie out of the
+    route's TonieCloudError handler, and an empty Cloud response would then
+    be a 500 rather than a clean 400.
+    """
+    calls: list[tuple[str, str]] = []
+
+    def record(method: str, path: str, **kwargs: object) -> None:
+        calls.append((method, path))
+        return None  # what _request returns for a 2xx with no body
+
+    cloud = tonies.TonieCloud("user", "pass")
+    monkeypatch.setattr(cloud, "_request", record)
+    monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
+
+    resp = client.put(URL, json={
+        "base": BASE,
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+
+    assert resp.status_code == 400
+    # The whole call log, not just the absence of a PATCH: the read happened,
+    # it failed the guard, and nothing was attempted afterwards.
+    assert calls == [("GET", "/households/h1/creativetonies/t1")]
+    assert not any(method == "PATCH" for method, _ in calls)
