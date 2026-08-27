@@ -70,20 +70,20 @@ def describe_tonie(tonie: dict[str, Any]) -> dict[str, Any]:
     browser can swap a single Tonie in place after a save.
     """
     raw = tonie.get("chapters") or []
-    tonie["chapters"] = [
-        {
-            "id": chapter.get("id"),
-            "title": chapter.get("title") or "",
-            "seconds": float(chapter.get("seconds") or 0),
-            # A chapter mid-transcode reports no length. Blank beats "0m 00s".
-            "duration": (
-                audio.human_duration(float(chapter.get("seconds") or 0))
-                if float(chapter.get("seconds") or 0) else ""
-            ),
-            "transcoding": bool(chapter.get("transcoding")),
-        }
-        for chapter in raw
-    ]
+    chapters = []
+    for chapter in raw:
+        seconds = float(chapter.get("seconds") or 0)
+        chapters.append(
+            {
+                "id": chapter.get("id"),
+                "title": chapter.get("title") or "",
+                "seconds": seconds,
+                # A chapter mid-transcode reports no length. Blank beats "0m 00s".
+                "duration": audio.human_duration(seconds) if seconds else "",
+                "transcoding": bool(chapter.get("transcoding")),
+            }
+        )
+    tonie["chapters"] = chapters
     tonie["chapter_count"] = len(raw)
 
     seconds = float(tonie.get("secondsPresent") or 0)
