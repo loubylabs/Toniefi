@@ -8,7 +8,15 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main, push, tonies
+from app import audio, main, push, tonies
+
+
+class ResponseBuildFailed(Exception):
+    """Raised from a monkeypatched collaborator to fail the response build.
+
+    Deliberately not a type the route handles, so the test below cannot pass
+    by accident through a handler that turns it into a status code.
+    """
 
 
 class StubCloud:
@@ -271,6 +279,34 @@ def test_clearing_sets_seconds_present_to_zero(client, cloud):
         "chapters": [],
     })
     assert resp.json()["seconds_present"] == 0
+
+
+def test_a_failed_response_build_writes_nothing(client, cloud, monkeypatch):
+    """If the answer cannot be built, the Tonie is left alone.
+
+    The contract, not the call order: everything that can raise has to run
+    before set_chapters. A PATCH that landed and was then reported as a
+    failure sends the user back to retry into a 409, on a Tonie the Tonie
+    Cloud has already changed and cannot undo.
+    """
+    def boom(_seconds: float) -> str:
+        raise ResponseBuildFailed("no duration for you")
+
+    # human_duration is a collaborator of describe_tonie, not the thing whose
+    # position is being pinned, so this fails the response build without
+    # stubbing out the response build itself.
+    monkeypatch.setattr(audio, "human_duration", boom)
+
+    with pytest.raises(ResponseBuildFailed):
+        client.put(URL, json={
+            "base": BASE,
+            "chapters": [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}],
+        })
+
+    assert cloud.set_calls == []
+    assert cloud.chapters[0]["title"] == "One"
+    # The finally has to hold even on a path nothing handles.
+    assert cloud.closed is True
 
 
 def test_households_is_resolved_before_the_write(client, cloud):
