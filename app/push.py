@@ -94,6 +94,44 @@ def describe_tonie(tonie: dict[str, Any]) -> dict[str, Any]:
     return tonie
 
 
+def set_tonie_chapters(
+    household_id: str,
+    tonie_id: str,
+    base_ids: list[str],
+    requested: list[dict],
+) -> dict[str, Any]:
+    """Rewrite a Tonie's chapter list. Rename, reorder and remove are all
+    this one call, because the Tonie Cloud only offers a whole-list PATCH.
+    """
+    client = client_from_settings()
+    try:
+        tonie = client.get_tonie(household_id, tonie_id)
+        merged = merge_chapters(tonie.get("chapters") or [], base_ids, requested)
+
+        # get_tonie does not carry the household, but a GET /api/tonies entry
+        # does, and this response has to match it for every caller, not just
+        # for the browser.
+        household_name = ""
+        for house in client.households():
+            if house.get("id") == household_id:
+                household_name = house.get("name", "")
+                break
+
+        client.set_chapters(household_id, tonie_id, merged)
+
+        # The PATCH succeeded, so the Tonie now holds exactly `merged`. Build
+        # the answer from that rather than reading it back: a post-write GET
+        # only adds a case where the write landed and Toniefi says it did not,
+        # after which the user retries and gets a 409.
+        tonie["chapters"] = merged
+        tonie["secondsPresent"] = sum(float(c.get("seconds") or 0) for c in merged)
+        tonie["householdId"] = household_id
+        tonie["householdName"] = household_name
+        return describe_tonie(tonie)
+    finally:
+        client.close()
+
+
 def client_from_settings() -> tonies.TonieCloud:
     """Env vars win; the UI-stored credentials are the fallback."""
     from . import db

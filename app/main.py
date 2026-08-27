@@ -73,6 +73,16 @@ class PushRequest(BaseModel):
     replace: bool = True
 
 
+class ChapterRef(BaseModel):
+    id: str
+    title: str = ""
+
+
+class ChaptersPut(BaseModel):
+    base_ids: list[str]
+    chapters: list[ChapterRef]
+
+
 class Credentials(BaseModel):
     username: str
     password: str
@@ -272,6 +282,22 @@ def list_tonies() -> list[dict[str, Any]]:
 def push_to_tonie(body: PushRequest) -> dict[str, Any]:
     job_id = jobs.enqueue("push", f"Send {body.slug} to a Tonie", body.model_dump())
     return {"job_id": job_id}
+
+
+@app.put("/api/tonies/{household_id}/{tonie_id}/chapters")
+def set_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> dict[str, Any]:
+    """Rename, reorder, remove or clear the chapters on a Creative Tonie."""
+    try:
+        return push.set_tonie_chapters(
+            household_id, tonie_id, body.base_ids,
+            [chapter.model_dump() for chapter in body.chapters],
+        )
+    except push.StaleChapters as exc:
+        raise fail(409, str(exc)) from exc
+    except ValueError as exc:
+        raise fail(400, str(exc)) from exc
+    except tonies.TonieCloudError as exc:
+        raise fail(400, str(exc)) from exc
 
 
 # -------------------------------------------------------------------- jobs
