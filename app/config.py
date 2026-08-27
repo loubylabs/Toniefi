@@ -32,6 +32,14 @@ AUDIO_SAMPLE_RATE = os.getenv("AUDIO_SAMPLE_RATE", "44100")
 # Concurrency for the background worker.
 WORKER_THREADS = int(os.getenv("WORKER_THREADS", "2"))
 
+# Which YouTube player clients yt-dlp may impersonate, most preferred first.
+# The default set alone gets refused for a lot of otherwise-playable videos:
+# the tv client asks to reload the page, and web/ios return metadata but no
+# downloadable formats, which surfaces as the misleading "This video is not
+# available". Naming android as a fallback keeps those working. Which clients
+# YouTube accepts changes over time, so this is an env var, not a constant.
+YTDLP_PLAYER_CLIENTS = os.getenv("YTDLP_PLAYER_CLIENTS", "default,android")
+
 
 def usable_limit() -> int:
     return max(60, TONIE_LIMIT_SECONDS - TONIE_HEADROOM_SECONDS)
