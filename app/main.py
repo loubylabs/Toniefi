@@ -79,7 +79,9 @@ class ChapterRef(BaseModel):
 
 
 class ChaptersPut(BaseModel):
-    base_ids: list[str]
+    # `base` carries titles as well as ids, because a rename made elsewhere is
+    # invisible to an id-only precondition and would be silently reverted.
+    base: list[ChapterRef]
     chapters: list[ChapterRef]
 
 
@@ -289,7 +291,8 @@ def set_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> d
     """Rename, reorder, remove or clear the chapters on a Creative Tonie."""
     try:
         return push.set_tonie_chapters(
-            household_id, tonie_id, body.base_ids,
+            household_id, tonie_id,
+            [chapter.model_dump() for chapter in body.base],
             [chapter.model_dump() for chapter in body.chapters],
         )
     except push.StaleChapters as exc:

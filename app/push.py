@@ -26,28 +26,45 @@ class StaleChapters(RuntimeError):
     """The Tonie's chapters changed since the browser last looked at them."""
 
 
+def _identity(chapter: dict) -> tuple[str, str]:
+    """The (id, title) pair the precondition compares.
+
+    A raw Tonie Cloud chapter can carry `title: None` while describe_tonie
+    hands the browser "", so both sides are normalised here. Without that,
+    every save on such a chapter would 409 forever.
+    """
+    return (chapter.get("id"), chapter.get("title") or "")
+
+
 def merge_chapters(
-    current: list[dict], base_ids: list[str], requested: list[dict]
+    current: list[dict], base: list[dict], requested: list[dict]
 ) -> list[dict]:
     """Build the chapter list to PATCH onto a Tonie.
 
     `current`   the Tonie's chapters as the Tonie Cloud reports them now
-    `base_ids`  every chapter id the browser had on screen when it decided
+    `base`      every chapter the browser had on screen when it decided, as
+                {"id", "title"}. Both fields are part of the precondition.
     `requested` the chapters to keep, in order, as {"id", "title"}
 
     Chapters absent from `requested` are dropped: that is how remove and clear
     work. Only the title and the order are ever written, so a field this code
     has never heard of survives the round trip untouched.
     """
-    current_ids = [c.get("id") for c in current]
-
-    # Compare the whole set, not just the requested ids. Matching only what was
-    # asked for would catch a chapter deleted elsewhere but silently destroy one
-    # ADDED elsewhere, because a whole-list PATCH drops whatever it omits.
-    if set(base_ids) != set(current_ids):
+    # Compare the whole set of (id, title) pairs, not just the requested ids.
+    # Matching only what was asked for would catch a chapter deleted elsewhere
+    # but silently destroy one ADDED elsewhere, because a whole-list PATCH
+    # drops whatever it omits. Comparing ids alone would then still miss a
+    # chapter RENAMED elsewhere: the id sets match, and the write sends the
+    # other client's chapter back under its old title. The rename is the one
+    # field this endpoint writes, so it is the one an id-only guard is blind to.
+    #
+    # Order is deliberately out of the precondition. Reordering is exactly what
+    # this endpoint is for, and the last writer should win on order alone,
+    # which is what comparing sets rather than lists buys.
+    if {_identity(c) for c in current} != {_identity(c) for c in base}:
         raise StaleChapters("This Tonie changed somewhere else. Reloading.")
 
-    known = set(base_ids)
+    known = {c.get("id") for c in base}
     seen: set[str] = set()
     by_id = {c.get("id"): c for c in current}
     out: list[dict] = []
@@ -103,7 +120,7 @@ def describe_tonie(tonie: dict[str, Any]) -> dict[str, Any]:
 def set_tonie_chapters(
     household_id: str,
     tonie_id: str,
-    base_ids: list[str],
+    base: list[dict],
     requested: list[dict],
 ) -> dict[str, Any]:
     """Rewrite a Tonie's chapter list. Rename, reorder and remove are all
@@ -112,7 +129,7 @@ def set_tonie_chapters(
     client = client_from_settings()
     try:
         tonie = client.get_tonie(household_id, tonie_id)
-        merged = merge_chapters(tonie.get("chapters") or [], base_ids, requested)
+        merged = merge_chapters(tonie.get("chapters") or [], base, requested)
 
         # get_tonie does not carry the household, but a GET /api/tonies entry
         # does, and this response has to match it for every caller, not just

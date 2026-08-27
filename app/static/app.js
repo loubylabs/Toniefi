@@ -744,7 +744,9 @@ async function saveChapters(tonie, chapters) {
     updated = await api(url, {
       method: "PUT",
       body: JSON.stringify({
-        base_ids: tonie.chapters.map((c) => c.id),
+        // Titles travel with the ids: the server refuses the write if a
+        // chapter was renamed elsewhere since this list was drawn.
+        base: tonie.chapters.map((c) => ({ id: c.id, title: c.title })),
         chapters,
       }),
     });
