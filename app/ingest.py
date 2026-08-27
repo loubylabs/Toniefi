@@ -244,10 +244,14 @@ def import_url(
         stored: list[tuple[str, str]] = []
         for offset, src in enumerate(produced):
             index = start + offset
-            name = f"{index:03d}-{audio.slugify(src.stem)}.mp3"
+            # Name the file from the cleaned title, not the raw stem. A chapter
+            # file arrives as "001-Intro", so slugifying the stem would stutter
+            # the index back out as "001-001-intro.mp3".
+            track_title = _track_title(src.stem, chaptered, offset, book_title)
+            name = f"{index:03d}-{audio.slugify(track_title)}.mp3"
             progress(f"Storing {index}/{len(produced)}")
             shutil.move(str(src), dest / name)
-            stored.append((name, _track_title(src.stem, chaptered, offset, book_title)))
+            stored.append((name, track_title))
 
         cover = _pick_thumbnail(tmp)
         if cover:

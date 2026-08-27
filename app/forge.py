@@ -43,7 +43,9 @@ _BARE = re.compile(
     re.IGNORECASE,
 )
 _TRAILING_JUNK = re.compile(r"\s*[|\-–—]\s*(?:youtube|topic)\s*$", re.IGNORECASE)
-_LEADING_INDEX = re.compile(r"^\s*\d{1,3}\s*[.\-–—:)]\s+")
+# The separator need not be followed by a space: yt-dlp names chapter files
+# "001-Intro". The trailing \D guard is what keeps "24-7" from becoming "7".
+_LEADING_INDEX = re.compile(r"^\s*\d{1,3}\s*[.\-–—:)]\s*(?=\D)")
 _MULTISPACE = re.compile(r"\s{2,}")
 
 
