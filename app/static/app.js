@@ -648,7 +648,7 @@ function renderTonies() {
     const open = state.openTonie === tonieKey(t);
     return `
     <div class="item tonie" data-key="${esc(tonieKey(t))}">
-      <div class="tonie-head">
+      <div class="tonie-head" aria-expanded="${open}">
         <div class="row tight">
           <span class="caret">${open ? "&#9662;" : "&#9656;"}</span>
           <span class="title grow">${esc(t.name || "Creative Tonie")}</span>
