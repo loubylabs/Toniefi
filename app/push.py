@@ -188,9 +188,17 @@ def set_tonie_chapters(
             seconds_present = present
         elif all(float(c.get("seconds") or 0) for c in dropped):
             # Every dropped chapter reported a real duration, so the Cloud's
-            # total minus exactly what left is what remains.
+            # total minus exactly what left is what remains, floored at what
+            # the survivors themselves report. The floor matters because
+            # present and the chapters' reported seconds can disagree in
+            # either direction: when present sits below the reported total,
+            # subtracting the dropped chapter's full duration can land under
+            # what the survivors demonstrably occupy, understating present
+            # and so overstating free space. This floor subsumes the plain
+            # max(0.0, ...) it replaces, since a sum of durations is never
+            # negative.
             dropped_seconds = sum(float(c.get("seconds") or 0) for c in dropped)
-            seconds_present = max(0.0, present - dropped_seconds)
+            seconds_present = max(surviving, present - dropped_seconds)
         else:
             # A dropped chapter reported 0, most likely because it was still
             # transcoding. It may own part of whatever the Cloud counts

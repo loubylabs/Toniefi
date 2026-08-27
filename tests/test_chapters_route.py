@@ -331,6 +331,97 @@ def test_seconds_present_attributes_the_clouds_remainder(
     assert resp.json()["seconds_present"] == expected
 
 
+# Every chapter secondsPresent has ever needed to reason about, in one pool:
+# two chapters that always report a real duration, one that reports 0 (as a
+# transcoding chapter does), and a third real duration to make multi-drop
+# scenarios possible without reusing a and b.
+_POOL = {"a": 60.0, "b": 70.0, "c": 0.0, "d": 40.0}
+_REPORTED_TOTAL = sum(_POOL.values())
+
+# Named by what a save drops, so each scenario's id says what it is proving.
+_SCENARIOS = [
+    ("nothing-dropped", frozenset(_POOL)),               # zero dropped
+    ("drop-one-real", frozenset({"a", "c", "d"})),        # one dropped, real duration; c(0) survives
+    ("drop-one-zero", frozenset({"a", "b", "d"})),        # one dropped, reports 0
+    ("drop-several-real", frozenset({"c"})),              # several dropped, all real; only c(0) survives
+    ("drop-several-mixed", frozenset({"a"})),             # several dropped, one reports 0
+    ("clear-everything", frozenset()),                    # every chapter dropped
+]
+
+
+def _matrix_cases() -> list[tuple[str, frozenset, float, float]]:
+    """Build (scenario, kept_ids, present, surviving) rows.
+
+    `present` is chosen per scenario, not as one fixed number reused
+    everywhere: it must never sit below `surviving`, because no return value
+    could then satisfy both "never below what survives" and "never rises
+    above the Cloud's own figure" at once, and that is a contradiction in the
+    inputs, not a bug to catch. Anchoring the low end of the tier list on
+    `surviving` itself keeps every case satisfiable while still covering
+    secondsPresent above, equal to, and below the reported total wherever
+    that comparison is meaningful for the scenario.
+    """
+    cases = []
+    for name, kept_ids in _SCENARIOS:
+        surviving = sum(secs for cid, secs in _POOL.items() if cid in kept_ids)
+        margin = 20.0
+        presents = sorted({
+            surviving,
+            max(surviving, _REPORTED_TOTAL - margin),
+            _REPORTED_TOTAL,
+            _REPORTED_TOTAL + margin,
+        })
+        for present in presents:
+            cases.append((name, kept_ids, present, surviving))
+    return cases
+
+
+_MATRIX = _matrix_cases()
+
+
+@pytest.mark.parametrize(
+    "scenario, kept_ids, present, surviving", _MATRIX,
+    ids=[f"{name}-present={present:g}" for name, _, present, _ in _MATRIX],
+)
+def test_seconds_present_invariants_hold_across_the_matrix(
+    client, monkeypatch, scenario, kept_ids, present, surviving
+):
+    """Four invariants that must hold for every save, not four more expected
+    numbers. Three point-case fixes in this same block were each correct and
+    incomplete, so this asserts the rules themselves across a matrix of
+    drop counts, a dropped chapter reporting 0, a surviving chapter
+    reporting 0, and secondsPresent on both sides of the reported total,
+    rather than pinning one more set of hand-picked outputs.
+    """
+    chapters = [
+        {"id": cid, "title": cid, "file": f"f-{cid}", "seconds": secs,
+         "transcoding": secs == 0.0}
+        for cid, secs in _POOL.items()
+    ]
+    stub = StubCloud(chapters)
+    stub.seconds_present_override = present
+    monkeypatch.setattr(push, "client_from_settings", lambda: stub)
+
+    base = [{"id": cid, "title": cid} for cid in _POOL]
+    requested = [{"id": cid, "title": cid} for cid in _POOL if cid in kept_ids]
+
+    resp = client.put(URL, json={"base": base, "chapters": requested})
+    assert resp.status_code == 200
+    result = resp.json()["seconds_present"]
+
+    # 1. Never below what survives.
+    assert result >= surviving
+    # 2. Never rises: this endpoint only ever removes chapters, so
+    # occupancy cannot grow past what the Cloud reported going in.
+    assert result <= present
+    # 3. Clearing is exact.
+    if not kept_ids:
+        assert result == 0.0
+    # 4. A save that drops nothing does not move the figure.
+    if kept_ids == frozenset(_POOL):
+        assert result == present
+
+
 def test_a_failed_response_build_writes_nothing(client, cloud, monkeypatch):
     """If the answer cannot be built, the Tonie is left alone.
 
