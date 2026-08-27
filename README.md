@@ -18,6 +18,16 @@ Paste  ->  Extract  ->  Forge  ->  Review  ->  Send
    onto Tonies. Drag to reorder, click to retitle, play to check.
 5. **Send**: pick a Creative Tonie and upload, replacing or appending.
 
+On the **My Tonies** tab, opening a Creative Tonie shows the chapters already on
+it. You can rename a chapter in place, drag one to reorder, remove a single
+chapter, or clear the whole Tonie. Every change is written straight to the Tonie
+Cloud, which has no undo, so Remove and Clear both ask first. Your library on
+disk is never touched by anything on this tab.
+
+If someone else changes the same Tonie while you have it open (the myTonies app,
+or a Toniefi upload running in another tab), the save is refused and the list
+reloads rather than overwriting their change.
+
 ## Quick start
 
 Two ways to run it on your own machine. Both put the library in `library/`
@@ -245,14 +255,31 @@ app/
   audio.py     ffmpeg/ffprobe wrappers, splitting, Tonie packing
   library.py   On-disk collections, ordering, manifests
   tonies.py    Tonie Cloud API client
-  push.py      Send: resolve a group, upload, set chapters
+  push.py      Send: resolve a group, upload, append chapters. Also the
+               chapter rewrite behind My Tonies: rename, reorder, remove, clear
   jobs.py      Background worker (SQLite-backed queue)
   db.py        Job state and settings
   static/      Single-page front end, no build step
+tests/         pytest suite: the chapter write path, against a stub Tonie Cloud
 ```
 
 Long operations run as background jobs so an HTTP request is never left holding
 the bag; the UI polls `/api/jobs/{id}` for progress.
+
+## Development
+
+`run-local.sh` creates `.venv/` on its first run. The tests need one extra
+package on top of it:
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -q
+```
+
+The suite covers the chapter write path (`merge_chapters`, `describe_tonie`
+and `PUT /api/tonies/{h}/{t}/chapters` against a stub Tonie Cloud), which is
+the only code here that can change a Tonie irreversibly. It touches neither
+the network nor a real account.
 
 ## How the Tonie Cloud integration works
 
@@ -267,7 +294,8 @@ The myTonies web app talks to a private REST API. Toniefi uses the same one:
    straight to S3 and you get back a `fileId`.
 4. **Chapters**: `POST /v2/households/{h}/creativetonies/{t}/chapters` with
    `{title, file}` appends; `PATCH` on the Tonie with a `chapters` array
-   reorders or clears.
+   replaces the whole list, which is how renaming, reordering, removing and
+   clearing are all done.
 
 ### Caveats
 

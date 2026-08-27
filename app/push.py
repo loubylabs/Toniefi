@@ -1,4 +1,10 @@
-"""Pushing a set of library tracks onto a Creative Tonie."""
+"""Two Creative Tonie operations, sharing one Tonie Cloud client.
+
+Send takes a group of library tracks, uploads them and appends a chapter
+per track. The chapter layer rewrites the chapter list a Tonie already has
+(rename, reorder, remove, clear); it uploads nothing and never reads the
+library on disk.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,6 +17,142 @@ Progress = Callable[[str], None]
 
 def _noop(_: str) -> None:
     return None
+
+
+TITLE_LIMIT = 128
+
+
+class StaleChapters(RuntimeError):
+    """The Tonie's chapters changed since the browser last looked at them."""
+
+
+def _identity(chapter: dict) -> tuple[str, str]:
+    """The (id, title) pair the precondition compares.
+
+    A raw Tonie Cloud chapter can carry `title: None` while describe_tonie
+    hands the browser "", so both sides are normalised here. Without that,
+    every save on such a chapter would 409 forever.
+    """
+    return (chapter.get("id"), chapter.get("title") or "")
+
+
+def merge_chapters(
+    current: list[dict], base: list[dict], requested: list[dict]
+) -> list[dict]:
+    """Build the chapter list to PATCH onto a Tonie.
+
+    `current`   the Tonie's chapters as the Tonie Cloud reports them now
+    `base`      every chapter the browser had on screen when it decided, as
+                {"id", "title"}. Both fields are part of the precondition.
+    `requested` the chapters to keep, in order, as {"id", "title"}
+
+    Chapters absent from `requested` are dropped: that is how remove and clear
+    work. Only the title and the order are ever written, so a field this code
+    has never heard of survives the round trip untouched.
+    """
+    # Compare the whole set of (id, title) pairs, not just the requested ids.
+    # Matching only what was asked for would catch a chapter deleted elsewhere
+    # but silently destroy one ADDED elsewhere, because a whole-list PATCH
+    # drops whatever it omits. Comparing ids alone would then still miss a
+    # chapter RENAMED elsewhere: the id sets match, and the write sends the
+    # other client's chapter back under its old title. The rename is the one
+    # field this endpoint writes, so it is the one an id-only guard is blind to.
+    #
+    # Order is deliberately out of the precondition. Reordering is exactly what
+    # this endpoint is for, and the last writer should win on order alone,
+    # which is what comparing sets rather than lists buys.
+    if {_identity(c) for c in current} != {_identity(c) for c in base}:
+        raise StaleChapters("This Tonie changed somewhere else. Reloading.")
+
+    known = {c.get("id") for c in base}
+    seen: set[str] = set()
+    by_id = {c.get("id"): c for c in current}
+    out: list[dict] = []
+
+    for entry in requested:
+        chapter_id = entry.get("id")
+        if chapter_id not in known:
+            raise ValueError(f"Chapter {chapter_id!r} is not on this Tonie.")
+        if chapter_id in seen:
+            raise ValueError(f"Chapter {chapter_id!r} was listed twice.")
+        seen.add(chapter_id)
+
+        merged = dict(by_id[chapter_id])
+        title = (entry.get("title") or "").strip()[:TITLE_LIMIT]
+        if title:
+            merged["title"] = title
+        out.append(merged)
+
+    return out
+
+
+def describe_tonie(tonie: dict[str, Any]) -> dict[str, Any]:
+    """Decorate one Creative Tonie for the front end.
+
+    Both GET /api/tonies and the chapter write return this shape, so the
+    browser can swap a single Tonie in place after a save.
+    """
+    raw = tonie.get("chapters") or []
+    chapters = []
+    for chapter in raw:
+        seconds = float(chapter.get("seconds") or 0)
+        chapters.append(
+            {
+                "id": chapter.get("id"),
+                "title": chapter.get("title") or "",
+                "seconds": seconds,
+                # A chapter mid-transcode reports no length. Blank beats "0m 00s".
+                "duration": audio.human_duration(seconds) if seconds else "",
+                "transcoding": bool(chapter.get("transcoding")),
+            }
+        )
+    tonie["chapters"] = chapters
+    tonie["chapter_count"] = len(raw)
+
+    seconds = float(tonie.get("secondsPresent") or 0)
+    tonie["seconds_present"] = seconds
+    tonie["time_used"] = audio.human_duration(seconds)
+    tonie["seconds_free"] = max(0, config.TONIE_LIMIT_SECONDS - seconds)
+    tonie["time_free"] = audio.human_duration(tonie["seconds_free"])
+    return tonie
+
+
+def set_tonie_chapters(
+    household_id: str,
+    tonie_id: str,
+    base: list[dict],
+    requested: list[dict],
+) -> dict[str, Any]:
+    """Rewrite a Tonie's chapter list. Rename, reorder and remove are all
+    this one call, because the Tonie Cloud only offers a whole-list PATCH.
+    """
+    client = client_from_settings()
+    try:
+        tonie = client.get_tonie(household_id, tonie_id)
+        merged = merge_chapters(tonie.get("chapters") or [], base, requested)
+
+        # get_tonie does not carry the household, but a GET /api/tonies entry
+        # does, and this response has to match it for every caller, not just
+        # for the browser.
+        household_name = ""
+        for house in client.households():
+            if house.get("id") == household_id:
+                household_name = house.get("name", "")
+                break
+
+        client.set_chapters(household_id, tonie_id, merged)
+
+        # The PATCH succeeded, so the Tonie now holds exactly `merged`. Build
+        # the answer from that rather than reading it back: a post-write GET
+        # only adds a case where the write landed and Toniefi says it did not,
+        # after which the user retries and gets a 409.
+        tonie["chapters"] = merged
+        tonie["secondsPresent"] = sum(float(c.get("seconds") or 0) for c in merged)
+        tonie["householdId"] = household_id
+        tonie["householdName"] = household_name
+        return describe_tonie(tonie)
+    finally:
+        client.close()
 
 
 def client_from_settings() -> tonies.TonieCloud:

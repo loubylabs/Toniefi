@@ -73,6 +73,18 @@ class PushRequest(BaseModel):
     replace: bool = True
 
 
+class ChapterRef(BaseModel):
+    id: str
+    title: str = ""
+
+
+class ChaptersPut(BaseModel):
+    # `base` carries titles as well as ids, because a rename made elsewhere is
+    # invisible to an id-only precondition and would be silently reverted.
+    base: list[ChapterRef]
+    chapters: list[ChapterRef]
+
+
 class Credentials(BaseModel):
     username: str
     password: str
@@ -265,20 +277,30 @@ def list_tonies() -> list[dict[str, Any]]:
         client.close()
     except tonies.TonieCloudError as exc:
         raise fail(400, str(exc)) from exc
-    for tonie in result:
-        tonie["chapter_count"] = len(tonie.get("chapters", []))
-        seconds = float(tonie.get("secondsPresent") or 0)
-        tonie["seconds_present"] = seconds
-        tonie["time_used"] = audio.human_duration(seconds)
-        tonie["seconds_free"] = max(0, config.TONIE_LIMIT_SECONDS - seconds)
-        tonie["time_free"] = audio.human_duration(tonie["seconds_free"])
-    return result
+    return [push.describe_tonie(tonie) for tonie in result]
 
 
 @app.post("/api/push")
 def push_to_tonie(body: PushRequest) -> dict[str, Any]:
     job_id = jobs.enqueue("push", f"Send {body.slug} to a Tonie", body.model_dump())
     return {"job_id": job_id}
+
+
+@app.put("/api/tonies/{household_id}/{tonie_id}/chapters")
+def set_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> dict[str, Any]:
+    """Rename, reorder, remove or clear the chapters on a Creative Tonie."""
+    try:
+        return push.set_tonie_chapters(
+            household_id, tonie_id,
+            [chapter.model_dump() for chapter in body.base],
+            [chapter.model_dump() for chapter in body.chapters],
+        )
+    except push.StaleChapters as exc:
+        raise fail(409, str(exc)) from exc
+    except ValueError as exc:
+        raise fail(400, str(exc)) from exc
+    except tonies.TonieCloudError as exc:
+        raise fail(400, str(exc)) from exc
 
 
 # -------------------------------------------------------------------- jobs
