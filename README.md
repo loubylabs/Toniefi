@@ -191,14 +191,31 @@ app/
   audio.py     ffmpeg/ffprobe wrappers, splitting, Tonie packing
   library.py   On-disk collections, ordering, manifests
   tonies.py    Tonie Cloud API client
-  push.py      Send: resolve a group, upload, set chapters
+  push.py      Send: resolve a group, upload, append chapters. Also the
+               chapter rewrite behind My Tonies: rename, reorder, remove, clear
   jobs.py      Background worker (SQLite-backed queue)
   db.py        Job state and settings
   static/      Single-page front end, no build step
+tests/         pytest suite: the chapter write path, against a stub Tonie Cloud
 ```
 
 Long operations run as background jobs so an HTTP request is never left holding
 the bag; the UI polls `/api/jobs/{id}` for progress.
+
+## Development
+
+`run-local.sh` creates `.venv/` on its first run. The tests need one extra
+package on top of it:
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -q
+```
+
+The suite covers the chapter write path (`merge_chapters`, `describe_tonie`
+and `PUT /api/tonies/{h}/{t}/chapters` against a stub Tonie Cloud), which is
+the only code here that can change a Tonie irreversibly. It touches neither
+the network nor a real account.
 
 ## How the Tonie Cloud integration works
 
@@ -213,7 +230,8 @@ The myTonies web app talks to a private REST API. Toniefi uses the same one:
    straight to S3 and you get back a `fileId`.
 4. **Chapters**: `POST /v2/households/{h}/creativetonies/{t}/chapters` with
    `{title, file}` appends; `PATCH` on the Tonie with a `chapters` array
-   reorders or clears.
+   replaces the whole list, which is how renaming, reordering, removing and
+   clearing are all done.
 
 ### Caveats
 

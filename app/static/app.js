@@ -24,6 +24,7 @@ const state = {
   slug: null,      // the collection steps 3-5 act on
   collection: null,
   tonies: [],
+  toniesStale: false, // a push changed free space; refetch before reading it
   openTonie: null, // "<householdId>:<tonieId>" of the expanded Tonie, if any
   pollTimer: null,
 };
@@ -496,15 +497,18 @@ async function renderSend() {
 }
 
 $("#sendRefresh").addEventListener("click", async () => {
-  state.tonies = [];
-  await loadTonies();
+  await loadTonies(); // fetches unconditionally, and clears the stale flag
   toast("Refreshed", "good");
 });
 
 async function choosePushTarget(groupIndex) {
-  if (!state.tonies.length) {
-    try { state.tonies = await api("/api/tonies"); }
-    catch (err) { return toast(err.message, "bad"); }
+  /* This prompt is the only place the free-space figures are read, so it is
+     the place that has to pay for a finished push having moved them. */
+  if (!state.tonies.length || state.toniesStale) {
+    try {
+      state.tonies = await api("/api/tonies");
+      state.toniesStale = false;
+    } catch (err) { return toast(err.message, "bad"); }
   }
   if (!state.tonies.length) return toast("No Creative Tonies on this account", "bad");
 
@@ -538,7 +542,9 @@ async function choosePushTarget(groupIndex) {
       onDone: (job) => {
         host.innerHTML = `<div class="progress-line"><span class="badge good">done</span>
           <span>${esc(job.result.chapters)} chapters now on ${esc(job.result.tonie)}</span></div>`;
-        state.tonies = [];
+        /* The cached free space is now wrong. Flag it rather than emptying
+           the list, which renderTonies would draw as a Tonie-less account. */
+        state.toniesStale = true;
       },
     });
   } catch (err) {
@@ -594,6 +600,7 @@ async function loadTonies() {
   busy(host, "Loading...");
   try {
     state.tonies = await api("/api/tonies");
+    state.toniesStale = false;
   } catch (err) {
     host.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
     return;
@@ -626,13 +633,13 @@ function renderTonies() {
   wireTonies();
 }
 
-/* The panel's enabled state is a pure function of `savingTonie`, worked out
-   again on every render. `savingTonie` is module state while `.saving` and
-   `disabled` live on DOM nodes, so stamping them once when a save starts
-   loses them the moment anything re-renders the list: the header toggle,
-   Refresh, or the My Tonies nav button, none of which the lock disables. */
-const tonieBodyClass = () => `tonie-body${savingTonie ? " saving" : ""}`;
-
+/* The panel's enabled state is a pure function of `savingTonie`, re-derived
+   on every render by wireTonies. `savingTonie` is module state while
+   `.saving` and `disabled` live on DOM nodes, so stamping them once when a
+   save starts loses them the moment anything re-renders the list: the header
+   toggle, Refresh, or the My Tonies nav button, none of which the lock
+   disables. Every render of a panel runs through wireTonies, so this is the
+   only place the lock is ever applied. */
 function lockTonieBody() {
   const body = $("#tonieList .tonie-body");
   if (!body) return;
@@ -642,11 +649,11 @@ function lockTonieBody() {
 
 function tonieBody(t) {
   if (!t.chapters.length) {
-    return `<div class="${tonieBodyClass()}"><div class="empty">Nothing on this Tonie yet.</div></div>`;
+    return `<div class="tonie-body"><div class="empty">Nothing on this Tonie yet.</div></div>`;
   }
   return `
-    <div class="${tonieBodyClass()}">
-      <div class="row tight" style="margin-bottom:8px">
+    <div class="tonie-body">
+      <div class="row tight tonie-actions">
         <span class="grow"></span>
         <button class="btn danger small" data-clear="1">Clear all</button>
       </div>

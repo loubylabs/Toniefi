@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main, push
+from app import main, push, tonies
 
 
 class StubCloud:
@@ -19,6 +19,8 @@ class StubCloud:
         self.set_calls: list[list[dict]] = []
         self.gets = 0
         self.closed = False
+        # Set to a message to make the write fail, the way the real cloud can.
+        self.set_error: str | None = None
 
     def households(self) -> list[dict]:
         return [{"id": "h1", "name": "Emily' household"}]
@@ -30,6 +32,8 @@ class StubCloud:
                 "chapters": [dict(c) for c in self.chapters]}
 
     def set_chapters(self, household_id: str, tonie_id: str, chapters: list[dict]):
+        if self.set_error:
+            raise tonies.TonieCloudError(self.set_error)
         self.set_calls.append([dict(c) for c in chapters])
         self.chapters = [dict(c) for c in chapters]
         return None
@@ -148,3 +152,17 @@ def test_seconds_present_is_recomputed_from_what_was_written(client, cloud):
         "chapters": [{"id": "a", "title": "One"}],
     })
     assert resp.json()["seconds_present"] == 60.0
+
+
+def test_a_refused_write_returns_400_and_says_why(client, cloud):
+    """The likeliest real failure: the PATCH reaches the Tonie Cloud and the
+    Tonie Cloud says no. The reason has to survive into the response, or the
+    browser can only offer a bare 400 for something the user might fix."""
+    cloud.set_error = "Tonie Cloud refused the chapter list (422)."
+    resp = client.put(URL, json={
+        "base_ids": ["a", "b"],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Tonie Cloud refused the chapter list (422)."
+    assert cloud.closed is True

@@ -308,3 +308,4 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   border-top: 1px solid var(--line);
 }
 .tonie-body.saving { pointer-events: none; opacity: .5; }
+.tonie-actions { margin-bottom: 8px; }
