@@ -37,6 +37,11 @@ def librivox_search(query: str, limit: int = 20) -> list[dict[str, Any]]:
     try:
         resp = httpx.get(LIBRIVOX_API, params=params, timeout=45.0,
                          headers={"User-Agent": USER_AGENT})
+        # LibriVox answers "nothing matched" with 404 and an {"error": ...}
+        # body, not an empty list. Raising there turns an ordinary empty
+        # search into a stack trace in the UI.
+        if resp.status_code == 404:
+            return []
         resp.raise_for_status()
         books = resp.json().get("books", [])
     except httpx.HTTPError as exc:
@@ -74,8 +79,9 @@ def librivox_sections(book_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
     params = {"format": "json", "extended": "1", "id": str(book_id)}
     resp = httpx.get(LIBRIVOX_API, params=params, timeout=45.0,
                      headers={"User-Agent": USER_AGENT})
-    resp.raise_for_status()
-    books = resp.json().get("books", [])
+    if resp.status_code != 404:
+        resp.raise_for_status()
+    books = [] if resp.status_code == 404 else resp.json().get("books", [])
     if not books:
         raise RuntimeError(f"LibriVox has no book with id {book_id}.")
     book = books[0]
