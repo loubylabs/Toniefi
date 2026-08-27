@@ -22,6 +22,9 @@ class StubCloud:
         self.reads = 0
         # Set to a message to make the write fail, the way the real cloud can.
         self.set_error: str | None = None
+        self.calls: list[str] = []
+        self.seconds_present_override: float | None = None
+        self.tonie_is_empty = False
 
     def _payload(self, tonie_id: str = "t1") -> dict:
         """One Tonie as the Tonie Cloud reports it.
@@ -30,12 +33,18 @@ class StubCloud:
         it. Anything comparing two reads has to compare keys, not values.
         """
         self.reads += 1
+        seconds_present = (
+            self.seconds_present_override
+            if self.seconds_present_override is not None
+            else sum(c["seconds"] for c in self.chapters)
+        )
         return {"id": tonie_id, "name": "Creative Tonie",
                 "lastUpdate": f"2026-08-26T12:00:0{self.reads}Z",
-                "secondsPresent": sum(c["seconds"] for c in self.chapters),
+                "secondsPresent": seconds_present,
                 "chapters": [dict(c) for c in self.chapters]}
 
     def households(self) -> list[dict]:
+        self.calls.append("households")
         return [{"id": "h1", "name": "Emily' household"}]
 
     def all_creative_tonies(self) -> list[dict]:
@@ -50,9 +59,13 @@ class StubCloud:
 
     def get_tonie(self, household_id: str, tonie_id: str) -> dict:
         self.gets += 1
+        self.calls.append("get_tonie")
+        if self.tonie_is_empty:
+            raise tonies.TonieCloudError("Tonie Cloud returned no Tonie.")
         return self._payload(tonie_id)
 
     def set_chapters(self, household_id: str, tonie_id: str, chapters: list[dict]):
+        self.calls.append("set_chapters")
         if self.set_error:
             raise tonies.TonieCloudError(self.set_error)
         self.set_calls.append([dict(c) for c in chapters])
@@ -238,3 +251,64 @@ def test_a_refused_write_returns_400_and_says_why(client, cloud):
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Tonie Cloud refused the chapter list (422)."
     assert cloud.closed is True
+
+
+def test_seconds_present_comes_from_the_cloud_not_a_naive_sum(client, cloud):
+    """A chapter mid-transcode reports no length of its own, so summing the
+    remaining chapters throws away the Cloud's own accounting. A rename
+    changes no durations, so the figure must not move at all."""
+    cloud.chapters[1]["seconds"] = 0.0        # as if still transcoding
+    cloud.seconds_present_override = 200.0     # what the Cloud actually reports
+    resp = client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}],
+    })
+    assert resp.json()["seconds_present"] == 200.0
+
+
+def test_removing_a_chapter_subtracts_only_that_chapter(client, cloud):
+    cloud.seconds_present_override = 200.0
+    resp = client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert resp.json()["seconds_present"] == 200.0 - 70.0
+
+
+def test_clearing_sets_seconds_present_to_zero(client, cloud):
+    cloud.seconds_present_override = 200.0
+    resp = client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [],
+    })
+    assert resp.json()["seconds_present"] == 0
+
+
+def test_households_is_resolved_before_the_write(client, cloud):
+    """Resolving a cosmetic display name must not be able to fail after the
+    destructive write has landed."""
+    client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert cloud.calls.index("households") < cloud.calls.index("set_chapters")
+
+
+def test_the_client_is_closed_on_the_success_path(client, cloud):
+    client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert cloud.closed is True
+
+
+def test_a_tonie_that_comes_back_empty_is_an_error_not_a_crash(client, cloud):
+    """The Cloud can answer 2xx with no body. That must be a clean 400, not an
+    AttributeError surfacing as a 500."""
+    cloud.tonie_is_empty = True
+    resp = client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert resp.status_code == 400
+    assert cloud.set_calls == []

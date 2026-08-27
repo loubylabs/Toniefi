@@ -174,3 +174,32 @@ def test_stale_is_checked_before_anything_else():
     """Order matters: a stale list must 409, not 400 on a bad id inside it."""
     with pytest.raises(StaleChapters):
         merge_chapters(chapters(), base()[:2], [{"id": "zzz", "title": "Ghost"}])
+
+
+def test_an_untouched_title_is_never_rewritten():
+    """A save must not strip or truncate a title the user did not edit.
+
+    The myTonies app can create a title with leading whitespace or past 128
+    characters. Reordering one chapter would otherwise silently rewrite all
+    twelve, and there is no undo.
+    """
+    long_title = "x" * 200
+    current = [
+        {"id": "a", "title": "  Spaced  ", "file": "f-a", "seconds": 60.0},
+        {"id": "b", "title": long_title, "file": "f-b", "seconds": 70.0},
+    ]
+    base = [{"id": "a", "title": "  Spaced  "}, {"id": "b", "title": long_title}]
+    # A pure reorder: both titles come back exactly as they went out.
+    result = merge_chapters(current, base, [
+        {"id": "b", "title": long_title},
+        {"id": "a", "title": "  Spaced  "},
+    ])
+    assert result[0]["title"] == long_title
+    assert result[1]["title"] == "  Spaced  "
+
+
+def test_a_changed_title_is_still_stripped_and_capped():
+    current = [{"id": "a", "title": "One", "file": "f-a", "seconds": 60.0}]
+    base = [{"id": "a", "title": "One"}]
+    result = merge_chapters(current, base, [{"id": "a", "title": "  " + "y" * 300}])
+    assert result[0]["title"] == "y" * 128

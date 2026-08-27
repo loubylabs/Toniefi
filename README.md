@@ -28,6 +28,11 @@ If someone else changes the same Tonie while you have it open (the myTonies app,
 or a Toniefi upload running in another tab), the save is refused and the list
 reloads rather than overwriting their change.
 
+Renaming trims surrounding spaces and caps a title at 128 characters, which is
+what the Tonie Cloud accepts. That only ever applies to a title you actually
+changed. Chapters you did not touch are written back exactly as they were, so
+reordering one chapter never rewrites the names of the others.
+
 ## Quick start
 
 Two ways to run it on your own machine. Both put the library in `library/`

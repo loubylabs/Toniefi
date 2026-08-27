@@ -12,12 +12,22 @@ from typing import Any, Callable
 
 from . import audio, config, library, tonies
 
-Progress = Callable[[str], None]
+
+def client_from_settings() -> tonies.TonieCloud:
+    """Env vars win; the UI-stored credentials are the fallback."""
+    from . import db
+
+    username = config.TONIES_USERNAME or db.get_setting("tonies_username")
+    password = config.TONIES_PASSWORD or db.get_setting("tonies_password")
+    if not username or not password:
+        raise tonies.AuthError(
+            "No myTonies credentials configured. Set TONIES_USERNAME and "
+            "TONIES_PASSWORD, or save them on the Settings tab."
+        )
+    return tonies.TonieCloud(username, password)
 
 
-def _noop(_: str) -> None:
-    return None
-
+# ------------------------------------------------------ chapter management
 
 TITLE_LIMIT = 128
 
@@ -78,9 +88,18 @@ def merge_chapters(
         seen.add(chapter_id)
 
         merged = dict(by_id[chapter_id])
-        title = (entry.get("title") or "").strip()[:TITLE_LIMIT]
-        if title:
-            merged["title"] = title
+        current_title = merged.get("title") or ""
+        wanted = entry.get("title") or ""
+        # Compare the raw title before normalising. A title the myTonies app
+        # created with leading whitespace, or past the cap, must survive a save
+        # that never touched it: otherwise reordering one chapter quietly
+        # rewrites all twelve, and there is no undo.
+        if wanted != current_title:
+            wanted = wanted.strip()[:TITLE_LIMIT]
+            # An empty title keeps the current one, so a slipped keystroke
+            # cannot leave a nameless chapter on a Tonie.
+            if wanted:
+                merged["title"] = wanted
         out.append(merged)
 
     return out
@@ -140,33 +159,40 @@ def set_tonie_chapters(
                 household_name = house.get("name", "")
                 break
 
-        client.set_chapters(household_id, tonie_id, merged)
+        kept = {c.get("id") for c in merged}
+        dropped = sum(
+            float(c.get("seconds") or 0)
+            for c in (tonie.get("chapters") or [])
+            if c.get("id") not in kept
+        )
+        present = float(tonie.get("secondsPresent") or 0)
 
-        # The PATCH succeeded, so the Tonie now holds exactly `merged`. Build
-        # the answer from that rather than reading it back: a post-write GET
-        # only adds a case where the write landed and Toniefi says it did not,
-        # after which the user retries and gets a 409.
         tonie["chapters"] = merged
-        tonie["secondsPresent"] = sum(float(c.get("seconds") or 0) for c in merged)
+        # Clearing is exact. Otherwise keep the Cloud's own figure and subtract
+        # only what was removed: recomputing from the remaining chapters would
+        # drop whatever the Cloud counts for a chapter that is still
+        # transcoding and so reports no length of its own.
+        tonie["secondsPresent"] = 0 if not merged else max(0, present - dropped)
         tonie["householdId"] = household_id
         tonie["householdName"] = household_name
-        return describe_tonie(tonie)
+
+        # Build the answer BEFORE the write. Nothing that can raise may run
+        # after set_chapters, or a landed PATCH gets reported as a failure and
+        # the user retries into a 409.
+        answer = describe_tonie(tonie)
+        client.set_chapters(household_id, tonie_id, merged)
+        return answer
     finally:
         client.close()
 
 
-def client_from_settings() -> tonies.TonieCloud:
-    """Env vars win; the UI-stored credentials are the fallback."""
-    from . import db
+# -------------------------------------------------- sending library tracks
 
-    username = config.TONIES_USERNAME or db.get_setting("tonies_username")
-    password = config.TONIES_PASSWORD or db.get_setting("tonies_password")
-    if not username or not password:
-        raise tonies.AuthError(
-            "No myTonies credentials configured. Set TONIES_USERNAME and "
-            "TONIES_PASSWORD, or save them on the Settings tab."
-        )
-    return tonies.TonieCloud(username, password)
+Progress = Callable[[str], None]
+
+
+def _noop(_: str) -> None:
+    return None
 
 
 def resolve_tracks(slug: str, names: list[str] | None, group_index: int | None) -> list[dict[str, Any]]:
