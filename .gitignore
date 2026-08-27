@@ -10,3 +10,15 @@ work/
 *.db-wal
 *.db-shm
 .DS_Store
+
+# Process documents: local working notes, never committed.
+docs/plans/
+docs/decisions/
+docs/verification/
+docs/evidence/
+docs/solutions/
+docs/superpowers/
+tasks/lessons/
+todos/
+.second-opinion/
+.superpowers/
