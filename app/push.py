@@ -162,29 +162,48 @@ def set_tonie_chapters(
 
         kept = {c.get("id") for c in merged}
         present = float(tonie.get("secondsPresent") or 0)
-        reported = sum(float(c.get("seconds") or 0) for c in current)
         surviving = sum(
             float(c.get("seconds") or 0) for c in current if c.get("id") in kept
         )
         dropped = [c for c in current if c.get("id") not in kept]
 
-        # The Cloud's secondsPresent already counts audio that a chapter still
-        # transcoding does not yet report a length for, so the two figures
-        # differ by a remainder that belongs to those unfinished chapters.
-        # Attribute that remainder to the survivors only when every dropped
-        # chapter reported a real duration; if any dropped chapter reported
-        # none, it may have owned part of the remainder and there is no way to
-        # split it, so drop the remainder rather than bill it to chapters that
-        # did not earn it. Erring low is the safer direction: this figure feeds
-        # the free-space readout, and overstating what a Tonie holds is what
-        # sends a user's next push into a refusal.
-        unaccounted = max(0.0, present - reported)
-        if any(not float(c.get("seconds") or 0) for c in dropped):
-            unaccounted = 0.0
+        # Four cases, attributed by what a save actually drops. The Cloud's
+        # secondsPresent and the sum of the chapters' own reported seconds
+        # can legitimately disagree in either direction (a chapter still
+        # transcoding reports less than it will finish with), and that
+        # disagreement is not this endpoint's business unless a chapter is
+        # actually removed.
+        if not merged:
+            # Clearing is exact: nothing survives, so there is nothing to
+            # carry.
+            seconds_present = 0.0
+        elif not dropped:
+            # Rename and reorder drop nothing, so no audio changed and the
+            # Cloud's own figure passes through untouched. Recomputing it
+            # from the chapters' reported seconds, even to "correct" it
+            # toward that sum, is what let a rename move the number: up when
+            # the Cloud was still counting more than the chapters had
+            # finished reporting, down when the chapters happened to report
+            # more than the Cloud's own total.
+            seconds_present = present
+        elif all(float(c.get("seconds") or 0) for c in dropped):
+            # Every dropped chapter reported a real duration, so the Cloud's
+            # total minus exactly what left is what remains.
+            dropped_seconds = sum(float(c.get("seconds") or 0) for c in dropped)
+            seconds_present = max(0.0, present - dropped_seconds)
+        else:
+            # A dropped chapter reported 0, most likely because it was still
+            # transcoding. It may own part of whatever the Cloud counts
+            # beyond the chapters' own reported total, and that remainder
+            # cannot be split, so it leaves with the dropped chapter rather
+            # than inflating the survivors. Erring low is the safer
+            # direction: this figure feeds the free-space readout, and
+            # overstating what a Tonie holds is what sends a user's next
+            # push into a refusal.
+            seconds_present = surviving
 
         tonie["chapters"] = merged
-        # Clearing is exact: nothing survives, so there is nothing to carry.
-        tonie["secondsPresent"] = 0.0 if not merged else surviving + unaccounted
+        tonie["secondsPresent"] = seconds_present
         tonie["householdId"] = household_id
         tonie["householdName"] = household_name
 

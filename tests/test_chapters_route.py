@@ -285,36 +285,45 @@ def test_clearing_sets_seconds_present_to_zero(client, cloud):
 
 
 @pytest.mark.parametrize(
-    "b_seconds, requested, expected",
+    "present, b_seconds, requested, expected",
     [
-        # Nothing is dropped, so every second the Cloud counts still belongs
-        # to a chapter that is staying. The figure must not move.
-        (0.0, [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}], 130.0),
+        # Nothing is dropped, so no audio changed and the figure must not
+        # move, even though the Cloud reports MORE than the chapters' own
+        # sum (a chapter still transcoding hasn't reported its length yet).
+        (130.0, 0.0, [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}], 130.0),
+        # Same rule, the other direction: the Cloud reports LESS than the
+        # chapters' own sum (60 + 70 = 130 reported, but the Cloud counts
+        # only 100). A rename still must not move the figure. Recomputing
+        # from the reported sum here is exactly the bug this pins: it used
+        # to return 130 instead of preserving 100.
+        (100.0, 70.0, [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}], 100.0),
         # `b` reported its full 70s, so the Cloud's total is fully accounted
         # for and removing it leaves exactly `a`.
-        (70.0, [{"id": "a", "title": "One"}], 60.0),
+        (130.0, 70.0, [{"id": "a", "title": "One"}], 60.0),
         # `b` is mid-transcode and reported nothing, yet the Cloud already
         # counts 70s nobody claims. That remainder is probably `b`'s, and it
         # cannot be split, so it leaves with `b` rather than inflating `a`.
-        (0.0, [{"id": "a", "title": "One"}], 60.0),
+        (130.0, 0.0, [{"id": "a", "title": "One"}], 60.0),
         # Nothing survives, so there is nothing to attribute anything to.
-        (0.0, [], 0.0),
+        (130.0, 0.0, [], 0.0),
     ],
-    ids=["rename-moves-nothing", "drop-a-finished-chapter",
-         "drop-a-transcoding-chapter", "clear-everything"],
+    ids=["rename-moves-nothing-present-above-reported",
+         "rename-moves-nothing-present-below-reported",
+         "drop-a-finished-chapter", "drop-a-transcoding-chapter",
+         "clear-everything"],
 )
 def test_seconds_present_attributes_the_clouds_remainder(
-    client, cloud, b_seconds, requested, expected
+    client, cloud, present, b_seconds, requested, expected
 ):
-    """The Cloud's secondsPresent and the chapters' own reported seconds
-    disagree while anything is still transcoding, and the difference belongs
-    to the chapters that have not finished. Removing a transcoding chapter
-    used to subtract its reported 0 from the Cloud's total and hand back a
-    figure counting audio that had just left the Tonie.
+    """The Cloud's secondsPresent and the chapters' own reported seconds can
+    disagree in either direction while anything is still transcoding.
+    Dropping a chapter attributes that disagreement to the chapters that
+    have not finished; dropping nothing must never recompute the figure at
+    all, no matter which way the disagreement runs.
     """
     cloud.chapters[1]["seconds"] = b_seconds
     cloud.chapters[1]["transcoding"] = b_seconds == 0.0
-    cloud.seconds_present_override = 130.0
+    cloud.seconds_present_override = present
 
     resp = client.put(URL, json={"base": BASE, "chapters": requested})
 
