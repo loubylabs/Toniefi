@@ -13,6 +13,56 @@ def _noop(_: str) -> None:
     return None
 
 
+TITLE_LIMIT = 128
+
+
+class StaleChapters(RuntimeError):
+    """The Tonie's chapters changed since the browser last looked at them."""
+
+
+def merge_chapters(
+    current: list[dict], base_ids: list[str], requested: list[dict]
+) -> list[dict]:
+    """Build the chapter list to PATCH onto a Tonie.
+
+    `current`   the Tonie's chapters as the Tonie Cloud reports them now
+    `base_ids`  every chapter id the browser had on screen when it decided
+    `requested` the chapters to keep, in order, as {"id", "title"}
+
+    Chapters absent from `requested` are dropped: that is how remove and clear
+    work. Only the title and the order are ever written, so a field this code
+    has never heard of survives the round trip untouched.
+    """
+    current_ids = [c.get("id") for c in current]
+
+    # Compare the whole set, not just the requested ids. Matching only what was
+    # asked for would catch a chapter deleted elsewhere but silently destroy one
+    # ADDED elsewhere, because a whole-list PATCH drops whatever it omits.
+    if set(base_ids) != set(current_ids):
+        raise StaleChapters("This Tonie changed somewhere else. Reloading.")
+
+    known = set(base_ids)
+    seen: set[str] = set()
+    by_id = {c.get("id"): c for c in current}
+    out: list[dict] = []
+
+    for entry in requested:
+        chapter_id = entry.get("id")
+        if chapter_id not in known:
+            raise ValueError(f"Chapter {chapter_id!r} is not on this Tonie.")
+        if chapter_id in seen:
+            raise ValueError(f"Chapter {chapter_id!r} was listed twice.")
+        seen.add(chapter_id)
+
+        merged = dict(by_id[chapter_id])
+        title = (entry.get("title") or "").strip()[:TITLE_LIMIT]
+        if title:
+            merged["title"] = title
+        out.append(merged)
+
+    return out
+
+
 def client_from_settings() -> tonies.TonieCloud:
     """Env vars win; the UI-stored credentials are the fallback."""
     from . import db
