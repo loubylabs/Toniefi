@@ -8,7 +8,15 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main, push, tonies
+from app import audio, main, push, tonies
+
+
+class ResponseBuildFailed(Exception):
+    """Raised from a monkeypatched collaborator to fail the response build.
+
+    Deliberately not a type the route handles, so the test below cannot pass
+    by accident through a handler that turns it into a status code.
+    """
 
 
 class StubCloud:
@@ -22,6 +30,8 @@ class StubCloud:
         self.reads = 0
         # Set to a message to make the write fail, the way the real cloud can.
         self.set_error: str | None = None
+        self.calls: list[str] = []
+        self.seconds_present_override: float | None = None
 
     def _payload(self, tonie_id: str = "t1") -> dict:
         """One Tonie as the Tonie Cloud reports it.
@@ -30,12 +40,18 @@ class StubCloud:
         it. Anything comparing two reads has to compare keys, not values.
         """
         self.reads += 1
+        seconds_present = (
+            self.seconds_present_override
+            if self.seconds_present_override is not None
+            else sum(c["seconds"] for c in self.chapters)
+        )
         return {"id": tonie_id, "name": "Creative Tonie",
                 "lastUpdate": f"2026-08-26T12:00:0{self.reads}Z",
-                "secondsPresent": sum(c["seconds"] for c in self.chapters),
+                "secondsPresent": seconds_present,
                 "chapters": [dict(c) for c in self.chapters]}
 
     def households(self) -> list[dict]:
+        self.calls.append("households")
         return [{"id": "h1", "name": "Emily' household"}]
 
     def all_creative_tonies(self) -> list[dict]:
@@ -50,9 +66,11 @@ class StubCloud:
 
     def get_tonie(self, household_id: str, tonie_id: str) -> dict:
         self.gets += 1
+        self.calls.append("get_tonie")
         return self._payload(tonie_id)
 
     def set_chapters(self, household_id: str, tonie_id: str, chapters: list[dict]):
+        self.calls.append("set_chapters")
         if self.set_error:
             raise tonies.TonieCloudError(self.set_error)
         self.set_calls.append([dict(c) for c in chapters])
@@ -218,14 +236,6 @@ def test_the_result_is_not_read_back_after_the_write(client, cloud):
     assert cloud.gets == 1
 
 
-def test_seconds_present_is_recomputed_from_what_was_written(client, cloud):
-    resp = client.put(URL, json={
-        "base": BASE,
-        "chapters": [{"id": "a", "title": "One"}],
-    })
-    assert resp.json()["seconds_present"] == 60.0
-
-
 def test_a_refused_write_returns_400_and_says_why(client, cloud):
     """The likeliest real failure: the PATCH reaches the Tonie Cloud and the
     Tonie Cloud says no. The reason has to survive into the response, or the
@@ -238,3 +248,293 @@ def test_a_refused_write_returns_400_and_says_why(client, cloud):
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Tonie Cloud refused the chapter list (422)."
     assert cloud.closed is True
+
+
+def test_seconds_present_comes_from_the_cloud_not_a_naive_sum(client, cloud):
+    """A chapter mid-transcode reports no length of its own, so summing the
+    remaining chapters throws away the Cloud's own accounting. A rename
+    changes no durations, so the figure must not move at all."""
+    cloud.chapters[1]["seconds"] = 0.0        # as if still transcoding
+    cloud.seconds_present_override = 200.0     # what the Cloud actually reports
+    resp = client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}],
+    })
+    assert resp.json()["seconds_present"] == 200.0
+
+
+def test_removing_a_chapter_subtracts_only_that_chapter(client, cloud):
+    cloud.seconds_present_override = 200.0
+    resp = client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert resp.json()["seconds_present"] == 200.0 - 70.0
+
+
+def test_clearing_sets_seconds_present_to_zero(client, cloud):
+    """The Cloud reports 200 while the chapters only account for 130, so the
+    general rule would hand the 70 remainder to somebody. Nothing survives a
+    clear, so the answer is exactly 0 and not the remainder."""
+    cloud.seconds_present_override = 200.0
+    resp = client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [],
+    })
+    assert resp.json()["seconds_present"] == 0
+
+
+@pytest.mark.parametrize(
+    "present, b_seconds, requested, expected",
+    [
+        # Nothing is dropped, so no audio changed and the figure must not
+        # move, even though the Cloud reports MORE than the chapters' own
+        # sum (a chapter still transcoding hasn't reported its length yet).
+        (130.0, 0.0, [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}], 130.0),
+        # Same rule, the other direction: the Cloud reports LESS than the
+        # chapters' own sum (60 + 70 = 130 reported, but the Cloud counts
+        # only 100). A rename still must not move the figure. Recomputing
+        # from the reported sum here is exactly the bug this pins: it used
+        # to return 130 instead of preserving 100.
+        (100.0, 70.0, [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}], 100.0),
+        # `b` reported its full 70s, so the Cloud's total is fully accounted
+        # for and removing it leaves exactly `a`.
+        (130.0, 70.0, [{"id": "a", "title": "One"}], 60.0),
+        # `b` is mid-transcode and reported nothing, yet the Cloud already
+        # counts 70s nobody claims. That remainder is probably `b`'s, and it
+        # cannot be split, so it leaves with `b` rather than inflating `a`.
+        (130.0, 0.0, [{"id": "a", "title": "One"}], 60.0),
+        # Nothing survives, so there is nothing to attribute anything to.
+        (130.0, 0.0, [], 0.0),
+    ],
+    ids=["rename-moves-nothing-present-above-reported",
+         "rename-moves-nothing-present-below-reported",
+         "drop-a-finished-chapter", "drop-a-transcoding-chapter",
+         "clear-everything"],
+)
+def test_seconds_present_attributes_the_clouds_remainder(
+    client, cloud, present, b_seconds, requested, expected
+):
+    """The Cloud's secondsPresent and the chapters' own reported seconds can
+    disagree in either direction while anything is still transcoding.
+    Dropping a chapter attributes that disagreement to the chapters that
+    have not finished; dropping nothing must never recompute the figure at
+    all, no matter which way the disagreement runs.
+    """
+    cloud.chapters[1]["seconds"] = b_seconds
+    cloud.chapters[1]["transcoding"] = b_seconds == 0.0
+    cloud.seconds_present_override = present
+
+    resp = client.put(URL, json={"base": BASE, "chapters": requested})
+
+    assert resp.status_code == 200
+    assert resp.json()["seconds_present"] == expected
+
+
+# Every chapter secondsPresent has ever needed to reason about, in one pool:
+# two chapters that always report a real duration, one that reports 0 (as a
+# transcoding chapter does), and a third real duration to make multi-drop
+# scenarios possible without reusing a and b.
+_POOL = {"a": 60.0, "b": 70.0, "c": 0.0, "d": 40.0}
+_REPORTED_TOTAL = sum(_POOL.values())
+
+# Named by what a save drops, so each scenario's id says what it is proving.
+_SCENARIOS = [
+    ("nothing-dropped", frozenset(_POOL)),               # zero dropped
+    ("drop-one-real", frozenset({"a", "c", "d"})),        # one dropped, real duration; c(0) survives
+    ("drop-one-zero", frozenset({"a", "b", "d"})),        # one dropped, reports 0
+    ("drop-several-real", frozenset({"c"})),              # several dropped, all real; only c(0) survives
+    ("drop-several-mixed", frozenset({"a"})),             # several dropped, one reports 0
+    ("clear-everything", frozenset()),                    # every chapter dropped
+]
+
+
+def _matrix_cases() -> list[tuple[str, frozenset, float, float]]:
+    """Build (scenario, kept_ids, present, surviving) rows.
+
+    `present` is chosen per scenario, not as one fixed number reused
+    everywhere, and the tier list now reaches below `surviving` as well as
+    above it. A gate finding showed that `present < surviving` is a real,
+    reachable case, not a contradiction in the inputs: the code floors the
+    result at `surviving` regardless of how low `present` sits, so the two
+    corrected invariants below both still hold there. Anchoring one tier at
+    `max(0.0, surviving - margin)` keeps every case satisfiable while
+    covering secondsPresent above, equal to, and below both `surviving` and
+    the reported total wherever those comparisons are meaningful for the
+    scenario.
+    """
+    cases = []
+    for name, kept_ids in _SCENARIOS:
+        surviving = sum(secs for cid, secs in _POOL.items() if cid in kept_ids)
+        margin = 20.0
+        presents = sorted({
+            max(0.0, surviving - margin),
+            surviving,
+            max(surviving, _REPORTED_TOTAL - margin),
+            _REPORTED_TOTAL,
+            _REPORTED_TOTAL + margin,
+        })
+        for present in presents:
+            cases.append((name, kept_ids, present, surviving))
+    return cases
+
+
+_MATRIX = _matrix_cases()
+
+
+@pytest.mark.parametrize(
+    "scenario, kept_ids, present, surviving", _MATRIX,
+    ids=[f"{name}-present={present:g}" for name, _, present, _ in _MATRIX],
+)
+def test_seconds_present_invariants_hold_across_the_matrix(
+    client, monkeypatch, scenario, kept_ids, present, surviving
+):
+    """Four invariants that must hold for every save, not four more expected
+    numbers. Three point-case fixes in this same block were each correct and
+    incomplete, so this asserts the rules themselves across a matrix of
+    drop counts, a dropped chapter reporting 0, a surviving chapter
+    reporting 0, and secondsPresent above, equal to, and below both
+    `surviving` and the reported total, rather than pinning one more set of
+    hand-picked outputs.
+
+    A gate finding corrected invariant 2 and surfaced a genuine conflict
+    between invariants 1 and 4: see the assertions below for both.
+    """
+    chapters = [
+        {"id": cid, "title": cid, "file": f"f-{cid}", "seconds": secs,
+         "transcoding": secs == 0.0}
+        for cid, secs in _POOL.items()
+    ]
+    stub = StubCloud(chapters)
+    stub.seconds_present_override = present
+    monkeypatch.setattr(push, "client_from_settings", lambda: stub)
+
+    base = [{"id": cid, "title": cid} for cid in _POOL]
+    requested = [{"id": cid, "title": cid} for cid in _POOL if cid in kept_ids]
+
+    resp = client.put(URL, json={"base": base, "chapters": requested})
+    assert resp.status_code == 200
+    result = resp.json()["seconds_present"]
+
+    # 1. Never below what survives, except in the no-drop case, where
+    # invariant 4 governs instead: present can sit below surviving there,
+    # and the figure must still pass through untouched.
+    if kept_ids != frozenset(_POOL):
+        assert result >= surviving
+    # 2. Never rises, unless the survivors themselves report more. The
+    # figure feeds a fits-or-not decision, so understating occupancy is
+    # safe and overstating it is not: when the two totals disagree, the
+    # higher one wins, which is why the cap is max(present, surviving)
+    # rather than present alone.
+    assert result <= max(present, surviving)
+    # 3. Clearing is exact.
+    if not kept_ids:
+        assert result == 0.0
+    # 4. A save that drops nothing does not move the figure, even when
+    # present sits below what the survivors report: no audio moved, and
+    # inventing a better figure is not this endpoint's business. This is
+    # the one case where invariant 1 does not hold, and this rule wins.
+    if kept_ids == frozenset(_POOL):
+        assert result == present
+
+
+def test_seconds_present_the_survivors_can_outrank_the_cloud(client, monkeypatch):
+    """The diff gate's own scenario, named on its own rather than folded
+    only into the matrix: secondsPresent=80, chapters a=60 b=70 c=0 d=40,
+    remove b. The survivors a, c, d report 100 between them, above the
+    Cloud's 80, and the higher figure wins: understating free space is
+    safe, overstating it invites a push that will not fit.
+    """
+    chapters = [
+        {"id": cid, "title": cid, "file": f"f-{cid}", "seconds": secs,
+         "transcoding": secs == 0.0}
+        for cid, secs in _POOL.items()
+    ]
+    stub = StubCloud(chapters)
+    stub.seconds_present_override = 80.0
+    monkeypatch.setattr(push, "client_from_settings", lambda: stub)
+
+    base = [{"id": cid, "title": cid} for cid in _POOL]
+    requested = [{"id": cid, "title": cid} for cid in _POOL if cid != "b"]
+
+    resp = client.put(URL, json={"base": base, "chapters": requested})
+    assert resp.status_code == 200
+    assert resp.json()["seconds_present"] == 100.0
+
+
+def test_a_failed_response_build_writes_nothing(client, cloud, monkeypatch):
+    """If the answer cannot be built, the Tonie is left alone.
+
+    The contract, not the call order: everything that can raise has to run
+    before set_chapters. A PATCH that landed and was then reported as a
+    failure sends the user back to retry into a 409, on a Tonie the Tonie
+    Cloud has already changed and cannot undo.
+    """
+    def boom(_seconds: float) -> str:
+        raise ResponseBuildFailed("no duration for you")
+
+    # human_duration is a collaborator of describe_tonie, not the thing whose
+    # position is being pinned, so this fails the response build without
+    # stubbing out the response build itself.
+    monkeypatch.setattr(audio, "human_duration", boom)
+
+    with pytest.raises(ResponseBuildFailed):
+        client.put(URL, json={
+            "base": BASE,
+            "chapters": [{"id": "a", "title": "Renamed"}, {"id": "b", "title": "Two"}],
+        })
+
+    assert cloud.set_calls == []
+    assert cloud.chapters[0]["title"] == "One"
+    # The finally has to hold even on a path nothing handles.
+    assert cloud.closed is True
+
+
+def test_households_is_resolved_before_the_write(client, cloud):
+    """Resolving a cosmetic display name must not be able to fail after the
+    destructive write has landed."""
+    client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert cloud.calls.index("households") < cloud.calls.index("set_chapters")
+
+
+def test_the_client_is_closed_on_the_success_path(client, cloud):
+    client.put(URL, json={
+        "base": [{"id": "a", "title": "One"}, {"id": "b", "title": "Two"}],
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+    assert cloud.closed is True
+
+
+def test_an_empty_cloud_response_is_a_400_and_writes_nothing(client, monkeypatch):
+    """The guard and the route have to compose, so neither half is stubbed.
+
+    A real TonieCloud is installed with only its _request monkeypatched, so
+    the empty body raises the real TonieCloudError from the real get_tonie
+    and the route maps the real exception type. Proving the guard against the
+    client alone would still pass if a refactor lifted get_tonie out of the
+    route's TonieCloudError handler, and an empty Cloud response would then
+    be a 500 rather than a clean 400.
+    """
+    calls: list[tuple[str, str]] = []
+
+    def record(method: str, path: str, **kwargs: object) -> None:
+        calls.append((method, path))
+        return None  # what _request returns for a 2xx with no body
+
+    cloud = tonies.TonieCloud("user", "pass")
+    monkeypatch.setattr(cloud, "_request", record)
+    monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
+
+    resp = client.put(URL, json={
+        "base": BASE,
+        "chapters": [{"id": "a", "title": "One"}],
+    })
+
+    assert resp.status_code == 400
+    # The whole call log, not just the absence of a PATCH: the read happened,
+    # it failed the guard, and nothing was attempted afterwards.
+    assert calls == [("GET", "/households/h1/creativetonies/t1")]
+    assert not any(method == "PATCH" for method, _ in calls)

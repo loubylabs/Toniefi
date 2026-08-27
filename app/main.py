@@ -1,4 +1,4 @@
-"""Toniefi — FastAPI application: JSON API plus the single-page front end."""
+"""Toniefi: the FastAPI application, serving the JSON API and the single-page front end."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -287,7 +287,7 @@ def push_to_tonie(body: PushRequest) -> dict[str, Any]:
 
 
 @app.put("/api/tonies/{household_id}/{tonie_id}/chapters")
-def set_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> dict[str, Any]:
+def put_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> dict[str, Any]:
     """Rename, reorder, remove or clear the chapters on a Creative Tonie."""
     try:
         return push.set_tonie_chapters(

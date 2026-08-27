@@ -28,6 +28,8 @@ const state = {
   openTonie: null, // "<householdId>:<tonieId>" of the expanded Tonie, if any
   pollTimer: null,
 };
+let toniesLoadToken = 0; // bumped by any load or save that supersedes an older one
+let toniesError = ""; // last genuine loadTonies() failure, for a caller to toast
 
 /* One chapter write at a time. A whole-list PUT does not compose with
    another one, and a blur that fires `change` followed by the click that
@@ -72,6 +74,20 @@ function busy(host, message) {
     : "";
 }
 
+/* A div with a click handler is invisible to the keyboard. These three sites
+   are styled as panels rather than buttons, so they stay divs and borrow a
+   button's semantics instead. */
+function clickable(el, onActivate) {
+  el.setAttribute("role", "button");
+  el.setAttribute("tabindex", "0");
+  el.addEventListener("click", onActivate);
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault(); // Space would scroll the page
+    onActivate(e);
+  });
+}
+
 /* ----------------------------------------------------------------- tabs */
 
 $$("nav button").forEach((btn) => {
@@ -106,7 +122,7 @@ function renderStepper() {
 
   $("#stepper").querySelectorAll("[data-step-to]").forEach((el) => {
     const target = Number(el.dataset.stepTo);
-    if (target <= state.reached) el.addEventListener("click", () => goto(target));
+    if (target <= state.reached) clickable(el, () => goto(target));
   });
 }
 
@@ -497,18 +513,35 @@ async function renderSend() {
 }
 
 $("#sendRefresh").addEventListener("click", async () => {
-  await loadTonies(); // fetches unconditionally, and clears the stale flag
-  toast("Refreshed", "good");
+  /* A failed refresh must not leave the old free-space figures looking
+     confirmed. Marking them stale sends the next prompt back to the server.
+     A superseded refresh says nothing at all: a newer click is still running
+     and it owns the report, so a second "Refreshed" here would be claiming
+     credit for figures this click never installed. */
+  const loaded = await loadTonies();
+  if (loaded === null) return;
+  if (loaded === true) return toast("Refreshed", "good");
+  state.toniesStale = true;
+  toast("Could not refresh from myTonies. The figures below may be out of date.", "bad");
 });
 
 async function choosePushTarget(groupIndex) {
   /* This prompt is the only place the free-space figures are read, so it is
-     the place that has to pay for a finished push having moved them. */
+     the place that has to pay for a finished push having moved them.
+     loadTonies() is the only function that fetches /api/tonies: routing
+     through it here instead of a second inline fetch keeps state.tonies
+     behind one token-guarded writer, so a slow refresh can never land after
+     a save and undo it. */
   if (!state.tonies.length || state.toniesStale) {
-    try {
-      state.tonies = await api("/api/tonies");
-      state.toniesStale = false;
-    } catch (err) { return toast(err.message, "bad"); }
+    const loaded = await loadTonies();
+    if (loaded === false) return toast(toniesError || "Could not reach myTonies.", "bad");
+    /* Superseded, so this call refreshed nothing. If the figures are still
+       flagged stale, a finished push has already moved them and no load has
+       replaced them yet: offering them would prompt the user to choose a
+       Tonie on free space that is known to be wrong. */
+    if (loaded === null && state.toniesStale) {
+      return toast("Still refreshing from myTonies. Try again in a moment.", "bad");
+    }
   }
   if (!state.tonies.length) return toast("No Creative Tonies on this account", "bad");
 
@@ -546,6 +579,7 @@ async function choosePushTarget(groupIndex) {
            the list, which renderTonies would draw as a Tonie-less account. */
         state.toniesStale = true;
       },
+      onFail: () => { state.toniesStale = true; },
     });
   } catch (err) {
     busy(host, "");
@@ -574,7 +608,7 @@ async function loadCollections() {
   }).join("");
 
   host.querySelectorAll(".item").forEach((el) => {
-    el.addEventListener("click", () => {
+    clickable(el, () => {
       state.slug = el.dataset.slug;
       state.reached = 5;
       goto(4);
@@ -595,21 +629,40 @@ $("#refreshLibrary").addEventListener("click", async () => {
 
 const tonieKey = (t) => `${t.householdId}:${t.id}`;
 
+/* Three outcomes, and a caller has to tell them apart:
+     true   this call installed its result, so the figures are fresh
+     false  this call genuinely failed, and toniesError says how
+     null   this call was superseded and applied nothing at all
+   `null` is not success. A superseded load leaves whatever the newer load or
+   the save put in state.tonies, which may be older than what this caller
+   asked for, so reporting `true` would put a green tick under stale figures.
+   It is not failure either: the newer writer is the one that reports. So the
+   caller says nothing, and every check on the result is `===`, because null
+   is falsy and a truthiness test would read it as a failure. */
 async function loadTonies() {
   const host = $("#tonieList");
+  const token = ++toniesLoadToken;
   busy(host, "Loading...");
+  let fetched;
   try {
-    state.tonies = await api("/api/tonies");
-    state.toniesStale = false;
+    fetched = await api("/api/tonies");
   } catch (err) {
+    if (token !== toniesLoadToken) return null; // superseded; its owner reports
+    toniesError = err.message;
     host.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
-    return;
+    return false;
   }
+  // A load that started before a save must not overwrite the save's result.
+  if (token !== toniesLoadToken) return null;
+  toniesError = "";
+  state.tonies = fetched;
+  state.toniesStale = false;
   if (!state.tonies.length) {
     host.innerHTML = `<div class="empty">No Creative Tonies found on this account.</div>`;
-    return;
+    return true;
   }
   renderTonies();
+  return true;
 }
 
 function renderTonies() {
@@ -618,7 +671,7 @@ function renderTonies() {
     const open = state.openTonie === tonieKey(t);
     return `
     <div class="item tonie" data-key="${esc(tonieKey(t))}">
-      <div class="tonie-head">
+      <div class="tonie-head" aria-expanded="${open}">
         <div class="row tight">
           <span class="caret">${open ? "&#9662;" : "&#9656;"}</span>
           <span class="title grow">${esc(t.name || "Creative Tonie")}</span>
@@ -678,10 +731,25 @@ function wireTonies() {
      than its child, so a click on a title input, a grip or a button cannot
      bubble into the toggle and collapse the row mid-edit. */
   host.querySelectorAll(".tonie-head").forEach((head) => {
-    head.addEventListener("click", () => {
+    clickable(head, () => {
       const key = head.closest(".tonie").dataset.key;
       state.openTonie = state.openTonie === key ? null : key;
       renderTonies();
+      /* renderTonies rewrites the whole list, so the header that was just
+         activated is gone and focus falls back to the body: a keyboard user
+         could open a row and then not close it. Put focus on the replacement
+         header instead. This lives here and not in `clickable`, because the
+         other two panels navigate away and must not steal focus. A mouse
+         click lands here too, harmlessly: the ring is :focus-visible, which
+         a pointer-only interaction does not paint. (It does persist if the
+         user was on the keyboard a moment ago, which is the browser's own
+         rule for a scripted focus, and what a real button does too.) The
+         key is
+         "<householdId>:<tonieId>", and a colon is a selector operator, hence
+         CSS.escape. */
+      const replacement = host.querySelector(
+        `.tonie[data-key="${CSS.escape(key)}"] .tonie-head`);
+      if (replacement) replacement.focus();
     });
   });
 
@@ -706,9 +774,10 @@ function wireTonies() {
 
   list.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const chapter = open.chapters.find((c) => c.id === btn.dataset.del);
+      const row = btn.closest("li");
+      const name = row.querySelector("input.tt").value || "this chapter";
       if (!window.confirm(
-        `Remove "${chapter.title}" from "${open.name || "this Tonie"}"?\n\n` +
+        `Remove "${name}" from "${open.name || "this Tonie"}"?\n\n` +
         `This cannot be undone. Your library on disk is not touched.`)) return;
       saveChapters(open, fromDom().filter((c) => c.id !== btn.dataset.del));
     });
@@ -766,6 +835,7 @@ async function saveChapters(tonie, chapters) {
   }
   // No fix-ups here. The response is already a full /api/tonies entry,
   // household fields included, because the server stamps them.
+  toniesLoadToken++; // any load still in flight is older than this write
   state.tonies = state.tonies.map((t) => (tonieKey(t) === tonieKey(tonie) ? updated : t));
   renderTonies();
   toast("Saved to the Tonie", "good");

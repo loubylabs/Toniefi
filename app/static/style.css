@@ -180,7 +180,6 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 .empty { color: var(--muted); font-size: 14px; padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
 
 .note { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
-.back { color: var(--accent); cursor: pointer; font-size: 13px; margin-bottom: 12px; display: inline-block; }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
 
 /* ------------------------------------------------------------- stepper */
@@ -309,3 +308,8 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
 }
 .tonie-body.saving { pointer-events: none; opacity: .5; }
 .tonie-actions { margin-bottom: 8px; }
+
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

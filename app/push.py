@@ -1,9 +1,9 @@
 """Two Creative Tonie operations, sharing one Tonie Cloud client.
 
-Send takes a group of library tracks, uploads them and appends a chapter
-per track. The chapter layer rewrites the chapter list a Tonie already has
-(rename, reorder, remove, clear); it uploads nothing and never reads the
-library on disk.
+The chapter layer rewrites the chapter list a Tonie already has (rename,
+reorder, remove, clear); it uploads nothing and never reads the library on
+disk. Send takes a group of library tracks, uploads them and appends a
+chapter per track.
 """
 from __future__ import annotations
 
@@ -12,12 +12,22 @@ from typing import Any, Callable
 
 from . import audio, config, library, tonies
 
-Progress = Callable[[str], None]
+
+def client_from_settings() -> tonies.TonieCloud:
+    """Env vars win; the UI-stored credentials are the fallback."""
+    from . import db
+
+    username = config.TONIES_USERNAME or db.get_setting("tonies_username")
+    password = config.TONIES_PASSWORD or db.get_setting("tonies_password")
+    if not username or not password:
+        raise tonies.AuthError(
+            "No myTonies credentials configured. Set TONIES_USERNAME and "
+            "TONIES_PASSWORD, or save them on the Settings tab."
+        )
+    return tonies.TonieCloud(username, password)
 
 
-def _noop(_: str) -> None:
-    return None
-
+# ------------------------------------------------------ chapter management
 
 TITLE_LIMIT = 128
 
@@ -78,9 +88,18 @@ def merge_chapters(
         seen.add(chapter_id)
 
         merged = dict(by_id[chapter_id])
-        title = (entry.get("title") or "").strip()[:TITLE_LIMIT]
-        if title:
-            merged["title"] = title
+        current_title = merged.get("title") or ""
+        wanted = entry.get("title") or ""
+        # Compare the raw title before normalising. A title the myTonies app
+        # created with leading whitespace, or past the cap, must survive a save
+        # that never touched it: otherwise reordering one chapter quietly
+        # rewrites all twelve, and there is no undo.
+        if wanted != current_title:
+            wanted = wanted.strip()[:TITLE_LIMIT]
+            # An empty title keeps the current one, so a slipped keystroke
+            # cannot leave a nameless chapter on a Tonie.
+            if wanted:
+                merged["title"] = wanted
         out.append(merged)
 
     return out
@@ -129,7 +148,8 @@ def set_tonie_chapters(
     client = client_from_settings()
     try:
         tonie = client.get_tonie(household_id, tonie_id)
-        merged = merge_chapters(tonie.get("chapters") or [], base, requested)
+        current = tonie.get("chapters") or []
+        merged = merge_chapters(current, base, requested)
 
         # get_tonie does not carry the household, but a GET /api/tonies entry
         # does, and this response has to match it for every caller, not just
@@ -140,33 +160,78 @@ def set_tonie_chapters(
                 household_name = house.get("name", "")
                 break
 
-        client.set_chapters(household_id, tonie_id, merged)
+        kept = {c.get("id") for c in merged}
+        present = float(tonie.get("secondsPresent") or 0)
+        surviving = sum(
+            float(c.get("seconds") or 0) for c in current if c.get("id") in kept
+        )
+        dropped = [c for c in current if c.get("id") not in kept]
 
-        # The PATCH succeeded, so the Tonie now holds exactly `merged`. Build
-        # the answer from that rather than reading it back: a post-write GET
-        # only adds a case where the write landed and Toniefi says it did not,
-        # after which the user retries and gets a 409.
+        # Four cases, attributed by what a save actually drops. The Cloud's
+        # secondsPresent and the sum of the chapters' own reported seconds
+        # can legitimately disagree in either direction (a chapter still
+        # transcoding reports less than it will finish with), and that
+        # disagreement is not this endpoint's business unless a chapter is
+        # actually removed.
+        if not merged:
+            # Clearing is exact: nothing survives, so there is nothing to
+            # carry.
+            seconds_present = 0.0
+        elif not dropped:
+            # Rename and reorder drop nothing, so no audio changed and the
+            # Cloud's own figure passes through untouched. Recomputing it
+            # from the chapters' reported seconds, even to "correct" it
+            # toward that sum, is what let a rename move the number: up when
+            # the Cloud was still counting more than the chapters had
+            # finished reporting, down when the chapters happened to report
+            # more than the Cloud's own total.
+            seconds_present = present
+        elif all(float(c.get("seconds") or 0) for c in dropped):
+            # Every dropped chapter reported a real duration, so the Cloud's
+            # total minus exactly what left is what remains, floored at what
+            # the survivors themselves report. The floor matters because
+            # present and the chapters' reported seconds can disagree in
+            # either direction: when present sits below the reported total,
+            # subtracting the dropped chapter's full duration can land under
+            # what the survivors demonstrably occupy, understating present
+            # and so overstating free space. This floor subsumes the plain
+            # max(0.0, ...) it replaces, since a sum of durations is never
+            # negative.
+            dropped_seconds = sum(float(c.get("seconds") or 0) for c in dropped)
+            seconds_present = max(surviving, present - dropped_seconds)
+        else:
+            # A dropped chapter reported 0, most likely because it was still
+            # transcoding. It may own part of whatever the Cloud counts
+            # beyond the chapters' own reported total, and that remainder
+            # cannot be split, so it leaves with the dropped chapter rather
+            # than inflating the survivors. Erring low is the safer
+            # direction: this figure feeds the free-space readout, and
+            # overstating what a Tonie holds is what sends a user's next
+            # push into a refusal.
+            seconds_present = surviving
+
         tonie["chapters"] = merged
-        tonie["secondsPresent"] = sum(float(c.get("seconds") or 0) for c in merged)
+        tonie["secondsPresent"] = seconds_present
         tonie["householdId"] = household_id
         tonie["householdName"] = household_name
-        return describe_tonie(tonie)
+
+        # Build the answer BEFORE the write. Nothing that can raise may run
+        # after set_chapters, or a landed PATCH gets reported as a failure and
+        # the user retries into a 409.
+        answer = describe_tonie(tonie)
+        client.set_chapters(household_id, tonie_id, merged)
+        return answer
     finally:
         client.close()
 
 
-def client_from_settings() -> tonies.TonieCloud:
-    """Env vars win; the UI-stored credentials are the fallback."""
-    from . import db
+# -------------------------------------------------- sending library tracks
 
-    username = config.TONIES_USERNAME or db.get_setting("tonies_username")
-    password = config.TONIES_PASSWORD or db.get_setting("tonies_password")
-    if not username or not password:
-        raise tonies.AuthError(
-            "No myTonies credentials configured. Set TONIES_USERNAME and "
-            "TONIES_PASSWORD, or save them on the Settings tab."
-        )
-    return tonies.TonieCloud(username, password)
+Progress = Callable[[str], None]
+
+
+def _noop(_: str) -> None:
+    return None
 
 
 def resolve_tracks(slug: str, names: list[str] | None, group_index: int | None) -> list[dict[str, Any]]:

@@ -138,7 +138,15 @@ class TonieCloud:
         return out
 
     def get_tonie(self, household_id: str, tonie_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/households/{household_id}/creativetonies/{tonie_id}")
+        tonie = self._request("GET", f"/households/{household_id}/creativetonies/{tonie_id}")
+        # A 2xx with an empty body is not a Tonie. Returning None here would
+        # surface as an AttributeError: a 500 at the chapter-write caller, a
+        # failed job with an ugly message at the send caller, which runs in
+        # a worker that catches Exception (app/jobs.py) rather than an HTTP
+        # request.
+        if not isinstance(tonie, dict):
+            raise TonieCloudError(f"Tonie Cloud returned no Tonie for {tonie_id}.")
+        return tonie
 
     # ----------------------------------------------------------- upload
 
@@ -193,4 +201,18 @@ class TonieCloud:
         return self.set_chapters(household_id, tonie_id, [])
 
     def close(self) -> None:
-        self._client.close()
+        """Release the connection pool. This never raises.
+
+        Every caller closes from a `finally`, after the work is done, so a
+        teardown error can only arrive on top of an answer that is already
+        settled. Letting it out would turn a PATCH that reached the Tonie
+        Cloud into a reported failure, and the user would retry a change the
+        Tonie Cloud has already made and cannot undo. There is nothing a
+        caller could do with the error anyway: the request is over and the
+        pool is being discarded. Losing it is the lesser harm, so it is
+        swallowed here rather than guarded at each call site.
+        """
+        try:
+            self._client.close()
+        except Exception:
+            pass
