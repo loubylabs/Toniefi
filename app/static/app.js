@@ -29,6 +29,7 @@ const state = {
   pollTimer: null,
 };
 let toniesLoadToken = 0; // bumped by any load or save that supersedes an older one
+let toniesError = ""; // last genuine loadTonies() failure, for a caller to toast
 
 /* One chapter write at a time. A whole-list PUT does not compose with
    another one, and a blur that fires `change` followed by the click that
@@ -507,12 +508,13 @@ $("#sendRefresh").addEventListener("click", async () => {
 
 async function choosePushTarget(groupIndex) {
   /* This prompt is the only place the free-space figures are read, so it is
-     the place that has to pay for a finished push having moved them. */
+     the place that has to pay for a finished push having moved them.
+     loadTonies() is the only function that fetches /api/tonies: routing
+     through it here instead of a second inline fetch keeps state.tonies
+     behind one token-guarded writer, so a slow refresh can never land after
+     a save and undo it. */
   if (!state.tonies.length || state.toniesStale) {
-    try {
-      state.tonies = await api("/api/tonies");
-      state.toniesStale = false;
-    } catch (err) { return toast(err.message, "bad"); }
+    if (!(await loadTonies())) return toast(toniesError || "Could not reach myTonies.", "bad");
   }
   if (!state.tonies.length) return toast("No Creative Tonies on this account", "bad");
 
@@ -609,11 +611,13 @@ async function loadTonies() {
     fetched = await api("/api/tonies");
   } catch (err) {
     if (token !== toniesLoadToken) return true; // superseded; its owner reports
+    toniesError = err.message;
     host.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
     return false;
   }
   // A load that started before a save must not overwrite the save's result.
   if (token !== toniesLoadToken) return true;
+  toniesError = "";
   state.tonies = fetched;
   state.toniesStale = false;
   if (!state.tonies.length) {
