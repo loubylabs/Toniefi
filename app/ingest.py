@@ -137,12 +137,21 @@ def _strip_html(text: str) -> str:
 
 # --------------------------------------------------------------- URL ingest
 
+def _player_client_args() -> list[str]:
+    """Ask yt-dlp for a working YouTube client. See config.YTDLP_PLAYER_CLIENTS."""
+    if not config.YTDLP_PLAYER_CLIENTS:
+        return []
+    return ["--extractor-args",
+            f"youtube:player_client={config.YTDLP_PLAYER_CLIENTS}"]
+
+
 def probe_url(url: str) -> dict[str, Any]:
     """Look at a URL without downloading it, so Review can show what's coming."""
     if not shutil.which("yt-dlp"):
         raise RuntimeError("yt-dlp is not installed in this container.")
     proc = subprocess.run(
-        ["yt-dlp", "--dump-single-json", "--flat-playlist", "--no-warnings", url],
+        ["yt-dlp", "--dump-single-json", "--flat-playlist", "--no-warnings",
+         *_player_client_args(), url],
         capture_output=True, text=True, timeout=180,
     )
     if proc.returncode != 0:
@@ -204,6 +213,7 @@ def import_url(
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
             "--no-progress", "--newline", "--no-warnings",
+            *_player_client_args(),
             "-o", str(tmp / "%(playlist_index|0)03d-%(title).70s.%(ext)s"),
         ]
         if use_chapters:
@@ -288,9 +298,17 @@ def _pick_thumbnail(tmp: Path) -> Path | None:
     return None
 
 
+# Both of our yt-dlp output templates below prefix every file with an index:
+# "001-Intro" for a chapter, and "0-Title" for a single video, because the
+# playlist_index fallback renders as a bare 0. Strip exactly that one prefix
+# rather than letting clean_title guess at it, so a video genuinely called
+# "7-Zip Explained" keeps its 7 once our own "0-" is off the front.
+_OUR_INDEX_PREFIX = re.compile(r"^\d+-")
+
+
 def _track_title(stem: str, chaptered: list[Path], offset: int, book_title: str) -> str:
     """Chapter files carry a real chapter name; single files fall back to the book."""
-    cleaned = forge.clean_title(stem, drop_leading_index=True)
+    cleaned = forge.clean_title(_OUR_INDEX_PREFIX.sub("", stem, count=1))
     if chaptered:
         return cleaned or f"Chapter {offset + 1}"
     return cleaned or book_title

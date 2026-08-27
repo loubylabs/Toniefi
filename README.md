@@ -79,17 +79,33 @@ curl -s -X POST http://127.0.0.1:8080/api/ingest/upload \
 
 ### When a link will not load
 
-Almost always a stale `yt-dlp`. Video sites change their player every few
-weeks and `yt-dlp` ships a fix within days, so an old copy fails every URL with
-a message like `The page needs to be reloaded`. `run-local.sh` upgrades it on
-every start; under Docker, rebuild the image:
+**`This video is not available`, but the browser plays it fine.** YouTube is
+refusing the client `yt-dlp` asked as. Its default set gets turned away often:
+the `tv` client asks to reload the page, and `web` and `ios` hand back the
+metadata with no downloadable formats, which yt-dlp reports as the video being
+unavailable. Misleading, but not your video's fault.
+
+Toniefi already names `android` as a fallback, which currently works where the
+default set does not. Which clients YouTube accepts drifts, so that list is an
+environment variable rather than a constant:
+
+```bash
+YTDLP_PLAYER_CLIENTS=default,android,web_safari ./run-local.sh
+```
+
+`yt-dlp --extractor-args "youtube:player_client=CLIENT" --simulate URL` is the
+quick way to find one that answers before you change the setting.
+
+**`The page needs to be reloaded`** on every URL is a stale `yt-dlp`. Sites
+change their player every few weeks and yt-dlp ships a fix within days.
+`run-local.sh` upgrades it on every start; under Docker, rebuild the image:
 
 ```bash
 docker compose up -d --build
 ```
 
-The other common cases: the video is private or age-gated, or it is a DRM'd
-stream (Audible, Spotify, Apple Music), which no amount of upgrading will fix.
+**Nothing will fix these:** a genuinely private, deleted or region-blocked
+video, and a DRM'd stream (Audible, Spotify, Apple Music).
 
 ## What each Forge pass does
 
@@ -152,6 +168,7 @@ paths for you; only override them if you want the library somewhere else.
 | `TONIES_USERNAME` / `TONIES_PASSWORD` | unset | myTonies account |
 | `AUDIO_BITRATE` | `128k` | Transcode target |
 | `WORKER_THREADS` | `2` | Concurrent background jobs |
+| `YTDLP_PLAYER_CLIENTS` | `default,android` | Which YouTube clients yt-dlp may ask as |
 
 ## Architecture
 
