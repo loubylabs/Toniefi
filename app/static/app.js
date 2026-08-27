@@ -422,12 +422,17 @@ function renderTrackList(data) {
 
 function wireDragAndDrop(host, onDrop) {
   let dragged = null;
+  /* `dragend` fires on every drag, including one cancelled with Escape,
+     dropped outside the list, or dropped back onto itself. Only the `drop`
+     handler knows an item actually moved, so it says so and `dragend` saves
+     nothing otherwise. */
+  let moved = false;
   host.querySelectorAll("li").forEach((li) => {
-    li.addEventListener("dragstart", () => { dragged = li; li.classList.add("dragging"); });
+    li.addEventListener("dragstart", () => { dragged = li; moved = false; li.classList.add("dragging"); });
     li.addEventListener("dragend", () => {
       li.classList.remove("dragging");
       host.querySelectorAll("li").forEach((x) => x.classList.remove("over"));
-      onDrop();
+      if (moved) onDrop();
     });
     li.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -442,6 +447,7 @@ function wireDragAndDrop(host, onDrop) {
       const from = items.indexOf(dragged);
       const to = items.indexOf(li);
       host.insertBefore(dragged, from < to ? li.nextSibling : li);
+      moved = true;
     });
   });
 }
@@ -620,12 +626,26 @@ function renderTonies() {
   wireTonies();
 }
 
+/* The panel's enabled state is a pure function of `savingTonie`, worked out
+   again on every render. `savingTonie` is module state while `.saving` and
+   `disabled` live on DOM nodes, so stamping them once when a save starts
+   loses them the moment anything re-renders the list: the header toggle,
+   Refresh, or the My Tonies nav button, none of which the lock disables. */
+const tonieBodyClass = () => `tonie-body${savingTonie ? " saving" : ""}`;
+
+function lockTonieBody() {
+  const body = $("#tonieList .tonie-body");
+  if (!body) return;
+  body.classList.add("saving");
+  body.querySelectorAll("input, button").forEach((el) => { el.disabled = true; });
+}
+
 function tonieBody(t) {
   if (!t.chapters.length) {
-    return `<div class="tonie-body"><div class="empty">Nothing on this Tonie yet.</div></div>`;
+    return `<div class="${tonieBodyClass()}"><div class="empty">Nothing on this Tonie yet.</div></div>`;
   }
   return `
-    <div class="tonie-body">
+    <div class="${tonieBodyClass()}">
       <div class="row tight" style="margin-bottom:8px">
         <span class="grow"></span>
         <button class="btn danger small" data-clear="1">Clear all</button>
@@ -657,6 +677,9 @@ function wireTonies() {
       renderTonies();
     });
   });
+
+  // Re-derive the lock, so no re-render can hand back a live-looking panel.
+  if (savingTonie) lockTonieBody();
 
   const open = state.tonies.find((t) => tonieKey(t) === state.openTonie);
   if (!open) return;
@@ -697,36 +720,46 @@ function wireTonies() {
 }
 
 async function saveChapters(tonie, chapters) {
-  if (savingTonie) return; // a save is already in flight; the panel is disabled
-  savingTonie = true;
-
-  const body = $("#tonieList .tonie-body");
-  if (body) {
-    body.classList.add("saving");
-    body.querySelectorAll("input, button").forEach((el) => { el.disabled = true; });
+  // Dropped, never queued: two whole-list writes do not compose. Say so out
+  // loud, because the dropped action may have been an accepted Remove.
+  if (savingTonie) {
+    toast("A save is already running, try again in a moment", "bad");
+    return;
   }
 
   const url = `/api/tonies/${encodeURIComponent(tonie.householdId)}`
     + `/${encodeURIComponent(tonie.id)}/chapters`;
+  let updated = null;
+  let failure = null;
   try {
-    const updated = await api(url, {
+    savingTonie = true;
+    lockTonieBody();
+    updated = await api(url, {
       method: "PUT",
       body: JSON.stringify({
         base_ids: tonie.chapters.map((c) => c.id),
         chapters,
       }),
     });
-    // No fix-ups here. The response is already a full /api/tonies entry,
-    // household fields included, because the server stamps them.
-    state.tonies = state.tonies.map((t) => (tonieKey(t) === tonieKey(tonie) ? updated : t));
-    renderTonies();
-    toast("Saved to the Tonie", "good");
   } catch (err) {
-    toast(err.message, "bad");
-    await loadTonies(); // redraw from the truth, never from what we hoped
+    failure = err;
   } finally {
     savingTonie = false;
   }
+
+  /* Both redraws below sit outside the lock on purpose. A render while
+     `savingTonie` is still true would correctly come back disabled, and
+     nothing after the `finally` would re-enable it. */
+  if (failure) {
+    toast(failure.message, "bad");
+    await loadTonies(); // redraw from the truth, never from what we hoped
+    return;
+  }
+  // No fix-ups here. The response is already a full /api/tonies entry,
+  // household fields included, because the server stamps them.
+  state.tonies = state.tonies.map((t) => (tonieKey(t) === tonieKey(tonie) ? updated : t));
+  renderTonies();
+  toast("Saved to the Tonie", "good");
 }
 
 $("#refreshTonies").addEventListener("click", loadTonies);

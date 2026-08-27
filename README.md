@@ -18,11 +18,11 @@ Paste  ->  Extract  ->  Forge  ->  Review  ->  Send
    onto Tonies. Drag to reorder, click to retitle, play to check.
 5. **Send**: pick a Creative Tonie and upload, replacing or appending.
 
-Opening a Creative Tonie shows the chapters already on it. You can rename a
-chapter in place, drag one to reorder, remove a single chapter, or clear the
-whole Tonie. Every change is written straight to the Tonie Cloud, which has no
-undo, so Remove and Clear both ask first. Your library on disk is never touched
-by anything on this tab.
+On the **My Tonies** tab, opening a Creative Tonie shows the chapters already on
+it. You can rename a chapter in place, drag one to reorder, remove a single
+chapter, or clear the whole Tonie. Every change is written straight to the Tonie
+Cloud, which has no undo, so Remove and Clear both ask first. Your library on
+disk is never touched by anything on this tab.
 
 If someone else changes the same Tonie while you have it open (the myTonies app,
 or a Toniefi upload running in another tab), the save is refused and the list
