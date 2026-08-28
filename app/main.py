@@ -220,7 +220,7 @@ async def prepare_uploads(
         })
 
     jobs.sweep_upload_staging()
-    stage_name, stage = jobs.create_upload_stage()
+    _, stage = jobs.create_upload_stage()
     try:
         total_bytes = 0
         for upload, item in zip(files, described, strict=True):
@@ -239,16 +239,14 @@ async def prepare_uploads(
                     jobs.mark_upload_stage(stage)
         payload = {
             "title": title.strip(),
-            "stage": stage_name,
             "files": described,
             "options": forge_options,
         }
         label = title.strip() or described[0]["name"]
-        job_id = jobs.enqueue("upload_prepare", f"Upload {label}", payload)
+        job_id = jobs.enqueue_upload_stage(stage, f"Upload {label}", payload)
     except Exception:
         jobs.remove_upload_stage(stage)
         raise
-    jobs.release_upload_stage(stage)
     return {"job_id": job_id}
 
 
@@ -393,7 +391,7 @@ def get_job(job_id: int) -> dict[str, Any]:
 
 @app.post("/api/jobs/{job_id}/retry")
 def retry_job(job_id: int) -> dict[str, Any]:
-    retry_id = db.retry_failed_job(job_id)
+    retry_id = jobs.retry_failed_job(job_id)
     if not retry_id:
         raise fail(400, "Only failed jobs can be retried.")
     job = db.get_job(retry_id)

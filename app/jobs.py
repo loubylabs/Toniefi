@@ -34,50 +34,49 @@ def _owned_upload_stage(stage: Path) -> bool:
 
 
 def mark_upload_stage(stage: Path) -> None:
-    stage = stage.resolve()
-    if not _owned_upload_stage(stage):
-        return
-    (stage / UPLOAD_STAGE_MARKER).write_text(
-        json.dumps({"retained_at": _now()}),
-        encoding="utf-8",
-    )
-
-
-def release_upload_stage(stage: Path) -> None:
     with _upload_stage_lock:
-        _upload_stage_leases.discard(stage.resolve())
+        stage = stage.resolve()
+        if not _owned_upload_stage(stage):
+            return
+        (stage / UPLOAD_STAGE_MARKER).write_text(
+            json.dumps({"retained_at": _now()}),
+            encoding="utf-8",
+        )
 
 
 def remove_upload_stage(stage: Path) -> None:
-    stage = stage.resolve()
     with _upload_stage_lock:
+        stage = stage.resolve()
         _upload_stage_leases.discard(stage)
         if _owned_upload_stage(stage):
+            shutil.rmtree(stage)
+
+
+def _sweep_upload_stage(stage: Path) -> None:
+    with _upload_stage_lock:
+        if stage.is_symlink():
+            return
+        stage = stage.resolve()
+        if stage in _upload_stage_leases or not _owned_upload_stage(stage):
+            return
+        if stage.name in db.active_upload_stages():
+            return
+        marker = stage / UPLOAD_STAGE_MARKER
+        try:
+            retained_at = float(json.loads(marker.read_text(encoding="utf-8"))["retained_at"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
+            return
+        cutoff = _now() - UPLOAD_STAGE_RETENTION_SECONDS
+        if retained_at <= cutoff:
             shutil.rmtree(stage)
 
 
 def sweep_upload_staging() -> None:
     """Remove expired TonieFi upload stages and leave all other work intact."""
     config.ensure_dirs()
-    cutoff = _now() - UPLOAD_STAGE_RETENTION_SECONDS
-    active_stages = db.active_upload_stages()
     for stage in config.WORK_DIR.iterdir():
-        if not stage.is_dir() or stage.is_symlink() or not stage.name.startswith("upload-"):
-            continue
-        marker = stage / UPLOAD_STAGE_MARKER
-        if not marker.is_file():
-            continue
-        if stage.name in active_stages:
-            continue
-        try:
-            retained_at = float(json.loads(marker.read_text(encoding="utf-8"))["retained_at"])
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
-            continue
-        if retained_at <= cutoff:
-            with _upload_stage_lock:
-                if stage.resolve() in _upload_stage_leases:
-                    continue
-                shutil.rmtree(stage)
+        if stage.name.startswith("upload-"):
+            _sweep_upload_stage(stage)
 
 
 def create_upload_stage() -> tuple[str, Path]:
@@ -115,8 +114,27 @@ def enqueue(kind: str, label: str, payload: dict) -> int:
     return db.create_job(kind, label, payload)
 
 
+def enqueue_upload_stage(stage: Path, label: str, payload: dict) -> int:
+    with _upload_stage_lock:
+        stage = stage.resolve()
+        if stage not in _upload_stage_leases or not _owned_upload_stage(stage):
+            raise ValueError("Upload stage is not an owned active stage.")
+        job_id = db.create_job(
+            "upload_prepare",
+            label,
+            {**payload, "stage": stage.name},
+        )
+        _upload_stage_leases.discard(stage)
+        return job_id
+
+
 def enqueue_many(entries: list[tuple[str, str, dict]]) -> list[int]:
     return db.create_jobs(entries)
+
+
+def retry_failed_job(job_id: int) -> int:
+    with _upload_stage_lock:
+        return db.clone_failed_job(job_id)
 
 
 def present(job: dict) -> dict:

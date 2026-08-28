@@ -64,6 +64,30 @@ def owned_stage(name: str, retained_at: float):
     return stage
 
 
+def pause_sweep_after_discovery(monkeypatch, stage):
+    path_type = type(config.WORK_DIR)
+    real_iterdir = path_type.iterdir
+    discovered = threading.Event()
+    resume = threading.Event()
+
+    def paused_iterdir(path):
+        entries = list(real_iterdir(path))
+        if path == config.WORK_DIR and stage in entries:
+            discovered.set()
+            assert resume.wait(5), "sweep was not resumed"
+        return iter(entries)
+
+    monkeypatch.setattr(path_type, "iterdir", paused_iterdir)
+    return discovered, resume
+
+
+def capture_sweep_errors(errors):
+    try:
+        jobs.sweep_upload_staging()
+    except BaseException as exc:
+        errors.append(exc)
+
+
 def test_upload_endpoint_stages_the_whole_selection_as_one_job(client, isolated_db, monkeypatch):
     monkeypatch.setattr(jobs, "_now", lambda: 2_000_000, raising=False)
     response = client.post(
@@ -207,8 +231,88 @@ def test_concurrent_sweep_cannot_remove_a_leased_old_stage(monkeypatch, isolated
     sweep.join()
 
     assert stage.is_dir()
-    jobs.release_upload_stage(stage)
+    jobs.remove_upload_stage(stage)
+    assert not stage.exists()
+
+
+def test_sweep_rechecks_upload_job_ownership_after_stage_discovery(
+    monkeypatch,
+    isolated_db,
+):
+    now = 2_000_000
+    monkeypatch.setattr(jobs, "_now", lambda: now, raising=False)
+    stage_name, stage = jobs.create_upload_stage()
+    (stage / STAGE_MARKER).write_text(
+        json.dumps({"retained_at": now - (24 * 60 * 60) - 1}),
+        encoding="utf-8",
+    )
+    discovered, resume = pause_sweep_after_discovery(monkeypatch, stage)
+    sweep_errors = []
+    sweep = threading.Thread(target=capture_sweep_errors, args=(sweep_errors,))
+    payload = upload_payload(stage_name)
+    payload.pop("stage")
+
+    sweep.start()
+    assert discovered.wait(5), "sweep did not discover the stage"
+    try:
+        job_id = jobs.enqueue_upload_stage(
+            stage,
+            "Upload Family Stories",
+            payload,
+        )
+    finally:
+        resume.set()
+        sweep.join(5)
+
+    assert not sweep.is_alive()
+    assert sweep_errors == []
+    persisted = db.get_job(job_id)
+    assert persisted["status"] == "queued"
+    assert persisted["payload"]["stage"] == stage_name
+    assert stage.is_dir()
+
+
+def test_sweep_rechecks_retry_job_ownership_after_stage_discovery(
+    monkeypatch,
+    isolated_db,
+):
+    now = 2_000_000
+    stage = owned_stage("upload-retry-race", now - (24 * 60 * 60) - 1)
+    failed_id = db.create_job(
+        "upload_prepare",
+        "Upload Family Stories",
+        upload_payload(stage.name),
+    )
+    db.update_job(failed_id, status="failed", error="Forge unavailable")
+    monkeypatch.setattr(jobs, "_now", lambda: now, raising=False)
+    discovered, resume = pause_sweep_after_discovery(monkeypatch, stage)
+    sweep_errors = []
+    sweep = threading.Thread(target=capture_sweep_errors, args=(sweep_errors,))
+
+    sweep.start()
+    assert discovered.wait(5), "sweep did not discover the stage"
+    try:
+        retry_id = jobs.retry_failed_job(failed_id)
+    finally:
+        resume.set()
+        sweep.join(5)
+
+    assert not sweep.is_alive()
+    assert sweep_errors == []
+    assert db.get_job(retry_id)["status"] == "queued"
+    assert stage.is_dir()
+
+
+def test_sweep_removes_expired_unleased_unreferenced_owned_stage(
+    monkeypatch,
+    isolated_db,
+):
+    now = 2_000_000
+    stage = owned_stage("upload-expired-unowned", now - (24 * 60 * 60) - 1)
+    monkeypatch.setattr(jobs, "_now", lambda: now, raising=False)
+
     jobs.sweep_upload_staging()
+
     assert not stage.exists()
 
 
@@ -252,33 +356,8 @@ def test_upload_stream_renews_the_stage_heartbeat_for_each_chunk(
     assert response.status_code == 200
     stage = config.WORK_DIR / db.get_job(response.json()["job_id"])["payload"]["stage"]
     assert json.loads((stage / STAGE_MARKER).read_text(encoding="utf-8")) == {
-        "retained_at": 2_000_004,
+        "retained_at": 2_000_003,
     }
-
-
-def test_upload_job_is_persisted_before_the_stage_lease_is_released(
-    client,
-    isolated_db,
-    monkeypatch,
-):
-    real_release = jobs.release_upload_stage
-    persisted_at_release = []
-
-    def release_after_persistence(stage):
-        persisted_at_release.append(any(
-            job["kind"] == "upload_prepare" and job["payload"].get("stage") == stage.name
-            for job in db.jobs_for_refresh()
-        ))
-        real_release(stage)
-
-    monkeypatch.setattr(jobs, "release_upload_stage", release_after_persistence)
-    response = client.post(
-        "/api/uploads/prepare",
-        files=[("files", ("story.mp3", b"story", "audio/mpeg"))],
-    )
-
-    assert response.status_code == 200
-    assert persisted_at_release == [True]
 
 
 def test_upload_failure_releases_and_removes_its_pre_job_stage(
@@ -297,7 +376,7 @@ def test_upload_failure_releases_and_removes_its_pre_job_stage(
     monkeypatch.setattr(jobs, "create_upload_stage", capture_stage)
     monkeypatch.setattr(
         jobs,
-        "enqueue",
+        "enqueue_upload_stage",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("database stopped")),
     )
 

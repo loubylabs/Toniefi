@@ -433,7 +433,7 @@ def test_jobs_endpoint_returns_every_active_job_before_failed_and_completed(clie
 
 
 def test_retry_refuses_a_non_failed_job(client, monkeypatch):
-    monkeypatch.setattr(db, "retry_failed_job", lambda job_id: 0)
+    monkeypatch.setattr(jobs, "retry_failed_job", lambda job_id: 0)
 
     response = client.post("/api/jobs/10/retry")
 
@@ -445,7 +445,7 @@ def test_retry_clones_a_failed_job_payload(isolated_db):
     failed_id = db.create_job("prepare_url", "Alice", payload)
     db.update_job(failed_id, status="failed", error="Forge unavailable")
 
-    retry_id = db.retry_failed_job(failed_id)
+    retry_id = jobs.retry_failed_job(failed_id)
 
     retry = db.get_job(retry_id)
     assert retry_id != failed_id
@@ -457,7 +457,7 @@ def test_retry_clones_a_failed_job_payload(isolated_db):
 
 def test_retry_returns_the_new_job(client, monkeypatch):
     retried = {"id": 12, "kind": "prepare_url", "status": "queued", "progress": "", "payload": {}}
-    monkeypatch.setattr(db, "retry_failed_job", lambda job_id: 12)
+    monkeypatch.setattr(jobs, "retry_failed_job", lambda job_id: 12)
     monkeypatch.setattr(db, "get_job", lambda job_id: retried)
 
     response = client.post("/api/jobs/10/retry")

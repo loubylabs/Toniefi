@@ -99,7 +99,7 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
     return created
 
 
-def retry_failed_job(job_id: int) -> int:
+def clone_failed_job(job_id: int) -> int:
     """Clone a failed job into a new queued job, preserving the original."""
     now = time.time()
     conn = connect()
