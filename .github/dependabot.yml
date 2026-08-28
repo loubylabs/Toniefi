@@ -5,6 +5,11 @@
 # pull request here runs the full build, including the emulated arm64 leg, so
 # five separate bumps meant five slow builds to review a single change of the
 # same kind.
+#
+# Two groups, because a group covers version updates only unless it says
+# otherwise. Without the second one, a security advisory on two actions would
+# still arrive as two pull requests, which is the case where the noise matters
+# least and the urgency matters most.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -13,5 +18,10 @@ updates:
       interval: weekly
     groups:
       actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      actions-security:
+        applies-to: security-updates
         patterns:
           - "*"
