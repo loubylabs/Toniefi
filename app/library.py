@@ -38,6 +38,13 @@ FORGE_STAGE_PREFIX = ".toniefi-forge-"
 BACKUP_STAGE_PREFIX = ".toniefi-backup-"
 SLUG_RESERVATION_PREFIX = ".toniefi-slug-"
 SLUG_RESERVATION_MARKER = ".toniefi-slug-reservation.json"
+INVALID_PUBLIC_COLLECTION_SLUG_DETAIL = "Invalid collection slug."
+PRIVATE_LIBRARY_PREFIXES = (
+    COLLECTION_STAGE_PREFIX,
+    FORGE_STAGE_PREFIX,
+    BACKUP_STAGE_PREFIX,
+    SLUG_RESERVATION_PREFIX,
+)
 _manifest_lock = threading.RLock()
 
 
@@ -48,6 +55,13 @@ class CollectionStage:
     path: Path
 
 
+class InvalidPublicCollectionSlug(Exception):
+    """A public slug cannot identify a collection directory safely."""
+
+    def __init__(self) -> None:
+        super().__init__(INVALID_PUBLIC_COLLECTION_SLUG_DETAIL)
+
+
 @contextmanager
 def collection_lease():
     """Hold the canonical manifest lock across a multi-system operation."""
@@ -55,21 +69,46 @@ def collection_lease():
         yield
 
 
-def _dir_for(slug: str) -> Path:
-    """Resolve exactly one safe collection slug beneath the library."""
+def validate_public_collection_slug(slug: object) -> str:
+    """Return one public collection name or raise the typed boundary error."""
     if (
         not isinstance(slug, str)
         or not slug
         or slug in {".", ".."}
+        or slug.startswith(".")
         or "/" in slug
         or "\\" in slug
         or Path(slug).is_absolute()
+        or any(slug.startswith(prefix) for prefix in PRIVATE_LIBRARY_PREFIXES)
     ):
-        raise ValueError("Invalid collection slug.")
+        raise InvalidPublicCollectionSlug()
+    return slug
+
+
+def _public_collection_path(slug: object) -> Path:
+    """Resolve exactly one validated public collection beneath the library."""
+    public_slug = validate_public_collection_slug(slug)
     root = config.LIBRARY_DIR.resolve()
-    candidate = (root / slug).resolve()
+    candidate = (root / public_slug).resolve()
     if candidate.parent != root:
-        raise ValueError("Invalid collection slug.")
+        raise InvalidPublicCollectionSlug()
+    return candidate
+
+
+def _private_library_path(name: str) -> Path:
+    """Resolve one reserved internal directory beneath the library."""
+    if (
+        not isinstance(name, str)
+        or not any(name.startswith(prefix) for prefix in PRIVATE_LIBRARY_PREFIXES)
+        or "/" in name
+        or "\\" in name
+        or Path(name).is_absolute()
+    ):
+        raise ValueError("Invalid private collection path.")
+    root = config.LIBRARY_DIR.resolve()
+    candidate = (root / name).resolve()
+    if candidate.parent != root:
+        raise ValueError("Invalid private collection path.")
     return candidate
 
 
@@ -81,19 +120,20 @@ def _safe_stage_identity(identity: str) -> str:
 
 
 def _collection_stage_path(identity: str) -> Path:
-    return config.LIBRARY_DIR / f"{COLLECTION_STAGE_PREFIX}{_safe_stage_identity(identity)}"
+    return _private_library_path(f"{COLLECTION_STAGE_PREFIX}{_safe_stage_identity(identity)}")
 
 
 def _forge_stage_path(identity: str) -> Path:
-    return config.LIBRARY_DIR / f"{FORGE_STAGE_PREFIX}{_safe_stage_identity(identity)}"
+    return _private_library_path(f"{FORGE_STAGE_PREFIX}{_safe_stage_identity(identity)}")
 
 
 def _backup_stage_path(identity: str) -> Path:
-    return config.LIBRARY_DIR / f"{BACKUP_STAGE_PREFIX}{_safe_stage_identity(identity)}"
+    return _private_library_path(f"{BACKUP_STAGE_PREFIX}{_safe_stage_identity(identity)}")
 
 
 def _slug_reservation_path(slug: str) -> Path:
-    return config.LIBRARY_DIR / f"{SLUG_RESERVATION_PREFIX}{slug}"
+    public_slug = validate_public_collection_slug(slug)
+    return _private_library_path(f"{SLUG_RESERVATION_PREFIX}{public_slug}")
 
 
 def _reservation_marker(path: Path) -> dict[str, Any]:
@@ -127,7 +167,7 @@ def _reserve_final_slug(title: str, identity: str) -> str:
     while True:
         slug = base if counter == 1 else f"{base}-{counter}"
         counter += 1
-        visible = _dir_for(slug)
+        visible = _public_collection_path(slug)
         reservation = _slug_reservation_path(slug)
         if visible.exists():
             continue
@@ -157,14 +197,14 @@ def _ensure_slug_reservation(slug: str, identity: str) -> None:
         if marker.get("identity") == identity and marker.get("slug") == slug:
             return
         raise RuntimeError(f"A different collection reserved {slug}.")
-    if _dir_for(slug).exists():
+    if _public_collection_path(slug).exists():
         raise RuntimeError(f"A different collection already uses {slug}.")
     try:
         reservation.mkdir()
     except FileExistsError as exc:
         raise RuntimeError(f"A different collection reserved {slug}.") from exc
     try:
-        if _dir_for(slug).exists():
+        if _public_collection_path(slug).exists():
             raise RuntimeError(f"A different collection already uses {slug}.")
         _write_reservation_marker(reservation, {
             "identity": identity,
@@ -234,7 +274,11 @@ def begin_collection_stage(
         config.ensure_dirs()
         published = find_published_stage(identity)
         if published:
-            return CollectionStage(identity, published["slug"], config.LIBRARY_DIR / published["slug"])
+            return CollectionStage(
+                identity,
+                published["slug"],
+                _public_collection_path(published["slug"]),
+            )
         path = _collection_stage_path(identity)
         if path.is_dir():
             marker = _stage_marker(path)
@@ -370,7 +414,7 @@ def create_replacement_stage(slug: str, identity: str) -> Path:
     """Copy one visible collection to hidden same-filesystem Forge input."""
     with _manifest_lock:
         recover_collection_publications()
-        source = _dir_for(slug)
+        source = _public_collection_path(slug)
         if not source.is_dir():
             raise RuntimeError(f"No collection named {slug}.")
         stage = _forge_stage_path(identity)
@@ -431,7 +475,7 @@ def publish_forged_collection_stage(
         ):
             raise RuntimeError("The Forge stage marker is invalid.")
         slug = marker["slug"]
-        target = _dir_for(slug)
+        target = _public_collection_path(slug)
         _ensure_slug_reservation(slug, collection_identity)
         if target.exists():
             raise RuntimeError(f"A different collection already uses {slug}.")
@@ -449,7 +493,7 @@ def publish_forged_collection_stage(
 def publish_replacement(slug: str, stage: Path, identity: str) -> dict[str, Any]:
     """Publish a complete replacement with rollback if the second rename fails."""
     with _manifest_lock:
-        visible = _dir_for(slug)
+        visible = _public_collection_path(slug)
         stage = stage.resolve()
         if stage != _forge_stage_path(identity).resolve():
             raise ValueError("The Forge stage path does not match its identity.")
@@ -502,7 +546,7 @@ def recover_collection_publications() -> None:
             slug = manifest.get("slug")
             if not slug:
                 continue
-            visible = _dir_for(slug)
+            visible = _public_collection_path(slug)
             identity = backup.name.removeprefix(BACKUP_STAGE_PREFIX)
             stage = _forge_stage_path(identity)
             marker = _stage_marker(stage)
@@ -521,7 +565,7 @@ def recover_collection_publications() -> None:
             if not slug:
                 shutil.rmtree(stage, ignore_errors=True)
                 continue
-            visible = _dir_for(slug)
+            visible = _public_collection_path(slug)
             if visible.exists():
                 shutil.rmtree(stage, ignore_errors=True)
             elif marker.get("kind") == "new-collection" and marker.get("state") == "ready":
@@ -539,7 +583,7 @@ def recover_collection_publications() -> None:
             if not isinstance(identity, str) or not isinstance(slug, str):
                 shutil.rmtree(reservation, ignore_errors=True)
                 continue
-            visible = _dir_for(slug)
+            visible = _public_collection_path(slug)
             collection_stage = _collection_stage_path(identity)
             forge_stage_exists = any(
                 _stage_marker(stage).get("collection_identity") == identity
@@ -554,7 +598,7 @@ def create(title: str, source: str = "", extra: dict[str, Any] | None = None) ->
         config.ensure_dirs()
         identity = f"direct-{uuid4().hex}"
         slug = _reserve_final_slug(title, identity)
-        path = config.LIBRARY_DIR / slug
+        path = _public_collection_path(slug)
         try:
             path.mkdir(parents=True)
             manifest: dict[str, Any] = {
@@ -613,7 +657,7 @@ def rescan(slug: str) -> dict[str, Any]:
     library.
     """
     with _manifest_lock:
-        path = _dir_for(slug)
+        path = _public_collection_path(slug)
         manifest = _rescan_path(path, slug)
         return manifest
 
@@ -671,7 +715,7 @@ def get_at_path(path: Path, refresh: bool = False) -> dict[str, Any]:
 
 def get(slug: str, refresh: bool = False) -> dict[str, Any] | None:
     with _manifest_lock:
-        path = _dir_for(slug)
+        path = _public_collection_path(slug)
         if not path.is_dir():
             return None
         manifest = rescan(slug) if refresh or not (path / MANIFEST).exists() else _read_manifest(path)
@@ -758,7 +802,7 @@ def plan(slug: str, limit: int | None = None) -> list[dict[str, Any]]:
 
 def _mutate(slug: str, fn) -> dict[str, Any]:
     with _manifest_lock:
-        path = _dir_for(slug)
+        path = _public_collection_path(slug)
         manifest = _read_manifest(path)
         fn(manifest)
         _write_manifest(path, manifest)
@@ -855,7 +899,7 @@ def replace_track(slug: str, name: str, new_names: list[str]) -> dict[str, Any]:
 
 def delete_track(slug: str, name: str) -> dict[str, Any]:
     with _manifest_lock:
-        path = _dir_for(slug)
+        path = _public_collection_path(slug)
         target = path / name
         if target.parent != path:
             raise ValueError("Refusing to delete outside the collection.")
@@ -869,13 +913,13 @@ def delete_track(slug: str, name: str) -> dict[str, Any]:
 
 def delete(slug: str) -> None:
     with _manifest_lock:
-        shutil.rmtree(_dir_for(slug))
+        shutil.rmtree(_public_collection_path(slug))
 
 
 # ------------------------------------------------------------------- paths
 
 def track_path(slug: str, name: str) -> Path:
-    base = _dir_for(slug)
+    base = _public_collection_path(slug)
     path = base / name
     if path.parent != base or not path.is_file():
         raise ValueError(f"No such track: {name}")
@@ -883,7 +927,7 @@ def track_path(slug: str, name: str) -> Path:
 
 
 def cover_path(slug: str) -> Path | None:
-    base = _dir_for(slug)
+    base = _public_collection_path(slug)
     cover = find_cover(base)
     return base / cover if cover else None
 

@@ -140,6 +140,8 @@ The worker job kind is `prepare_url`. It performs these steps:
 
 URL, LibriVox, and upload preparation share this hidden staged-collection publication contract. Upload source staging defaults under `DATA_DIR`, outside the bounded `WORK_DIR` tmpfs, and retains its owned marker, active lease, heartbeat, 500-file limit, 20 GiB limit, and 24-hour retry window. Startup recovers ready publication stages and removes abandoned stages that no resumable job owns.
 
+Public collection operations accept exactly one visible folder slug. Empty, dot, parent, absolute, separator-bearing, leading-dot, and reserved internal stage names fail with the same controlled 400 response before any filesystem access. Hidden collection, Forge, backup, and slug-reservation directories use a separate private path primitive and can never be addressed through collection routes. Malformed historical Forge payloads remain visible as non-retryable failures, and direct retry returns the invalid-slug reason without changing the stored row.
+
 Progress callbacks write `extracting: <message>` and `forging: <message>`. The API hydrates these into `phase` and human-readable `progress` fields without changing stored job history.
 
 The former `url` job kind and `POST /api/ingest/url` route are deleted with their browser caller and tests. `POST /api/probe` is also deleted because the batch workflow no longer has a separate look-before-download step. No alias or wrapper preserves either path.

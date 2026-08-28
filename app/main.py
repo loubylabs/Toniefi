@@ -6,9 +6,9 @@ import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote_to_bytes, urlparse
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -27,6 +27,46 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Toniefi", version="1.0.0", lifespan=lifespan)
+
+
+def invalid_collection_slug_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={"detail": library.INVALID_PUBLIC_COLLECTION_SLUG_DETAIL},
+    )
+
+
+@app.exception_handler(library.InvalidPublicCollectionSlug)
+async def invalid_collection_slug_handler(
+    _: Request,
+    __: library.InvalidPublicCollectionSlug,
+) -> JSONResponse:
+    return invalid_collection_slug_response()
+
+
+def raw_collection_slug(request: Request) -> str | None:
+    raw_path = request.scope.get("raw_path")
+    if not isinstance(raw_path, bytes):
+        raw_path = request.url.path.encode("utf-8")
+    prefix = b"/api/collections/"
+    if not raw_path.startswith(prefix):
+        return None
+    segment = raw_path[len(prefix):].split(b"/", 1)[0]
+    try:
+        return unquote_to_bytes(segment).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise library.InvalidPublicCollectionSlug() from exc
+
+
+@app.middleware("http")
+async def enforce_collection_path_boundary(request: Request, call_next):
+    try:
+        slug = raw_collection_slug(request)
+        if slug is not None:
+            library.validate_public_collection_slug(slug)
+    except library.InvalidPublicCollectionSlug:
+        return invalid_collection_slug_response()
+    return await call_next(request)
 
 
 def fail(status: int, message: str) -> HTTPException:

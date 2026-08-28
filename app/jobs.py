@@ -139,13 +139,10 @@ class PushRetryConflict(RuntimeError):
 INVALID_FORGE_SLUG_ERROR = "This Forge job has an invalid collection slug."
 
 
-def _forge_completion(payload: object) -> tuple[dict | None, bool]:
+def _forge_completion(payload: object) -> dict | None:
     if not isinstance(payload, dict):
-        return None, True
-    try:
-        return library.completed_forge(payload.get("slug")), False
-    except ValueError:
-        return None, True
+        raise library.InvalidPublicCollectionSlug()
+    return library.completed_forge(payload.get("slug"))
 
 
 def retry_failed_job(job_id: int) -> int:
@@ -156,9 +153,7 @@ def retry_failed_job(job_id: int) -> int:
                 "Creative Tonie sends must be reviewed and confirmed again in Review."
             )
         if job and job.get("status") == "failed" and job.get("kind") == "forge":
-            completed, invalid_slug = _forge_completion(job.get("payload"))
-            if invalid_slug:
-                return 0
+            completed = _forge_completion(job.get("payload"))
             if completed:
                 db.update_job(
                     job_id,
@@ -184,8 +179,10 @@ def present(job: dict) -> dict:
     terminal_forge = False
     invalid_forge_slug = False
     if kind == "forge":
-        completed, invalid_forge_slug = _forge_completion(displayed.get("payload"))
-        terminal_forge = completed is not None
+        try:
+            terminal_forge = _forge_completion(displayed.get("payload")) is not None
+        except library.InvalidPublicCollectionSlug:
+            invalid_forge_slug = True
     collection_stage = ""
     if status == "done" and kind == "librivox":
         payload = displayed.get("payload") or {}

@@ -328,15 +328,208 @@ def test_generic_job_creation_cannot_bypass_canonical_forge_payloads(isolated):
 
 @pytest.mark.parametrize(
     "unsafe_slug",
-    ["", ".", "..", "collection/..", "nested/collection", r"nested\collection", "/tmp/outside"],
+    [
+        "",
+        ".",
+        "..",
+        "collection/..",
+        "nested/collection",
+        r"nested\collection",
+        "/tmp/outside",
+        ".hidden",
+        ".toniefi-stage-live",
+        ".toniefi-forge-live",
+        ".toniefi-backup-live",
+        ".toniefi-slug-live",
+    ],
 )
 def test_collection_slug_boundary_rejects_every_non_collection_path(isolated, unsafe_slug):
     root_manifest = config.LIBRARY_DIR / library.MANIFEST
 
-    with pytest.raises(ValueError, match="collection slug"):
+    with pytest.raises(Exception) as caught:
         library.get(unsafe_slug)
 
+    assert type(caught.value).__name__ == "InvalidPublicCollectionSlug"
+    assert str(caught.value) == "Invalid collection slug."
     assert not root_manifest.exists()
+
+
+PUBLIC_LIBRARY_SLUG_OPERATIONS = (
+    "get",
+    "rescan",
+    "plan",
+    "set_title",
+    "set_stage",
+    "set_forge_state",
+    "rename_track",
+    "reorder",
+    "replace_track",
+    "delete_track",
+    "delete",
+    "track_path",
+    "cover_path",
+    "completed_forge",
+    "create_replacement_stage",
+    "publish_replacement",
+)
+
+
+def call_public_library_slug_operation(operation, slug, tmp_path):
+    if operation in {"get", "rescan", "plan", "delete", "cover_path", "completed_forge"}:
+        return getattr(library, operation)(slug)
+    if operation == "set_title":
+        return library.set_title(slug, "Changed")
+    if operation == "set_stage":
+        return library.set_stage(slug, "forged")
+    if operation == "set_forge_state":
+        return library.set_forge_state(slug, {"normalized": True})
+    if operation == "rename_track":
+        return library.rename_track(slug, "one.mp3", "Changed")
+    if operation == "reorder":
+        return library.reorder(slug, ["one.mp3"])
+    if operation == "replace_track":
+        return library.replace_track(slug, "one.mp3", ["part.mp3"])
+    if operation == "delete_track":
+        return library.delete_track(slug, "one.mp3")
+    if operation == "track_path":
+        return library.track_path(slug, "one.mp3")
+    if operation == "create_replacement_stage":
+        return library.create_replacement_stage(slug, "invalid-public-operation")
+    if operation == "publish_replacement":
+        return library.publish_replacement(
+            slug,
+            tmp_path / "missing-forge-stage",
+            "invalid-public-operation",
+        )
+    raise AssertionError(f"Unhandled library operation {operation}")
+
+
+def library_tree_snapshot():
+    return {
+        str(path.relative_to(config.LIBRARY_DIR)): (
+            "directory" if path.is_dir() else path.read_bytes()
+        )
+        for path in sorted(config.LIBRARY_DIR.rglob("*"))
+    }
+
+
+@pytest.mark.parametrize("operation", PUBLIC_LIBRARY_SLUG_OPERATIONS)
+def test_every_public_library_slug_operation_rejects_an_internal_stage(
+    isolated,
+    operation,
+):
+    stage = library.begin_collection_stage(
+        "public-operation-boundary",
+        title="Boundary Story",
+        source="url",
+    )
+    (stage.path / "one.mp3").write_bytes(b"private stage audio")
+    library.rescan_collection_stage(stage.identity)
+    (stage.path / "unscanned.mp3").write_bytes(b"must remain unscanned")
+    before = library_tree_snapshot()
+
+    with pytest.raises(Exception) as caught:
+        call_public_library_slug_operation(operation, stage.path.name, isolated)
+
+    assert type(caught.value).__name__ == "InvalidPublicCollectionSlug"
+    assert str(caught.value) == "Invalid collection slug."
+    assert library_tree_snapshot() == before
+
+
+INVALID_API_SLUGS = (
+    ("empty", "", ""),
+    ("dot", ".", "%2E"),
+    ("parent", "..", "%2E%2E"),
+    ("absolute", "/tmp/outside", "%2Ftmp%2Foutside"),
+    ("slash", "nested/collection", "nested%2Fcollection"),
+    ("backslash", r"nested\collection", "nested%5Ccollection"),
+    ("leading-dot", ".hidden", ".hidden"),
+    (
+        "active-stage",
+        ".toniefi-stage-active-boundary-stage",
+        ".toniefi-stage-active-boundary-stage",
+    ),
+)
+
+INVALID_API_SLUG_ROUTES = (
+    "forge",
+    "push",
+    "get",
+    "rename-collection",
+    "reorder",
+    "rename-track",
+    "delete-track",
+    "delete-collection",
+    "cover",
+    "audio",
+)
+
+
+def request_with_invalid_collection_slug(client, route, slug, encoded_slug):
+    if route == "forge":
+        return client.post("/api/forge", json={"slug": slug})
+    if route == "push":
+        return client.post("/api/push/batch", json={
+            "operation_key": "invalid-public-collection-slug",
+            "slug": slug,
+            "manifest_fingerprint": "0" * 64,
+            "assignments": [{
+                "household_id": "house-1",
+                "tonie_id": "tonie-1",
+                "files": ["one.mp3"],
+                "replace": True,
+                "remote_chapters": [],
+            }],
+        })
+    base = f"/api/collections/{encoded_slug}"
+    if route == "get":
+        return client.get(f"{base}?refresh=true")
+    if route == "rename-collection":
+        return client.patch(base, json={"title": "Changed"})
+    if route == "reorder":
+        return client.post(f"{base}/reorder", json={"names": ["one.mp3"]})
+    if route == "rename-track":
+        return client.patch(f"{base}/tracks/one.mp3", json={"title": "Changed"})
+    if route == "delete-track":
+        return client.delete(f"{base}/tracks/one.mp3")
+    if route == "delete-collection":
+        return client.delete(base)
+    if route == "cover":
+        return client.get(f"{base}/cover")
+    if route == "audio":
+        return client.get(f"{base}/tracks/one.mp3/audio")
+    raise AssertionError(f"Unhandled API route {route}")
+
+
+@pytest.mark.parametrize("route", INVALID_API_SLUG_ROUTES)
+@pytest.mark.parametrize("case_name,slug,encoded_slug", INVALID_API_SLUGS)
+def test_every_collection_slug_route_returns_one_safe_4xx_without_side_effects(
+    isolated,
+    route,
+    case_name,
+    slug,
+    encoded_slug,
+):
+    stage = library.begin_collection_stage(
+        "active-boundary-stage",
+        title="Active Boundary Story",
+        source="url",
+    )
+    (stage.path / "one.mp3").write_bytes(b"private stage audio")
+    library.rescan_collection_stage(stage.identity)
+    (stage.path / "unscanned.mp3").write_bytes(b"must remain unscanned")
+    before = library_tree_snapshot()
+    stored_jobs = db.jobs_for_history()
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    response = request_with_invalid_collection_slug(client, route, slug, encoded_slug)
+
+    assert response.status_code == 400, (case_name, route, response.text)
+    assert response.json() == {"detail": "Invalid collection slug."}
+    assert library_tree_snapshot() == before
+    assert db.jobs_for_history() == stored_jobs
+    assert stage.path.is_dir()
+    assert not (config.LIBRARY_DIR / library.MANIFEST).exists()
 
 
 def test_malformed_migrated_forge_history_is_safe_nonretryable_and_nonmutating(isolated):
@@ -362,12 +555,19 @@ def test_malformed_migrated_forge_history_is_safe_nonretryable_and_nonmutating(i
     stored = db.get_job(job_id)
 
     presented = jobs.present(stored)
+    client = TestClient(main.app, raise_server_exceptions=False)
+    response = client.post(f"/api/jobs/{job_id}/retry")
+    history = client.get("/api/jobs/history").json()
 
     assert presented["phase"] == "failed"
     assert presented["retryable"] is False
     assert presented["error"] == "This Forge job has an invalid collection slug."
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid collection slug."}
+    assert history[0]["retryable"] is False
+    assert history[0]["error"] == "This Forge job has an invalid collection slug."
     assert db.get_job(job_id) == stored
-    assert jobs.retry_failed_job(job_id) == 0
+    assert [job["id"] for job in db.jobs_for_history()] == [job_id]
     assert not (config.LIBRARY_DIR / library.MANIFEST).exists()
 
 
