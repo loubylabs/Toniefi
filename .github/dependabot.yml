@@ -1,8 +1,28 @@
 # Pinned action SHAs do not receive upstream fixes on their own, including
 # security fixes to the actions themselves. This keeps them moving.
+#
+# They arrive grouped rather than one per action. Every pull request here runs
+# the full build, including the emulated arm64 leg, so five separate bumps
+# meant five slow builds to review a single change of the same kind.
+#
+# Two groups, not one, because a group covers version updates only unless it
+# says otherwise, and Dependabot will not combine a version update with a
+# security update in any case. Two is the fewest it can produce: without the
+# second group a security advisory on two actions would arrive as two separate
+# pull requests, which is the case where the noise matters least and the
+# urgency matters most.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
