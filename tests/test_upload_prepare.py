@@ -6,7 +6,9 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config, db, jobs, main
+from app import config, db, ingest, jobs, library, main
+
+STAGE_MARKER = ".toniefi-upload-stage.json"
 
 
 @pytest.fixture
@@ -51,7 +53,18 @@ def upload_payload(stage: str) -> dict:
     }
 
 
-def test_upload_endpoint_stages_the_whole_selection_as_one_job(client, isolated_db):
+def owned_stage(name: str, retained_at: float):
+    stage = config.WORK_DIR / name
+    stage.mkdir(parents=True)
+    (stage / STAGE_MARKER).write_text(
+        json.dumps({"retained_at": retained_at}),
+        encoding="utf-8",
+    )
+    return stage
+
+
+def test_upload_endpoint_stages_the_whole_selection_as_one_job(client, isolated_db, monkeypatch):
+    monkeypatch.setattr(jobs, "_now", lambda: 2_000_000, raising=False)
     response = client.post(
         "/api/uploads/prepare",
         files=[
@@ -90,7 +103,116 @@ def test_upload_endpoint_stages_the_whole_selection_as_one_job(client, isolated_
     ]
     stage = config.WORK_DIR / job["payload"]["stage"]
     assert [(stage / item["stored"]).read_bytes() for item in job["payload"]["files"]] == [b"one", b"two"]
+    assert json.loads((stage / STAGE_MARKER).read_text(encoding="utf-8")) == {
+        "retained_at": 2_000_000,
+    }
     assert len(db.jobs_for_refresh()) == 1
+
+
+def test_worker_startup_sweeps_only_expired_owned_upload_staging(monkeypatch, isolated_db):
+    now = 2_000_000
+    expired = owned_stage("upload-expired", now - (24 * 60 * 60) - 1)
+    active = owned_stage("upload-active", now - (24 * 60 * 60) - 1)
+    db.create_job("upload_prepare", "Active upload", {"stage": active.name})
+    retained = owned_stage("upload-retained", now - (24 * 60 * 60) + 1)
+    unrelated = config.WORK_DIR / "upload-unrelated"
+    unrelated.mkdir()
+    (unrelated / "keep.txt").write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(jobs, "_now", lambda: now, raising=False)
+    monkeypatch.setattr(config, "WORKER_THREADS", 0)
+    jobs._stop.clear()
+
+    try:
+        jobs.start()
+    finally:
+        jobs.stop()
+        jobs._stop.clear()
+
+    assert not expired.exists()
+    assert active.is_dir()
+    assert retained.is_dir()
+    assert (unrelated / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_upload_endpoint_sweeps_expired_staging_before_accepting_a_batch(
+    client,
+    isolated_db,
+    monkeypatch,
+):
+    now = 2_000_000
+    expired = owned_stage("upload-expired", now - (24 * 60 * 60) - 1)
+    monkeypatch.setattr(jobs, "_now", lambda: now, raising=False)
+
+    response = client.post(
+        "/api/uploads/prepare",
+        files=[("files", ("story.mp3", b"story", "audio/mpeg"))],
+    )
+
+    assert response.status_code == 200
+    assert not expired.exists()
+
+
+def test_upload_endpoint_rejects_more_than_500_files_without_staging(client, isolated_db):
+    response = client.post(
+        "/api/uploads/prepare",
+        files=[
+            ("files", (f"chapter-{index}.mp3", b"x", "audio/mpeg"))
+            for index in range(501)
+        ],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "A collection can contain at most 500 uploaded files."
+    assert list(config.WORK_DIR.iterdir()) == []
+
+
+def test_upload_endpoint_rejects_total_bytes_over_the_limit_and_removes_staging(
+    client,
+    isolated_db,
+    monkeypatch,
+):
+    monkeypatch.setattr(jobs, "UPLOAD_MAX_BYTES", 5, raising=False)
+
+    response = client.post(
+        "/api/uploads/prepare",
+        files=[
+            ("files", ("one.mp3", b"one", "audio/mpeg")),
+            ("files", ("two.mp3", b"two", "audio/mpeg")),
+        ],
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "The selected files exceed the upload limit of 5 bytes. "
+        "Choose fewer or smaller files and submit the collection again."
+    )
+    assert list(config.WORK_DIR.iterdir()) == []
+
+
+def test_import_upload_streams_a_path_to_one_deterministic_target(monkeypatch, isolated_db):
+    source = config.WORK_DIR / "staged.mp3"
+    source.write_bytes(b"audio data")
+    slug = library.create("Family Stories", source="upload")
+    monkeypatch.setattr(ingest.audio, "duration_seconds", lambda path: 12.5)
+
+    first = ingest.import_upload(
+        source,
+        filename="Same Name.mp3",
+        slug=slug,
+        target_name="001-same-name.mp3",
+    )
+    second = ingest.import_upload(
+        source,
+        filename="Same Name.mp3",
+        slug=slug,
+        target_name="001-same-name.mp3",
+    )
+
+    target = config.LIBRARY_DIR / slug / "001-same-name.mp3"
+    assert target.read_bytes() == b"audio data"
+    assert [track["name"] for track in first["tracks"]] == ["001-same-name.mp3"]
+    assert first["tracks"][0]["title"] == "Same Name"
+    assert second["track_count"] == 1
 
 
 def test_upload_job_imports_every_file_checkpoints_then_forges(monkeypatch, isolated_db):
@@ -107,7 +229,9 @@ def test_upload_job_imports_every_file_checkpoints_then_forges(monkeypatch, isol
     monkeypatch.setattr(
         jobs.ingest,
         "import_upload",
-        lambda name, data, slug, title=None: calls.append(("import", name, data, slug)) or {"slug": slug},
+        lambda source, *, filename, slug, target_name: calls.append(
+            ("import", filename, source.read_bytes(), slug, target_name)
+        ) or {"slug": slug},
     )
     monkeypatch.setattr(
         jobs.forge,
@@ -132,8 +256,8 @@ def test_upload_job_imports_every_file_checkpoints_then_forges(monkeypatch, isol
     assert result == {"slug": "family-stories", "stage": "forged"}
     assert calls == [
         ("create", "Family Stories", "upload"),
-        ("import", "chapter-one.mp3", b"one", "family-stories"),
-        ("import", "chapter-two.mp3", b"two", "family-stories"),
+        ("import", "chapter-one.mp3", b"one", "family-stories", "001-chapter-one.mp3"),
+        ("import", "chapter-two.mp3", b"two", "family-stories", "002-chapter-two.mp3"),
         ("forge", "family-stories", {
             "normalize": False,
             "clean_titles": True,
@@ -165,9 +289,9 @@ def test_upload_import_failure_rolls_back_its_new_collection(monkeypatch, isolat
     monkeypatch.setattr(jobs.library, "create", lambda title, source: "family-stories")
     monkeypatch.setattr(jobs.library, "get", lambda slug: None)
 
-    def import_file(name, data, slug, title=None):
-        attempts.append(name)
-        if name == "chapter-two.mp3":
+    def import_file(source, *, filename, slug, target_name):
+        attempts.append(filename)
+        if filename == "chapter-two.mp3":
             raise RuntimeError("second file failed")
         return {"slug": slug}
 
@@ -186,6 +310,49 @@ def test_upload_import_failure_rolls_back_its_new_collection(monkeypatch, isolat
     assert deleted == ["family-stories"]
     assert updates[-1] == (52, {"payload": {**payload, "next_file": 0}})
     assert stage.exists()
+
+
+def test_upload_failure_refreshes_the_24_hour_staging_retention_clock(monkeypatch, isolated_db):
+    stage = owned_stage("upload-failure-retained", 1_000_000)
+    (stage / "000.mp3").write_bytes(b"one")
+    (stage / "001.mp3").write_bytes(b"two")
+    payload = upload_payload(stage.name)
+    monkeypatch.setattr(jobs, "_now", lambda: 2_000_000, raising=False)
+    monkeypatch.setattr(jobs.library, "create", lambda title, source: "family-stories")
+    monkeypatch.setattr(jobs.library, "get", lambda slug: None)
+    monkeypatch.setattr(jobs.library, "delete", lambda slug: None)
+    monkeypatch.setattr(jobs.db, "update_job", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        jobs.ingest,
+        "import_upload",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("import stopped")),
+    )
+
+    with pytest.raises(RuntimeError, match="import stopped"):
+        jobs._handle({"id": 55, "kind": "upload_prepare", "payload": payload})
+
+    assert json.loads((stage / STAGE_MARKER).read_text(encoding="utf-8")) == {
+        "retained_at": 2_000_000,
+    }
+
+
+def test_upload_retry_after_staging_expiry_gives_resubmission_guidance(monkeypatch, isolated_db):
+    payload = {
+        **upload_payload("upload-expired"),
+        "slug": "family-stories",
+        "next_file": 1,
+        "owns_collection": True,
+    }
+    monkeypatch.setattr(jobs.library, "get", lambda slug: {"slug": slug, "stage": "extracted"})
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "Upload staging expired after 24 hours. "
+            "Select the files and submit the collection again."
+        ),
+    ):
+        jobs._handle({"id": 56, "kind": "upload_prepare", "payload": payload})
 
 
 def test_upload_retry_resumes_at_forge_without_importing_or_enqueuing(monkeypatch, isolated_db):
@@ -228,3 +395,55 @@ def test_upload_retry_after_cleanup_returns_forged_collection_without_duplicate_
     monkeypatch.setattr(jobs.forge, "run", lambda *args, **kwargs: pytest.fail("must not Forge again"))
 
     assert jobs._handle({"id": 54, "kind": "upload_prepare", "payload": payload}) == forged
+
+
+def test_upload_retry_after_write_before_checkpoint_is_idempotent(monkeypatch, isolated_db):
+    stage = owned_stage("upload-crash-window", 2_000_000)
+    (stage / "000.mp3").write_bytes(b"first")
+    (stage / "001.mp3").write_bytes(b"second")
+    payload = {
+        **upload_payload(stage.name),
+        "files": [
+            {"name": "same-name.mp3", "stored": "000.mp3"},
+            {"name": "same-name.mp3", "stored": "001.mp3"},
+        ],
+    }
+    job_id = db.create_job("upload_prepare", "Upload Same Names", payload)
+    real_update_job = db.update_job
+    crashed = False
+
+    def crash_before_completed_checkpoint(target_job_id, **fields):
+        nonlocal crashed
+        updated_payload = fields.get("payload", {})
+        if updated_payload.get("next_file") == 1 and not crashed:
+            crashed = True
+            raise KeyboardInterrupt("simulated process exit")
+        real_update_job(target_job_id, **fields)
+
+    monkeypatch.setattr(jobs.db, "update_job", crash_before_completed_checkpoint)
+    monkeypatch.setattr(
+        jobs.forge,
+        "run",
+        lambda *args, **kwargs: pytest.fail("Forge cannot run before restart"),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="simulated process exit"):
+        jobs._handle({"id": job_id, "kind": "upload_prepare", "payload": payload})
+
+    checkpoint = db.get_job(job_id)["payload"]
+    slug = checkpoint["slug"]
+    pending_before_retry = checkpoint.get("pending_file")
+    forge_tracks = []
+    monkeypatch.setattr(jobs.db, "update_job", real_update_job)
+
+    def finish_forge(target_slug, **options):
+        forge_tracks.extend(track["name"] for track in jobs.library.get(target_slug, refresh=True)["tracks"])
+        return {"slug": target_slug, "stage": "forged"}
+
+    monkeypatch.setattr(jobs.forge, "run", finish_forge)
+
+    result = jobs._handle({"id": job_id, "kind": "upload_prepare", "payload": checkpoint})
+
+    assert pending_before_retry == {"position": 0, "target": "001-same-name.mp3"}
+    assert forge_tracks == ["001-same-name.mp3", "002-same-name.mp3"]
+    assert result == {"slug": slug, "stage": "forged"}

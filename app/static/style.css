@@ -686,8 +686,8 @@ textarea::placeholder {
 .desk-screen {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(34rem, 1.55fr) minmax(23rem, 1fr);
-  gap: clamp(1.5rem, 2.5vw, 3rem);
+  grid-template-columns: minmax(0, 1.45fr) minmax(17rem, 0.8fr);
+  gap: clamp(1rem, 2vw, 2.5rem);
   align-items: start;
 }
 
@@ -1468,7 +1468,7 @@ textarea::placeholder {
   }
 }
 
-@media (max-width: 1279.98px) {
+@media (max-width: 1099.98px) {
   .desk-screen {
     display: block;
   }
@@ -1517,6 +1517,12 @@ textarea::placeholder {
     padding: var(--space-3);
   }
 
+}
+
+@media (min-width: 1100px) and (max-width: 1279.98px) {
+  .forge-definition-list > div {
+    padding-inline: var(--space-1);
+  }
 }
 
 @media (max-width: 759.98px) {

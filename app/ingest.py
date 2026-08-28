@@ -316,25 +316,37 @@ def _track_title(stem: str, chaptered: list[Path], offset: int, book_title: str)
 
 # ------------------------------------------------------------ file uploads
 
-def import_upload(filename: str, data: bytes, slug: str | None = None,
-                  title: str | None = None) -> dict[str, Any]:
+def import_upload(
+    source: Path,
+    *,
+    filename: str,
+    slug: str,
+    target_name: str,
+) -> dict[str, Any]:
+    """Stream one staged file into its deterministic collection target."""
     suffix = Path(filename).suffix.lower()
     if suffix not in audio.AUDIO_EXTENSIONS:
         raise RuntimeError(f"{suffix or 'That file'} is not a supported audio format.")
+    source = Path(source)
+    if not source.is_file():
+        raise RuntimeError("The staged upload file is missing. Submit the collection again.")
+    dest = config.LIBRARY_DIR / slug
+    if not dest.is_dir():
+        raise RuntimeError(f"No collection named {slug}.")
+    target = dest / target_name
+    if target.parent != dest or target.suffix.lower() != suffix:
+        raise RuntimeError("The upload target is invalid.")
 
-    if slug:
-        dest = config.LIBRARY_DIR / slug
-        if not dest.is_dir():
-            raise RuntimeError(f"No collection named {slug}.")
-        target_slug = slug
-    else:
-        target_slug = library.create(title or Path(filename).stem, source="upload")
-        dest = config.LIBRARY_DIR / target_slug
+    if not target.is_file():
+        partial = dest / f".{target.name}.part"
+        with source.open("rb") as staged, partial.open("wb") as output:
+            shutil.copyfileobj(staged, output, length=1024 * 1024)
+        partial.replace(target)
 
-    index = library.next_index(dest)
-    stem = Path(filename).stem
-    name = f"{index:03d}-{audio.slugify(stem)}{suffix}"
-    (dest / name).write_bytes(data)
-    library.rescan(target_slug)
-    library.rename_track(target_slug, name, forge.clean_title(stem, drop_leading_index=True))
-    return library.get(target_slug, refresh=True)
+    library.rescan(slug)
+    library.rename_track(
+        slug,
+        target.name,
+        forge.clean_title(Path(filename).stem, drop_leading_index=True),
+    )
+    return library.get(slug, refresh=True)

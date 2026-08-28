@@ -259,7 +259,14 @@ def test_prepare_batch_rejects_unsupported_schemes(client, monkeypatch):
     assert response.status_code == 400
 
 
-@pytest.mark.parametrize("url", ["https:///missing-host", "https://", "http://[::1"])
+@pytest.mark.parametrize("url", [
+    "https:///missing-host",
+    "https://",
+    "http://[::1",
+    "https://example.com:alphabetic/story",
+    "https://example.com:70000/story",
+    "https://exa mple.com/story",
+])
 def test_prepare_batch_rejects_http_urls_without_a_host(client, isolated_db, url):
     response = client.post("/api/prepare", json={
         "sources": [{"url": url}],
@@ -268,6 +275,26 @@ def test_prepare_batch_rejects_http_urls_without_a_host(client, isolated_db, url
 
     assert response.status_code == 400
     assert db.jobs_for_refresh() == []
+
+
+def test_prepare_batch_accepts_a_valid_explicit_port(client, monkeypatch):
+    created = []
+    monkeypatch.setattr(
+        jobs,
+        "enqueue_many",
+        lambda entries: created.extend(entries) or [81],
+    )
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": "https://example.com:8443/story"}],
+        "options": {},
+    })
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "jobs": [{"id": 81, "url": "https://example.com:8443/story"}],
+    }
+    assert created[0][2]["url"] == "https://example.com:8443/story"
 
 
 def test_prepare_batch_rejects_exact_duplicates(client, monkeypatch):

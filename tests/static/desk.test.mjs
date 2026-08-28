@@ -7,10 +7,12 @@ import {
   buildWorkCartItems,
   deskRefreshNotice,
   forgeDefinitionValues,
+  forgeProfileStatus,
   moveSourceEntries,
   parseSourceLines,
   removeSourceEntry,
   submitUploadBatch,
+  staleRefreshAnnouncement,
 } from "../../app/static/desk.js";
 
 test("parseSourceLines trims source URLs and preserves their entered order", () => {
@@ -128,6 +130,18 @@ test("forgeDefinitionValues reflects every edited setting", () => {
   });
 });
 
+test("forgeProfileStatus reserves the safe badge for the complete default profile", () => {
+  assert.deepEqual(forgeProfileStatus({}), { label: "Safe maximum", status: "success" });
+  assert.deepEqual(
+    forgeProfileStatus({ normalize: false }),
+    { label: "Custom settings", status: "warning" },
+  );
+  assert.deepEqual(
+    forgeProfileStatus({ trim_tail: 0.5 }),
+    { label: "Custom settings", status: "warning" },
+  );
+});
+
 test("source move and removal preserve stable identities for focus restoration", () => {
   const entries = [
     { id: "source-a", value: "https://example.com/a" },
@@ -181,6 +195,24 @@ test("deskRefreshNotice preserves cached work and exposes a retry for partial fa
     message: "Jobs could not refresh. Showing the last available information.",
   });
   assert.deepEqual(deskRefreshNotice({ stale: [], errors: {} }), { stale: false, label: "", message: "" });
+});
+
+test("staleRefreshAnnouncement announces a stale transition once and then recovery", () => {
+  const notice = {
+    stale: true,
+    label: "Work cart may be out of date",
+    message: "Jobs could not refresh. Showing the last available information.",
+  };
+  const first = staleRefreshAnnouncement("", notice);
+  const repeated = staleRefreshAnnouncement(first.key, notice);
+  const recovered = staleRefreshAnnouncement(repeated.key, { stale: false, label: "", message: "" });
+
+  assert.deepEqual(first, {
+    key: "Work cart may be out of date|Jobs could not refresh. Showing the last available information.",
+    message: "Work cart may be out of date. Jobs could not refresh. Showing the last available information.",
+  });
+  assert.deepEqual(repeated, { key: first.key, message: "" });
+  assert.deepEqual(recovered, { key: "", message: "Work cart information is current again." });
 });
 
 test("buildWorkCartItems merges preparation jobs with collection facts and keeps real states", () => {

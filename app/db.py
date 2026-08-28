@@ -176,6 +176,22 @@ def jobs_for_refresh(limit: int = 40) -> list[dict[str, Any]]:
     return [_hydrate(row) for row in [*active, *history]]
 
 
+def active_upload_stages() -> set[str]:
+    rows = connect().execute(
+        "SELECT payload FROM jobs WHERE kind='upload_prepare' "
+        "AND status IN ('queued','running')"
+    ).fetchall()
+    stages = set()
+    for row in rows:
+        try:
+            stage = json.loads(row["payload"]).get("stage")
+        except (AttributeError, json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(stage, str):
+            stages.add(stage)
+    return stages
+
+
 def requeue_stale_running() -> None:
     """Anything left 'running' when the process died is not coming back."""
     conn = connect()

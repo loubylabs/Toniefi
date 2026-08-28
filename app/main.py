@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -32,6 +31,21 @@ app = FastAPI(title="Toniefi", version="1.0.0", lifespan=lifespan)
 
 def fail(status: int, message: str) -> HTTPException:
     return HTTPException(status_code=status, detail=message)
+
+
+def valid_source_url(value: str) -> bool:
+    """Match the browser's accepted HTTP and HTTPS URL boundary."""
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(hostname)
+        and not any(character.isspace() or ord(character) < 32 for character in parsed.netloc)
+    )
 
 
 # ------------------------------------------------------------------ models
@@ -147,15 +161,7 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
     sources = [source.url.strip() for source in body.sources]
     if not sources:
         raise fail(400, "At least one source URL is required.")
-    try:
-        parsed_sources = [urlparse(url) for url in sources]
-        valid_urls = all(
-            parsed.scheme in {"http", "https"} and bool(parsed.hostname)
-            for parsed in parsed_sources
-        )
-    except ValueError:
-        valid_urls = False
-    if not valid_urls:
+    if not all(valid_source_url(url) for url in sources):
         raise fail(400, "Sources must use HTTP or HTTPS.")
     if len(set(sources)) != len(sources):
         raise fail(400, "Duplicate source URLs are not allowed.")
@@ -199,6 +205,8 @@ async def prepare_uploads(
         raise fail(400, "Upload options are invalid.") from exc
     if not files:
         raise fail(400, "Choose at least one audio file.")
+    if len(files) > jobs.UPLOAD_MAX_FILES:
+        raise fail(400, f"A collection can contain at most {jobs.UPLOAD_MAX_FILES} uploaded files.")
 
     described = []
     for index, upload in enumerate(files):
@@ -206,16 +214,28 @@ async def prepare_uploads(
         suffix = Path(name).suffix.lower()
         if suffix not in audio.AUDIO_EXTENSIONS:
             raise fail(400, f"{suffix or 'That file'} is not a supported audio format.")
-        described.append({"name": name, "stored": f"{index:03d}{suffix}"})
+        described.append({
+            "name": name,
+            "stored": f"{index:03d}{suffix}",
+            "target": f"{index + 1:03d}-{audio.slugify(Path(name).stem)}{suffix}",
+        })
 
-    stage_name = f"upload-{uuid4().hex}"
-    stage = config.WORK_DIR / stage_name
-    stage.mkdir(parents=True)
+    jobs.sweep_upload_staging()
+    stage_name, stage = jobs.create_upload_stage()
     try:
+        total_bytes = 0
         for upload, item in zip(files, described, strict=True):
             destination = stage / item["stored"]
             with destination.open("wb") as output:
                 while chunk := await upload.read(1024 * 1024):
+                    total_bytes += len(chunk)
+                    if total_bytes > jobs.UPLOAD_MAX_BYTES:
+                        limit = jobs.upload_limit_label(jobs.UPLOAD_MAX_BYTES)
+                        raise fail(
+                            413,
+                            f"The selected files exceed the upload limit of {limit}. "
+                            "Choose fewer or smaller files and submit the collection again.",
+                        )
                     output.write(chunk)
         payload = {
             "title": title.strip(),

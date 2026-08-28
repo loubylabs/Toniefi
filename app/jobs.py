@@ -2,14 +2,88 @@
 minutes, and an HTTP request should not be holding the bag while they run."""
 from __future__ import annotations
 
+import json
 import shutil
 import threading
+import time
 import traceback
+from pathlib import Path
+from uuid import uuid4
 
-from . import config, db, forge, ingest, library, prepare, push
+from . import audio, config, db, forge, ingest, library, prepare, push
 
 _threads: list[threading.Thread] = []
 _stop = threading.Event()
+
+UPLOAD_MAX_FILES = 500
+UPLOAD_MAX_BYTES = 20 * 1024 * 1024 * 1024
+UPLOAD_STAGE_RETENTION_SECONDS = 24 * 60 * 60
+UPLOAD_STAGE_MARKER = ".toniefi-upload-stage.json"
+_now = time.time
+
+
+def _owned_upload_stage(stage: Path) -> bool:
+    return (
+        stage.parent == config.WORK_DIR.resolve()
+        and stage.name.startswith("upload-")
+        and not stage.is_symlink()
+        and (stage / UPLOAD_STAGE_MARKER).is_file()
+    )
+
+
+def mark_upload_stage(stage: Path) -> None:
+    stage = stage.resolve()
+    if not _owned_upload_stage(stage):
+        return
+    (stage / UPLOAD_STAGE_MARKER).write_text(
+        json.dumps({"retained_at": _now()}),
+        encoding="utf-8",
+    )
+
+
+def sweep_upload_staging() -> None:
+    """Remove expired TonieFi upload stages and leave all other work intact."""
+    config.ensure_dirs()
+    cutoff = _now() - UPLOAD_STAGE_RETENTION_SECONDS
+    active_stages = db.active_upload_stages()
+    for stage in config.WORK_DIR.iterdir():
+        if not stage.is_dir() or stage.is_symlink() or not stage.name.startswith("upload-"):
+            continue
+        marker = stage / UPLOAD_STAGE_MARKER
+        if not marker.is_file():
+            continue
+        if stage.name in active_stages:
+            continue
+        try:
+            retained_at = float(json.loads(marker.read_text(encoding="utf-8"))["retained_at"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
+            continue
+        if retained_at <= cutoff:
+            shutil.rmtree(stage)
+
+
+def create_upload_stage() -> tuple[str, Path]:
+    config.ensure_dirs()
+    stage_name = f"upload-{uuid4().hex}"
+    stage = config.WORK_DIR / stage_name
+    stage.mkdir()
+    (stage / UPLOAD_STAGE_MARKER).write_text(
+        json.dumps({"retained_at": _now()}),
+        encoding="utf-8",
+    )
+    return stage_name, stage
+
+
+def upload_limit_label(limit: int) -> str:
+    gibibyte = 1024 * 1024 * 1024
+    if limit >= gibibyte and limit % gibibyte == 0:
+        return f"{limit // gibibyte} GiB"
+    return f"{limit} {'byte' if limit == 1 else 'bytes'}"
+
+
+def upload_target_name(item: dict, position: int) -> str:
+    source = Path(item["name"])
+    return f"{position + 1:03d}-{audio.slugify(source.stem)}{source.suffix.lower()}"
 
 
 def enqueue(kind: str, label: str, payload: dict) -> int:
@@ -99,7 +173,10 @@ def _handle(job: dict) -> dict:
                 shutil.rmtree(stage, ignore_errors=True)
             return collection
         if stage.parent != work_root or not stage.is_dir():
-            raise RuntimeError("The staged upload files are missing. Upload the collection again.")
+            raise RuntimeError(
+                "Upload staging expired after 24 hours. "
+                "Select the files and submit the collection again."
+            )
         if slug and not collection:
             current.pop("slug", None)
             current.pop("owns_collection", None)
@@ -117,15 +194,21 @@ def _handle(job: dict) -> dict:
         try:
             for index in range(start, len(files)):
                 item = files[index]
+                target = item.get("target") or upload_target_name(item, index)
+                current["pending_file"] = {"position": index, "target": target}
+                db.update_job(job_id, payload=current)
                 progress(f"extracting: Importing file {index + 1} of {len(files)}: {item['name']}")
                 ingest.import_upload(
-                    item["name"],
-                    (stage / item["stored"]).read_bytes(),
-                    slug,
+                    stage / item["stored"],
+                    filename=item["name"],
+                    slug=slug,
+                    target_name=target,
                 )
                 current["next_file"] = index + 1
+                current.pop("pending_file", None)
                 db.update_job(job_id, payload=current)
         except Exception:
+            mark_upload_stage(stage)
             if current.get("owns_collection"):
                 try:
                     library.delete(slug)
@@ -133,19 +216,24 @@ def _handle(job: dict) -> dict:
                     pass
                 current.pop("slug", None)
                 current.pop("owns_collection", None)
+                current.pop("pending_file", None)
                 current["next_file"] = 0
                 db.update_job(job_id, payload=current)
             raise
 
-        result = forge.run(
-            slug,
-            normalize=options["normalize"],
-            clean_titles=options["clean_titles"],
-            trim_head=options["trim_head"],
-            trim_tail=options["trim_tail"],
-            split_oversized=options["split_oversized"],
-            progress=lambda message: progress(f"forging: {message}"),
-        )
+        try:
+            result = forge.run(
+                slug,
+                normalize=options["normalize"],
+                clean_titles=options["clean_titles"],
+                trim_head=options["trim_head"],
+                trim_tail=options["trim_tail"],
+                split_oversized=options["split_oversized"],
+                progress=lambda message: progress(f"forging: {message}"),
+            )
+        except Exception:
+            mark_upload_stage(stage)
+            raise
         shutil.rmtree(stage)
         return result
 
@@ -192,6 +280,7 @@ def _worker() -> None:
 
 def start() -> None:
     db.init()
+    sweep_upload_staging()
     db.requeue_stale_running()
     for _ in range(config.WORKER_THREADS):
         thread = threading.Thread(target=_worker, daemon=True)

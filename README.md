@@ -137,6 +137,11 @@ curl -s -X POST http://127.0.0.1:8080/api/uploads/prepare \
   -F 'options={"use_chapters":true,"normalize":true,"clean_titles":true,"trim_head":0,"trim_tail":0,"split_oversized":true}'
 ```
 
+One upload collection can contain up to 500 files and 20 GiB of staged audio.
+TonieFi streams each upload to its work directory. Failed upload staging remains
+available for retry for 24 hours, then TonieFi removes it during startup or before
+the next upload batch. Other files in the work directory are left untouched.
+
 ### When a link will not load
 
 **`This video is not available`, but the browser plays it fine.** YouTube is

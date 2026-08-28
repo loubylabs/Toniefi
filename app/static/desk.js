@@ -103,6 +103,15 @@ export function forgeDefinitionValues(options = {}) {
   };
 }
 
+export function forgeProfileStatus(options = {}) {
+  const selected = normalizedOptions(options);
+  const safe = Object.entries(DEFAULT_FORGE_OPTIONS)
+    .every(([name, value]) => selected[name] === value);
+  return safe
+    ? { label: "Safe maximum", status: "success" }
+    : { label: "Custom settings", status: "warning" };
+}
+
 export function moveSourceEntries(entries, id, offset) {
   const next = [...entries];
   const index = next.findIndex((entry) => entry.id === id);
@@ -142,6 +151,18 @@ export function deskRefreshNotice(snapshot) {
     label: "Work cart may be out of date",
     message: `${messages.join(" ") || "Work cart data could not refresh."} Showing the last available information.`,
   };
+}
+
+export function staleRefreshAnnouncement(previousKey, notice) {
+  const key = notice.stale ? `${notice.label}|${notice.message}` : "";
+  if (key === previousKey) return { key, message: "" };
+  if (!key) {
+    return {
+      key,
+      message: previousKey ? "Work cart information is current again." : "",
+    };
+  }
+  return { key, message: `${notice.label}. ${notice.message}` };
 }
 
 function jobSlug(job) {
@@ -250,10 +271,15 @@ function optionControl({ name, label, checked }) {
 
 function createForgeSummary() {
   const heading = element("h2", { id: "forge-summary-title", text: "Forge defaults" });
+  const profileBadge = element("span", {
+    className: "status-stamp",
+    "data-status": "success",
+    text: "Safe maximum",
+  });
   const headingRow = element("div", { className: "desk-section-heading" }, [
     iconNode("forge", "desk-section-icon"),
     heading,
-    element("span", { className: "status-stamp", "data-status": "success", text: "Safe maximum" }),
+    profileBadge,
   ]);
   const definitionNodes = {};
   const definition = (key, label) => {
@@ -293,10 +319,14 @@ function createForgeSummary() {
     disclosure,
   ]);
   const updateDefinitions = () => {
-    const values = forgeDefinitionValues(readForgeOptions(section));
+    const options = readForgeOptions(section);
+    const values = forgeDefinitionValues(options);
     Object.entries(values).forEach(([key, value]) => {
       definitionNodes[key].textContent = value;
     });
+    const profile = forgeProfileStatus(options);
+    profileBadge.textContent = profile.label;
+    profileBadge.dataset.status = profile.status;
   };
   controls.addEventListener("input", updateDefinitions);
   controls.addEventListener("change", updateDefinitions);
@@ -444,10 +474,13 @@ function createLiveWorkCart({ request, requestRefresh, navigate }) {
     liveStatus,
   ]);
   let priorPhases = null;
+  let priorStaleKey = "";
 
   function onRefresh(snapshot) {
     const items = buildWorkCartItems(snapshot.jobs, snapshot.collections);
     const notice = deskRefreshNotice(snapshot);
+    const staleAnnouncement = staleRefreshAnnouncement(priorStaleKey, notice);
+    priorStaleKey = staleAnnouncement.key;
     staleNotice.hidden = !notice.stale;
     staleLabel.textContent = notice.label;
     staleMessage.textContent = notice.message;
@@ -459,12 +492,15 @@ function createLiveWorkCart({ request, requestRefresh, navigate }) {
       replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate })));
     }, { root: host });
     const phases = new Map(items.map((item) => [item.key, item.phase]));
+    const announcements = [];
+    if (staleAnnouncement.message) announcements.push(staleAnnouncement.message);
     if (priorPhases) {
       const changed = items.filter((item) => priorPhases.get(item.key) && priorPhases.get(item.key) !== item.phase);
       if (changed.length) {
-        liveStatus.textContent = changed.map((item) => `${item.title}: ${phaseDetails(item.phase).label}.`).join(" ");
+        announcements.push(changed.map((item) => `${item.title}: ${phaseDetails(item.phase).label}.`).join(" "));
       }
     }
+    if (announcements.length) liveStatus.textContent = announcements.join(" ");
     priorPhases = phases;
   }
 
@@ -567,7 +603,11 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
     multiple: true,
     accept: "audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.wav,.flac,.aac",
   });
-  const uploadStatus = element("p", { className: "field-help", role: "status", text: "All selected files become one collection in the order shown by your device." });
+  const uploadStatus = element("p", {
+    className: "field-help",
+    role: "status",
+    text: "Up to 500 files and 20 GiB total become one collection. Failed uploads remain available for retry for 24 hours.",
+  });
   const uploadButton = element("button", { type: "submit", className: "button button-secondary" }, [
     iconNode("upload"), element("span", { text: "Upload and prepare" }),
   ]);
