@@ -254,6 +254,15 @@ def jobs_for_refresh(limit: int = 40) -> list[dict[str, Any]]:
     return [_hydrate(row) for row in [*active, *history]]
 
 
+def jobs_for_history(limit: int = 40) -> list[dict[str, Any]]:
+    """Return recent job history in strict newest-first order."""
+    rows = connect().execute(
+        "SELECT * FROM jobs ORDER BY id DESC LIMIT ?",
+        (max(0, int(limit)),),
+    ).fetchall()
+    return [_hydrate(row) for row in rows]
+
+
 def active_upload_stages() -> set[str]:
     rows = connect().execute(
         "SELECT payload FROM jobs WHERE kind='upload_prepare' "

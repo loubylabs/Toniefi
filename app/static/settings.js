@@ -39,11 +39,20 @@ export function credentialView(credentials = {}) {
     fieldsDisabled: source === "environment",
     saveLabel: source === "saved" ? "Replace local credentials" : "Save local credentials",
     explanation: source === "environment"
-      ? "Environment credentials are active. Local values cannot override them."
+      ? configured
+        ? "Environment credentials are active. Local values cannot override them."
+        : "Environment credentials are incomplete. Set both TONIES_USERNAME and TONIES_PASSWORD before TonieFi can connect."
       : source === "saved"
         ? "These credentials are stored as plain text in TonieFi's local SQLite database."
         : "Add a myTonies username and password to manage Creative Tonies.",
   };
+}
+
+
+export function toolPresentation(tool) {
+  return tool.available
+    ? { icon: "check", label: "Available", state: "available" }
+    : { icon: "alert", label: "Missing", state: "missing" };
 }
 
 
@@ -299,13 +308,16 @@ export function createSettingsScreen({ request = api, refresh } = {}) {
 
     function renderSystem() {
       const facts = settingsFacts(status);
-      const toolRows = facts.tools.map((tool) => element("li", {}, [
-        iconNode(tool.available ? "check" : "alert"),
-        element("span", {}, [
-          element("strong", { text: tool.name }),
-          element("small", { text: tool.available ? "Available" : "Missing" }),
-        ]),
-      ]));
+      const toolRows = facts.tools.map((tool) => {
+        const presentation = toolPresentation(tool);
+        return element("li", { "data-state": presentation.state }, [
+          iconNode(presentation.icon),
+          element("span", {}, [
+            element("strong", { text: tool.name }),
+            element("small", { text: presentation.label }),
+          ]),
+        ]);
+      });
       replace(system,
         element("div", { className: "settings-section-heading" }, [
           iconNode("settings"),
@@ -387,6 +399,7 @@ export function createSettingsScreen({ request = api, refresh } = {}) {
 
     root.append(header, stale, account, system, disclosures);
     replace(workspace, root);
+    renderDisclosures();
     render();
     const unsubscribe = refresh.subscribe(onRefresh);
     refresh.request().catch((error) => {

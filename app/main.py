@@ -124,16 +124,6 @@ class Credentials(BaseModel):
 
 # ------------------------------------------------------------------ status
 
-def credential_status() -> dict[str, Any]:
-    from_env = bool(config.TONIES_USERNAME and config.TONIES_PASSWORD)
-    from_db = bool(db.get_setting("tonies_username") and db.get_setting("tonies_password"))
-    return {
-        "configured": from_env or from_db,
-        "source": "environment" if from_env else ("saved" if from_db else "none"),
-        "username": config.TONIES_USERNAME or db.get_setting("tonies_username"),
-    }
-
-
 @app.get("/api/status")
 def status() -> dict[str, Any]:
     return {
@@ -142,7 +132,7 @@ def status() -> dict[str, Any]:
         "usable_limit_seconds": config.usable_limit(),
         "tonie_limit_human": audio.human_duration(config.TONIE_LIMIT_SECONDS),
         "tools": audio.have_tools(),
-        "credentials": credential_status(),
+        "credentials": push.credential_status(),
     }
 
 
@@ -157,17 +147,20 @@ def save_credentials(body: Credentials) -> dict[str, Any]:
 def delete_credentials() -> dict[str, Any]:
     db.delete_setting("tonies_username")
     db.delete_setting("tonies_password")
-    return credential_status()
+    return push.credential_status()
 
 
 @app.post("/api/settings/test")
 def test_credentials() -> dict[str, Any]:
+    client = None
     try:
         client = push.client_from_settings()
         profile = client.check_login()
-        client.close()
     except tonies.TonieCloudError as exc:
         raise fail(400, str(exc)) from exc
+    finally:
+        if client is not None:
+            client.close()
     return {"ok": True, "email": profile.get("email", "")}
 
 
@@ -423,6 +416,11 @@ def put_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> d
 @app.get("/api/jobs")
 def list_jobs(limit: int = 40) -> list[dict[str, Any]]:
     return [jobs.present(job) for job in db.jobs_for_refresh(limit)]
+
+
+@app.get("/api/jobs/history")
+def list_job_history(limit: int = 40) -> list[dict[str, Any]]:
+    return [jobs.present(job) for job in db.jobs_for_history(limit)]
 
 
 @app.get("/api/jobs/{job_id}")

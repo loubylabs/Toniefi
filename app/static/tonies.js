@@ -21,6 +21,14 @@ export function buildTonieChapterPayload(tonie, chapters) {
 }
 
 
+export function tonieLoadView({ state, tonies, error }) {
+  if (state === "loading") return { kind: "loading", stale: false };
+  if (state === "failed" && !tonies.length) return { kind: "failed", stale: false };
+  if (state === "loaded" && !tonies.length) return { kind: "empty", stale: false };
+  return { kind: "loaded", stale: state === "failed" && Boolean(error) };
+}
+
+
 export function createTonieMutation({
   request,
   reload,
@@ -45,10 +53,14 @@ export function createTonieMutation({
       if (!signal?.aborted) onUpdated(updated, tonie);
       return updated;
     } catch (error) {
+      error.remoteReloaded = false;
+      error.reloadError = null;
       if (!signal?.aborted) {
         try {
           await reload();
+          error.remoteReloaded = true;
         } catch (reloadError) {
+          error.reloadError = reloadError;
           onReloadFailure(reloadError);
         }
       }
@@ -91,9 +103,9 @@ export function createToniesScreen({ request = api } = {}) {
     let active = true;
     let tonies = [];
     let openKey = "";
-    let staleMessage = "";
+    let loadState = "loading";
+    let loadError = "";
     let loadToken = 0;
-    let initialLoad = true;
 
     const root = element("section", { className: "tonies-screen", "aria-labelledby": "tonies-title" });
     const refreshButton = element("button", {
@@ -117,8 +129,8 @@ export function createToniesScreen({ request = api } = {}) {
         const fetched = await request("/api/tonies", { ...(signal ? { signal } : {}) });
         if (!active || signal?.aborted || token !== loadToken) return null;
         tonies = fetched;
-        staleMessage = "";
-        initialLoad = false;
+        loadState = "loaded";
+        loadError = "";
         if (openKey && !tonies.some((tonie) => tonieKey(tonie) === openKey)) openKey = "";
         render();
         if (announceSuccess) {
@@ -128,8 +140,8 @@ export function createToniesScreen({ request = api } = {}) {
         return fetched;
       } catch (error) {
         if (!active || signal?.aborted || token !== loadToken) return null;
-        staleMessage = error.message;
-        initialLoad = false;
+        loadState = "failed";
+        loadError = error.message;
         render();
         throw error;
       }
@@ -143,11 +155,13 @@ export function createToniesScreen({ request = api } = {}) {
       onUpdated(updated, previous) {
         loadToken += 1;
         tonies = tonies.map((tonie) => tonieKey(tonie) === tonieKey(previous) ? updated : tonie);
-        staleMessage = "";
+        loadState = "loaded";
+        loadError = "";
         render();
       },
       onReloadFailure(error) {
-        staleMessage = error.message;
+        loadState = "failed";
+        loadError = error.message;
         render();
       },
     });
@@ -160,7 +174,10 @@ export function createToniesScreen({ request = api } = {}) {
         announce(successMessage);
       } catch (error) {
         if (!active || signal?.aborted) return;
-        notify(`${error.message} TonieFi reloaded the Tonie from myTonies.`, { kind: "failure", timeout: 0 });
+        const recovery = error.remoteReloaded
+          ? "TonieFi reloaded the Tonie from myTonies."
+          : "TonieFi could not reload remote truth. The visible Tonie information is marked stale.";
+        notify(`${error.message} ${recovery}`, { kind: "failure", timeout: 0 });
       }
     }
 
@@ -328,26 +345,38 @@ export function createToniesScreen({ request = api } = {}) {
     function render({ focusKey = "" } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
-      stale.hidden = !staleMessage;
-      if (staleMessage) {
+      const loadView = tonieLoadView({ state: loadState, tonies, error: loadError });
+      stale.hidden = !loadView.stale;
+      if (loadView.stale) {
         const retry = element("button", { type: "button", className: "button button-secondary", text: "Retry remote read" });
         retry.addEventListener("click", () => load({ announceSuccess: true }).catch(() => {}));
         replace(stale,
           element("strong", { text: "Creative Tonie information may be stale" }),
-          element("p", { text: `${staleMessage} Existing figures remain visible until a fresh myTonies read succeeds.` }),
+          element("p", { text: `${loadError} Existing figures remain visible until a fresh myTonies read succeeds.` }),
           retry,
         );
       } else {
         replace(stale);
       }
 
-      if (initialLoad) {
+      if (loadView.kind === "loading") {
         replace(list, element("li", { className: "route-pending tonie-loading" }, [
           iconNode("tonie", "route-pending-mark"),
           element("h2", { text: "Reading Creative Tonies" }),
           element("p", { text: "Fetching the latest chapters and capacity from myTonies." }),
         ]));
-      } else if (!tonies.length) {
+      } else if (loadView.kind === "failed") {
+        const retry = element("button", { type: "button", className: "button button-secondary" }, [
+          iconNode("refresh"), element("span", { text: "Retry myTonies read" }),
+        ]);
+        retry.addEventListener("click", () => load({ announceSuccess: true }).catch(() => {}));
+        replace(list, element("li", { className: "empty-state tonie-load-failed" }, [
+          iconNode("alert"),
+          element("strong", { text: "Creative Tonies could not be loaded" }),
+          element("p", { text: loadError || "The latest myTonies information is unavailable." }),
+          retry,
+        ]));
+      } else if (loadView.kind === "empty") {
         replace(list, element("li", { className: "empty-state tonie-list-empty" }, [
           iconNode("tonie"),
           element("strong", { text: "No Creative Tonies were found" }),

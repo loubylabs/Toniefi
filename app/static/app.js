@@ -41,6 +41,7 @@ function createRefreshCoordinator() {
   let snapshot = {
     status: null,
     jobs: [],
+    history: [],
     collections: [],
     stale: [],
     errors: {},
@@ -56,10 +57,11 @@ function createRefreshCoordinator() {
   }
 
   async function load() {
-    const names = ["status", "jobs", "collections"];
+    const names = ["status", "jobs", "history", "collections"];
     const results = await Promise.allSettled([
       api("/api/status"),
       api("/api/jobs"),
+      api("/api/jobs/history"),
       api("/api/collections"),
     ]);
     const next = {

@@ -156,12 +156,23 @@ def present(job: dict) -> dict:
 
     status = displayed.get("status", "")
     kind = displayed.get("kind", "")
+    collection_stage = ""
+    if status == "done" and kind == "librivox":
+        payload = displayed.get("payload") or {}
+        result = displayed.get("result") or {}
+        slug = result.get("slug") or payload.get("slug")
+        collection = library.get(slug) if slug else None
+        collection_stage = (collection or {}).get("stage", "")
+        displayed["collection_stage"] = collection_stage
     displayed["retryable"] = status == "failed" and kind != "push"
     if status == "failed":
         displayed["phase"] = "failed"
     elif separator and prefix in {"extracting", "forging"}:
         displayed["phase"] = prefix
-    elif status == "done" and kind in {"prepare_url", "upload_prepare", "forge"}:
+    elif status == "done" and (
+        kind in {"prepare_url", "upload_prepare", "forge"}
+        or (kind == "librivox" and collection_stage == "forged")
+    ):
         displayed["phase"] = "ready"
     elif status == "running" and kind in {"prepare_url", "librivox", "upload_prepare"}:
         displayed["phase"] = "extracting"

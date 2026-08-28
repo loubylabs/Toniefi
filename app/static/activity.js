@@ -30,7 +30,9 @@ export function activityAction(job) {
       guidance: "Creative Tonie sends must be reviewed and confirmed again.",
     };
   }
-  if (job.status === "done" && PREPARATION_KINDS.has(job.kind) && slug) {
+  const reviewablePreparation = PREPARATION_KINDS.has(job.kind)
+    && (job.kind !== "librivox" || job.collection_stage === "forged");
+  if (job.status === "done" && reviewablePreparation && slug) {
     return {
       kind: "review",
       href: `/review/${encodeURIComponent(slug)}`,
@@ -47,6 +49,11 @@ export function activityAction(job) {
     };
   }
   return { kind: "none", href: "", label: "", guidance: "" };
+}
+
+
+export function activityHistory(snapshot = {}) {
+  return (snapshot.history || []).slice(0, 40);
 }
 
 
@@ -115,7 +122,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
 
   return function renderActivity({ workspace, signal }) {
     let active = true;
-    let jobs = (refresh.snapshot.jobs || []).slice(0, 40);
+    let jobs = activityHistory(refresh.snapshot);
     const retrying = new Set();
     const root = element("section", { className: "activity-screen", "aria-labelledby": "activity-title" });
     const refreshButton = element("button", {
@@ -222,7 +229,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
 
     function onRefresh(snapshot) {
       if (!active || signal?.aborted) return;
-      const outcome = snapshotRefreshOutcome(snapshot, "jobs");
+      const outcome = snapshotRefreshOutcome(snapshot, "history");
       stale.hidden = !outcome.stale;
       if (outcome.stale) {
         const retry = element("button", { type: "button", className: "button button-secondary", text: "Retry refresh" });
@@ -234,7 +241,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
         );
       } else {
         replace(stale);
-        jobs = (snapshot.jobs || []).slice(0, 40);
+        jobs = activityHistory(snapshot);
       }
       render();
     }
@@ -244,7 +251,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       try {
         const snapshot = await refresh.request();
         if (!active || signal?.aborted) return;
-        const outcome = snapshotRefreshOutcome(snapshot, "jobs");
+        const outcome = snapshotRefreshOutcome(snapshot, "history");
         if (outcome.stale) notify("Activity could not refresh. The last available history remains visible.", { kind: "failure", timeout: 0 });
         else notify("Activity history refreshed.", { kind: "success" });
       } catch (error) {

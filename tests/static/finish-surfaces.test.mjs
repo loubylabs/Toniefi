@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   buildTonieChapterPayload,
   createTonieMutation,
+  tonieLoadView,
 } from "../../app/static/tonies.js";
 import {
   activityAction,
   activityFacts,
+  activityHistory,
   retryActivityJob,
 } from "../../app/static/activity.js";
 import {
   createSettingsScreen,
   credentialView,
   settingsFacts,
+  toolPresentation,
 } from "../../app/static/settings.js";
 
 
@@ -109,6 +113,40 @@ test("Tonie mutation locks competing saves and reloads remote truth after failur
 });
 
 
+test("Tonie mutation reports whether remote truth was actually reloaded", async () => {
+  const tonie = { householdId: "house-1", id: "fox-1", chapters: [] };
+  const reloaded = createTonieMutation({
+    request: async () => { throw new Error("save refused"); },
+    reload: async () => [],
+  });
+  await assert.rejects(reloaded.save(tonie, []), (error) => {
+    assert.equal(error.message, "save refused");
+    assert.equal(error.remoteReloaded, true);
+    assert.equal(error.reloadError, null);
+    return true;
+  });
+
+  const stale = createTonieMutation({
+    request: async () => { throw new Error("save refused"); },
+    reload: async () => { throw new Error("read refused"); },
+  });
+  await assert.rejects(stale.save(tonie, []), (error) => {
+    assert.equal(error.message, "save refused");
+    assert.equal(error.remoteReloaded, false);
+    assert.equal(error.reloadError.message, "read refused");
+    return true;
+  });
+});
+
+
+test("Tonie load presentation distinguishes loading, empty, failed, and stale data", () => {
+  assert.deepEqual(tonieLoadView({ state: "loading", tonies: [], error: "" }), { kind: "loading", stale: false });
+  assert.deepEqual(tonieLoadView({ state: "loaded", tonies: [], error: "" }), { kind: "empty", stale: false });
+  assert.deepEqual(tonieLoadView({ state: "failed", tonies: [], error: "Login failed" }), { kind: "failed", stale: false });
+  assert.deepEqual(tonieLoadView({ state: "failed", tonies: [{ id: "fox-1" }], error: "Read failed" }), { kind: "loaded", stale: true });
+});
+
+
 test("Activity sends successful preparation to review and failed push back to Review guidance", () => {
   assert.deepEqual(activityAction({
     id: 11,
@@ -134,6 +172,34 @@ test("Activity sends successful preparation to review and failed push back to Re
     label: "Review assignment",
     guidance: "Creative Tonie sends must be reviewed and confirmed again.",
   });
+});
+
+
+test("Activity only offers Review for LibriVox work whose collection is forged", () => {
+  assert.equal(activityAction({
+    kind: "librivox",
+    status: "done",
+    collection_stage: "forged",
+    result: { slug: "ready-book" },
+  }).kind, "review");
+  assert.deepEqual(activityAction({
+    kind: "librivox",
+    status: "done",
+    collection_stage: "extracted",
+    result: { slug: "legacy-book" },
+  }), { kind: "none", href: "", label: "", guidance: "" });
+});
+
+
+test("Activity consumes only chronological history from the refresh snapshot", () => {
+  const snapshot = {
+    jobs: [{ id: 3 }, { id: 1 }],
+    history: [{ id: 50 }, { id: 49 }],
+  };
+  assert.deepEqual(activityHistory(snapshot), [{ id: 50 }, { id: 49 }]);
+
+  const appSource = readFileSync(new URL("../../app/static/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /api\/jobs\/history/);
 });
 
 
@@ -186,6 +252,19 @@ test("Settings credential view makes environment precedence explicit", () => {
   });
   assert.equal(credentialView({ configured: false, source: "none", username: "" }).state, "unconfigured");
   assert.equal(credentialView({ configured: true, source: "saved", username: "saved@example.com" }).saveLabel, "Replace local credentials");
+  assert.deepEqual(credentialView({
+    configured: false,
+    source: "environment",
+    username: "partial@example.com",
+  }), {
+    state: "unconfigured",
+    label: "Unconfigured",
+    sourceLabel: "Environment variables",
+    username: "partial@example.com",
+    fieldsDisabled: true,
+    saveLabel: "Save local credentials",
+    explanation: "Environment credentials are incomplete. Set both TONIES_USERNAME and TONIES_PASSWORD before TonieFi can connect.",
+  });
 });
 
 
@@ -206,6 +285,16 @@ test("Settings facts derive usable headroom and tool status from server truth", 
       { name: "ffprobe", available: false },
     ],
   });
+  assert.deepEqual(toolPresentation({ name: "ffmpeg", available: true }), {
+    icon: "check",
+    label: "Available",
+    state: "available",
+  });
+  assert.deepEqual(toolPresentation({ name: "ffprobe", available: false }), {
+    icon: "alert",
+    label: "Missing",
+    state: "missing",
+  });
 });
 
 
@@ -218,9 +307,10 @@ test("Settings keeps service disclosures mounted while status is loading", () =>
   };
   globalThis.document = document;
   const workspace = new TinyElement("main");
+  let onRefresh;
   const refresh = {
     snapshot: { status: null },
-    subscribe: () => () => {},
+    subscribe: (listener) => { onRefresh = listener; return () => {}; },
     request: () => new Promise(() => {}),
   };
 
@@ -230,7 +320,12 @@ test("Settings keeps service disclosures mounted while status is loading", () =>
       signal: new AbortController().signal,
     });
     const root = workspace.childNodes[0];
-    assert.equal(root.childNodes.some((node) => node.className === "settings-section disclosure-settings"), true);
+    const disclosure = root.childNodes.find((node) => node.className === "settings-section disclosure-settings");
+    const textOf = (node) => [node?.textContent || "", ...(node?.childNodes || []).map(textOf)].join("");
+    const exactDisclosure = "Service disclosuresImportant limits of the Creative Tonie connection.Private API. TonieFi uses the same private, unsupported myTonies API used by the web app. Its endpoints can change without notice.No affiliation. TonieFi is not affiliated with, endorsed by, or supported by tonies or Boxine.";
+    assert.equal(textOf(disclosure), exactDisclosure);
+    onRefresh({ status: null, stale: ["status"], errors: { status: new Error("offline") } });
+    assert.equal(textOf(disclosure), exactDisclosure);
   } finally {
     globalThis.document = originalDocument;
   }

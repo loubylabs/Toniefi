@@ -10,23 +10,67 @@ from __future__ import annotations
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
 
 from . import audio, config, library, tonies
 
 
-def client_from_settings() -> tonies.TonieCloud:
-    """Env vars win; the UI-stored credentials are the fallback."""
+class SelectedCredentials(TypedDict):
+    source: str
+    configured: bool
+    username: str
+    password: str
+
+
+def select_credentials() -> SelectedCredentials:
+    """Select one complete credential source without mixing pairs."""
     from . import db
 
-    username = config.TONIES_USERNAME or db.get_setting("tonies_username")
-    password = config.TONIES_PASSWORD or db.get_setting("tonies_password")
-    if not username or not password:
+    if config.TONIES_USERNAME or config.TONIES_PASSWORD:
+        source = "environment"
+        username = config.TONIES_USERNAME
+        password = config.TONIES_PASSWORD
+    else:
+        username = db.get_setting("tonies_username")
+        password = db.get_setting("tonies_password")
+        source = "saved" if username or password else "none"
+    return {
+        "source": source,
+        "configured": bool(username and password),
+        "username": username,
+        "password": password,
+    }
+
+
+def credential_status() -> dict[str, Any]:
+    """Report the selected pair without exposing its password."""
+    selected = select_credentials()
+    return {
+        "configured": selected["configured"],
+        "source": selected["source"],
+        "username": selected["username"],
+    }
+
+
+def client_from_settings() -> tonies.TonieCloud:
+    """Create a client from the one atomically selected credential pair."""
+    selected = select_credentials()
+    if not selected["configured"]:
+        if selected["source"] == "environment":
+            raise tonies.AuthError(
+                "Environment credentials are incomplete. Set both "
+                "TONIES_USERNAME and TONIES_PASSWORD."
+            )
+        if selected["source"] == "saved":
+            raise tonies.AuthError(
+                "Saved myTonies credentials are incomplete. Save both the "
+                "username and password."
+            )
         raise tonies.AuthError(
             "No myTonies credentials configured. Set TONIES_USERNAME and "
             "TONIES_PASSWORD, or save them on the Settings tab."
         )
-    return tonies.TonieCloud(username, password)
+    return tonies.TonieCloud(selected["username"], selected["password"])
 
 
 # ------------------------------------------------------ chapter management

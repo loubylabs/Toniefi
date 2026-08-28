@@ -208,15 +208,42 @@ def test_failed_librivox_forge_progress_is_presented_as_failed():
     assert presented["progress"] == "Levelling 1/2: Chapter one"
 
 
-def test_completed_legacy_librivox_import_is_not_presented_as_ready():
+def test_completed_forged_librivox_preparation_is_presented_as_ready(monkeypatch):
+    monkeypatch.setattr(
+        jobs.library,
+        "get",
+        lambda slug: {"slug": slug, "stage": "forged"},
+    )
     presented = jobs.present({
         "id": 44,
         "kind": "librivox",
         "status": "done",
         "progress": "Finished",
+        "payload": {"slug": "wind-in-the-willows"},
+        "result": {"slug": "wind-in-the-willows", "stage": "forged"},
+    })
+
+    assert presented["phase"] == "ready"
+    assert presented["collection_stage"] == "forged"
+
+
+def test_completed_legacy_librivox_import_is_not_presented_as_ready(monkeypatch):
+    monkeypatch.setattr(
+        jobs.library,
+        "get",
+        lambda slug: {"slug": slug, "stage": "extracted"},
+    )
+    presented = jobs.present({
+        "id": 45,
+        "kind": "librivox",
+        "status": "done",
+        "progress": "Finished",
+        "payload": {"slug": "legacy-book"},
+        "result": {"slug": "legacy-book", "stage": "forged"},
     })
 
     assert presented["phase"] == "done"
+    assert presented["collection_stage"] == "extracted"
 
 
 def test_prepare_restarts_extraction_when_checkpoint_is_missing(monkeypatch):
