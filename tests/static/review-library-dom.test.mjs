@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createDeskScreen } from "../../app/static/desk.js";
 import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
 import { createFocusedReview } from "../../app/static/review.js";
 
@@ -10,6 +11,10 @@ function textOf(node) {
 }
 
 function matches(node, selector) {
+  if (selector.endsWith(":last-child")) {
+    const base = selector.slice(0, -":last-child".length);
+    return matches(node, base) && node.parentNode?.childNodes.at(-1) === node;
+  }
   if (selector.startsWith(".")) return node.className.split(/\s+/).includes(selector.slice(1));
   if (selector.startsWith("#")) return node.id === selector.slice(1);
   if (selector.startsWith("[") && selector.endsWith("]")) {
@@ -241,6 +246,40 @@ async function flush() {
   await Promise.resolve();
 }
 
+test("Desk gives every accepted source URL textbox a distinct accessible name", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+
+  try {
+    createDeskScreen({
+      request: async () => ({}),
+      refresh,
+    })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    const paste = dom.document.getElementById("source-paste");
+    paste.value = "https://example.test/one\nhttps://example.test/two";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+
+    const inputs = dom.workspace.querySelector(".source-row-list").querySelectorAll("input");
+    assert.deepEqual(inputs.map((input) => input.getAttribute("aria-label")), [
+      "Source URL 1",
+      "Source URL 2",
+    ]);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("focused Review owns assignment pending, failure, and recovered receipt DOM states", async () => {
   const dom = installDom();
   const controller = new AbortController();
@@ -265,8 +304,8 @@ test("focused Review owns assignment pending, failure, and recovered receipt DOM
     chapters: [{ id: "old-1", title: "Old" }],
     chapter_count: 1,
     seconds_present: 100,
-    seconds_free: 5270,
-    time_free: "1h 27m",
+    seconds_free: 5300,
+    time_free: "1h 28m",
   }];
   const request = async (url, options = {}) => {
     if (url === "/api/collections/night-story") return collection;
@@ -297,6 +336,7 @@ test("focused Review owns assignment pending, failure, and recovered receipt DOM
     await buttonWithText(dom.workspace, "Choose Creative Tonies").click();
     await flush();
     const form = dom.workspace.querySelector(".assignment-form");
+    assert.match(form.querySelector("select").childNodes[1].textContent, /1h 27m free/);
     form.querySelector("select").value = "house-1:tonie-1";
     const firstSubmit = form.dispatchEvent({ type: "submit" });
     await flush();

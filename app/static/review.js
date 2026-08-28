@@ -383,7 +383,7 @@ function createAssignmentPanel({ collection, tonies, limitSeconds, onSubmit }) {
     for (const [tonieIndex, tonie] of tonies.entries()) {
       target.append(element("option", {
         value: `${tonie.householdId}:${tonie.id}`,
-        text: `${assignmentLabel(tonie)}. ${tonie.time_free || formatSeconds(tonie.seconds_free)} free`,
+        text: `${assignmentLabel(tonie)}. ${formatSeconds(tonieCapacity(tonie, 0, false, limitSeconds).availableSeconds)} free`,
         selected: tonieIndex === position,
       }));
     }

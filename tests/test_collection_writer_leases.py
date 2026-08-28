@@ -188,6 +188,7 @@ def test_forge_file_replacement_does_not_overlap_confirmed_push(isolated_writer,
     monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 1000)
     writer = lambda: forge.run(
         isolated_writer,
+        operation_id="forge-writer-lease-test",
         normalize=True,
         clean_titles=False,
         split_oversized=False,

@@ -305,6 +305,7 @@ def _handle(job: dict) -> dict:
     if kind == "forge":
         return forge.run(
             payload["slug"],
+            operation_id=payload["forge_operation_id"],
             normalize=payload.get("normalize", True),
             clean_titles=payload.get("clean_titles", True),
             trim_head=float(payload.get("trim_head") or 0),

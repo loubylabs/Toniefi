@@ -138,6 +138,7 @@ def trim_track(path: Path, head_seconds: float = 0, tail_seconds: float = 0) -> 
 def run(
     slug: str,
     *,
+    operation_id: str,
     normalize: bool = True,
     clean_titles: bool = True,
     trim_head: float = 0,
@@ -147,8 +148,10 @@ def run(
 ) -> dict[str, Any]:
     with library.collection_lease():
         library.recover_collection_publications()
-        identity = f"manual-{slug}"
-        stage = library.create_replacement_stage(slug, identity)
+        completed = library.completed_forge_operation(slug, operation_id)
+        if completed:
+            return completed
+        stage = library.create_replacement_stage(slug, operation_id)
         try:
             _run_at_path(
                 stage,
@@ -159,7 +162,7 @@ def run(
                 split_oversized=split_oversized,
                 progress=progress,
             )
-            return library.publish_replacement(slug, stage, identity)
+            return library.publish_replacement(slug, stage, operation_id)
         except BaseException:
             shutil.rmtree(stage, ignore_errors=True)
             raise

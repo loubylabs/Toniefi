@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from . import audio, config
 
@@ -35,6 +36,8 @@ COLLECTION_STAGE_MARKER = ".toniefi-collection-stage.json"
 COLLECTION_STAGE_PREFIX = ".toniefi-stage-"
 FORGE_STAGE_PREFIX = ".toniefi-forge-"
 BACKUP_STAGE_PREFIX = ".toniefi-backup-"
+SLUG_RESERVATION_PREFIX = ".toniefi-slug-"
+SLUG_RESERVATION_MARKER = ".toniefi-slug-reservation.json"
 _manifest_lock = threading.RLock()
 
 
@@ -61,15 +64,6 @@ def _dir_for(slug: str) -> Path:
     return candidate
 
 
-def unique_slug(title: str) -> str:
-    base = audio.slugify(title)
-    slug, counter = base, 2
-    while (config.LIBRARY_DIR / slug).exists():
-        slug = f"{base}-{counter}"
-        counter += 1
-    return slug
-
-
 def _safe_stage_identity(identity: str) -> str:
     safe = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(identity)).strip("-.")
     if not safe:
@@ -87,6 +81,103 @@ def _forge_stage_path(identity: str) -> Path:
 
 def _backup_stage_path(identity: str) -> Path:
     return config.LIBRARY_DIR / f"{BACKUP_STAGE_PREFIX}{_safe_stage_identity(identity)}"
+
+
+def _slug_reservation_path(slug: str) -> Path:
+    return config.LIBRARY_DIR / f"{SLUG_RESERVATION_PREFIX}{slug}"
+
+
+def _reservation_marker(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads((path / SLUG_RESERVATION_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _write_reservation_marker(path: Path, marker: dict[str, Any]) -> None:
+    target = path / SLUG_RESERVATION_MARKER
+    temporary = path / f".{SLUG_RESERVATION_MARKER}.tmp"
+    temporary.write_text(json.dumps(marker, indent=2), encoding="utf-8")
+    temporary.replace(target)
+
+
+def _reserved_slug(identity: str) -> str | None:
+    for path in config.LIBRARY_DIR.glob(f"{SLUG_RESERVATION_PREFIX}*"):
+        marker = _reservation_marker(path)
+        if marker.get("identity") == identity and marker.get("slug"):
+            return str(marker["slug"])
+    return None
+
+
+def _reserve_final_slug(title: str, identity: str) -> str:
+    existing = _reserved_slug(identity)
+    if existing:
+        return existing
+    base = audio.slugify(title)
+    counter = 1
+    while True:
+        slug = base if counter == 1 else f"{base}-{counter}"
+        counter += 1
+        visible = _dir_for(slug)
+        reservation = _slug_reservation_path(slug)
+        if visible.exists():
+            continue
+        try:
+            reservation.mkdir()
+        except FileExistsError:
+            continue
+        try:
+            if visible.exists():
+                shutil.rmtree(reservation)
+                continue
+            _write_reservation_marker(reservation, {
+                "identity": identity,
+                "slug": slug,
+                "created_at": time.time(),
+            })
+            return slug
+        except BaseException:
+            shutil.rmtree(reservation, ignore_errors=True)
+            raise
+
+
+def _ensure_slug_reservation(slug: str, identity: str) -> None:
+    reservation = _slug_reservation_path(slug)
+    if reservation.is_dir():
+        marker = _reservation_marker(reservation)
+        if marker.get("identity") == identity and marker.get("slug") == slug:
+            return
+        raise RuntimeError(f"A different collection reserved {slug}.")
+    if _dir_for(slug).exists():
+        raise RuntimeError(f"A different collection already uses {slug}.")
+    try:
+        reservation.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError(f"A different collection reserved {slug}.") from exc
+    try:
+        if _dir_for(slug).exists():
+            raise RuntimeError(f"A different collection already uses {slug}.")
+        _write_reservation_marker(reservation, {
+            "identity": identity,
+            "slug": slug,
+            "created_at": time.time(),
+        })
+    except BaseException:
+        shutil.rmtree(reservation, ignore_errors=True)
+        raise
+
+
+def _release_slug_reservation(slug: str, identity: str) -> None:
+    reservation = _slug_reservation_path(slug)
+    marker = _reservation_marker(reservation)
+    if marker.get("identity") == identity:
+        shutil.rmtree(reservation, ignore_errors=True)
+
+
+def _release_identity_reservations(identity: str) -> None:
+    for path in config.LIBRARY_DIR.glob(f"{SLUG_RESERVATION_PREFIX}*"):
+        if _reservation_marker(path).get("identity") == identity:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def _stage_marker(path: Path) -> dict[str, Any]:
@@ -116,6 +207,7 @@ def find_published_stage(identity: str) -> dict[str, Any] | None:
             if manifest.get("publication_id") == identity:
                 marker = path / COLLECTION_STAGE_MARKER
                 marker.unlink(missing_ok=True)
+                _release_identity_reservations(identity)
                 return _decorate(path.name, path, manifest)
         return None
 
@@ -139,13 +231,16 @@ def begin_collection_stage(
             marker = _stage_marker(path)
             if marker.get("identity") != identity or not marker.get("slug"):
                 shutil.rmtree(path)
+                _release_identity_reservations(identity)
             elif not restart:
+                _ensure_slug_reservation(marker["slug"], identity)
                 return CollectionStage(identity, marker["slug"], path)
             else:
                 slug = marker["slug"]
+                _ensure_slug_reservation(slug, identity)
                 shutil.rmtree(path)
                 return _create_collection_stage(path, identity, slug, title, source, extra)
-        slug = unique_slug(title)
+        slug = _reserve_final_slug(title, identity)
         return _create_collection_stage(path, identity, slug, title, source, extra)
 
 
@@ -157,27 +252,32 @@ def _create_collection_stage(
     source: str,
     extra: dict[str, Any] | None,
 ) -> CollectionStage:
-    path.mkdir(parents=True)
-    manifest: dict[str, Any] = {
-        "slug": slug,
-        "title": title,
-        "source": source,
-        "stage": "extracted",
-        "publication_id": identity,
-        "created_at": time.time(),
-        "tracks": [],
-    }
-    if extra:
-        manifest.update(extra)
-    _write_manifest(path, manifest)
-    _write_stage_marker(path, {
-        "kind": "collection",
-        "identity": identity,
-        "slug": slug,
-        "state": "staging",
-        "created_at": time.time(),
-    })
-    return CollectionStage(identity, slug, path)
+    try:
+        path.mkdir(parents=True)
+        manifest: dict[str, Any] = {
+            "slug": slug,
+            "title": title,
+            "source": source,
+            "stage": "extracted",
+            "publication_id": identity,
+            "created_at": time.time(),
+            "tracks": [],
+        }
+        if extra:
+            manifest.update(extra)
+        _write_manifest(path, manifest)
+        _write_stage_marker(path, {
+            "kind": "collection",
+            "identity": identity,
+            "slug": slug,
+            "state": "staging",
+            "created_at": time.time(),
+        })
+        return CollectionStage(identity, slug, path)
+    except BaseException:
+        shutil.rmtree(path, ignore_errors=True)
+        _release_slug_reservation(slug, identity)
+        raise
 
 
 def collection_stage(identity: str, refresh: bool = False) -> dict[str, Any] | None:
@@ -230,7 +330,14 @@ def rescan_collection_stage(identity: str) -> dict[str, Any]:
 
 def discard_collection_stage(identity: str) -> None:
     with _manifest_lock:
-        shutil.rmtree(_collection_stage_path(identity), ignore_errors=True)
+        path = _collection_stage_path(identity)
+        marker = _stage_marker(path)
+        shutil.rmtree(path, ignore_errors=True)
+        slug = marker.get("slug")
+        if isinstance(slug, str):
+            _release_slug_reservation(slug, identity)
+        else:
+            _release_identity_reservations(identity)
 
 
 def sweep_collection_stages(referenced_identities: set[str]) -> None:
@@ -244,6 +351,8 @@ def sweep_collection_stages(referenced_identities: set[str]) -> None:
             identity = marker.get("identity")
             if not isinstance(identity, str) or identity not in referenced_identities:
                 shutil.rmtree(path, ignore_errors=True)
+                if isinstance(identity, str):
+                    _release_identity_reservations(identity)
 
 
 def create_replacement_stage(slug: str, identity: str) -> Path:
@@ -312,6 +421,7 @@ def publish_forged_collection_stage(
             raise RuntimeError("The Forge stage marker is invalid.")
         slug = marker["slug"]
         target = _dir_for(slug)
+        _ensure_slug_reservation(slug, collection_identity)
         if target.exists():
             raise RuntimeError(f"A different collection already uses {slug}.")
         manifest = _read_manifest(stage)
@@ -335,6 +445,9 @@ def publish_replacement(slug: str, stage: Path, identity: str) -> dict[str, Any]
         marker = _stage_marker(stage)
         if marker.get("slug") != slug or marker.get("identity") != identity:
             raise RuntimeError("The Forge stage marker is invalid.")
+        manifest = _read_manifest(stage)
+        manifest["forge_operation_id"] = identity
+        _write_manifest(stage, manifest)
         marker["state"] = "ready"
         _write_stage_marker(stage, marker)
         backup = _backup_stage_path(identity)
@@ -349,6 +462,19 @@ def publish_replacement(slug: str, stage: Path, identity: str) -> dict[str, Any]
         (visible / COLLECTION_STAGE_MARKER).unlink(missing_ok=True)
         shutil.rmtree(backup)
         return get(slug)
+
+
+def completed_forge_operation(slug: str, identity: str) -> dict[str, Any] | None:
+    """Return a visible publication receipt for one exact manual Forge run."""
+    with _manifest_lock:
+        manifest = get(slug)
+        if (
+            manifest
+            and manifest.get("stage") == "forged"
+            and manifest.get("forge_operation_id") == identity
+        ):
+            return manifest
+        return None
 
 
 def recover_collection_publications() -> None:
@@ -392,26 +518,45 @@ def recover_collection_publications() -> None:
                     discard_collection_stage(collection_identity)
             elif marker.get("kind") == "new-collection":
                 shutil.rmtree(stage, ignore_errors=True)
+        for reservation in list(config.LIBRARY_DIR.glob(f"{SLUG_RESERVATION_PREFIX}*")):
+            marker = _reservation_marker(reservation)
+            identity = marker.get("identity")
+            slug = marker.get("slug")
+            if not isinstance(identity, str) or not isinstance(slug, str):
+                shutil.rmtree(reservation, ignore_errors=True)
+                continue
+            visible = _dir_for(slug)
+            collection_stage = _collection_stage_path(identity)
+            forge_stage_exists = any(
+                _stage_marker(stage).get("collection_identity") == identity
+                for stage in config.LIBRARY_DIR.glob(f"{FORGE_STAGE_PREFIX}*")
+            )
+            if visible.exists() or (not collection_stage.exists() and not forge_stage_exists):
+                shutil.rmtree(reservation, ignore_errors=True)
 
 
 def create(title: str, source: str = "", extra: dict[str, Any] | None = None) -> str:
     with _manifest_lock:
         config.ensure_dirs()
-        slug = unique_slug(title)
+        identity = f"direct-{uuid4().hex}"
+        slug = _reserve_final_slug(title, identity)
         path = config.LIBRARY_DIR / slug
-        path.mkdir(parents=True)
-        manifest: dict[str, Any] = {
-            "slug": slug,
-            "title": title,
-            "source": source,
-            "stage": "extracted",
-            "created_at": time.time(),
-            "tracks": [],
-        }
-        if extra:
-            manifest.update(extra)
-        _write_manifest(path, manifest)
-        return slug
+        try:
+            path.mkdir(parents=True)
+            manifest: dict[str, Any] = {
+                "slug": slug,
+                "title": title,
+                "source": source,
+                "stage": "extracted",
+                "created_at": time.time(),
+                "tracks": [],
+            }
+            if extra:
+                manifest.update(extra)
+            _write_manifest(path, manifest)
+            return slug
+        finally:
+            _release_slug_reservation(slug, identity)
 
 
 # ------------------------------------------------------------- manifest i/o

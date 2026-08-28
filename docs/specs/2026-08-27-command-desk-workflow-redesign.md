@@ -148,7 +148,7 @@ The former `url` job kind and `POST /api/ingest/url` route are deleted with thei
 
 `POST /api/jobs/{job_id}/retry`
 
-Only a failed job can be retried. The new job clones the original kind, label, and current payload. A valid hidden stage resumes without repeating completed file intake. A missing stage safely restarts from immutable source input. Publication identity prevents duplicate visible collections. The response contains the new job.
+Only a failed job can be retried. The new job clones the original kind, label, and current payload. When a Forge job for the same collection is already queued or running, retry returns that active job instead of creating a duplicate. Manual Forge persists one operation identity before work begins and writes its completion receipt before publication, so recovery after publication is a verified no-op. A valid hidden stage resumes without repeating completed file intake. A missing stage safely restarts from immutable source input. Publication identity prevents duplicate visible collections. Final slugs are reserved atomically across visible collections and hidden stages before intake begins, so same-title jobs keep distinct retry-stable folders. The response contains the queued or reused job.
 
 ## Review Shelf and focused review
 

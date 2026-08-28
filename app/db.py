@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 from typing import Any
+from uuid import uuid4
 
 from . import config
 
@@ -131,6 +132,21 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
     return created
 
 
+def _active_forge_job(conn: sqlite3.Connection, slug: str) -> int | None:
+    rows = conn.execute(
+        "SELECT id,payload FROM jobs WHERE kind='forge' "
+        "AND status IN ('queued','running') ORDER BY id",
+    ).fetchall()
+    for row in rows:
+        try:
+            existing = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if existing.get("slug") == slug:
+            return int(row["id"])
+    return None
+
+
 def create_forge_job_once(label: str, payload: dict[str, Any]) -> int:
     """Return the active Forge job for a slug or enqueue exactly one."""
     slug = payload.get("slug")
@@ -140,23 +156,17 @@ def create_forge_job_once(label: str, payload: dict[str, Any]) -> int:
     with _lock:
         try:
             conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                "SELECT id,payload FROM jobs WHERE kind='forge' "
-                "AND status IN ('queued','running') ORDER BY id",
-            ).fetchall()
-            for row in rows:
-                try:
-                    existing = json.loads(row["payload"])
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                if existing.get("slug") == slug:
-                    conn.commit()
-                    return int(row["id"])
+            active = _active_forge_job(conn, slug)
+            if active is not None:
+                conn.commit()
+                return active
+            stored_payload = dict(payload)
+            stored_payload["forge_operation_id"] = f"forge-{uuid4().hex}"
             now = time.time()
             cursor = conn.execute(
                 "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
                 "VALUES('forge','queued',?,?,?,?)",
-                (label, json.dumps(payload), now, now),
+                (label, json.dumps(stored_payload), now, now),
             )
             conn.commit()
             return int(cursor.lastrowid)
@@ -241,16 +251,33 @@ def clone_failed_job(job_id: int) -> int:
     now = time.time()
     conn = connect()
     with _lock:
-        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if row is None or row["status"] != "failed" or row["kind"] == "push":
-            return 0
-        cur = conn.execute(
-            "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
-            "VALUES(?,'queued',?,?,?,?)",
-            (row["kind"], row["label"], row["payload"], now, now),
-        )
-        conn.commit()
-        return int(cur.lastrowid)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None or row["status"] != "failed" or row["kind"] == "push":
+                conn.commit()
+                return 0
+            if row["kind"] == "forge":
+                try:
+                    payload = json.loads(row["payload"])
+                except (json.JSONDecodeError, TypeError):
+                    payload = {}
+                slug = payload.get("slug")
+                if isinstance(slug, str) and slug:
+                    active = _active_forge_job(conn, slug)
+                    if active is not None:
+                        conn.commit()
+                        return active
+            cur = conn.execute(
+                "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+                "VALUES(?,'queued',?,?,?,?)",
+                (row["kind"], row["label"], row["payload"], now, now),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+        except BaseException:
+            conn.rollback()
+            raise
 
 
 def claim_job() -> dict[str, Any] | None:

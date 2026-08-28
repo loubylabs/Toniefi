@@ -45,7 +45,9 @@ If a send fails, return to Review and confirm the assignment again. Activity doe
 
 Background jobs persist in SQLite and continue when the browser closes. Desk shows active and recent preparation work. Activity retains failed attempts after a retry, so recovery never erases the original error.
 
-Eligible preparation retries create a new job. URL, LibriVox, and upload inputs keep a hidden deterministic collection stage until Forge and final publication succeed. A durable extraction-complete checkpoint prevents Forge from consuming partial staged files. Retry resumes safe staged work or restarts from immutable input without exposing a partial collection. Failed upload staging remains available for retry for 24 hours.
+Eligible preparation retries create a new job. URL, LibriVox, and upload inputs keep a hidden deterministic collection stage until Forge and final publication succeed. Final slugs are reserved before extraction across visible and hidden collections, so same-title jobs keep distinct retry-stable folders. A durable extraction-complete checkpoint prevents Forge from consuming partial staged files. Retry resumes safe staged work or restarts from immutable input without exposing a partial collection. Failed upload staging remains available for retry for 24 hours.
+
+Legacy manual Forge stores one operation identity in its SQLite job and writes the same identity as a completion receipt before publication. A restart or retry after successful publication verifies that receipt and returns the existing forged collection without transforming its audio again. Repeated History retry for the same collection reuses its active Forge job.
 
 The interface refreshes jobs, history, collections, and status through one application coordinator. Each resource publishes independently, so job progress stays current while a collection lease delays the collection index. The coordinator polls faster while work is active, slows when idle, and stops while the page is hidden.
 

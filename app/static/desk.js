@@ -768,6 +768,7 @@ export function createDeskScreen({
         type: "url",
         value: row.value,
         "data-focus-key": `${row.id}-input`,
+        "aria-label": `Source URL ${index + 1}`,
         "aria-invalid": row.error ? "true" : "false",
         "aria-describedby": row.error ? errorId : null,
         spellcheck: "false",

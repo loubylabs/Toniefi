@@ -18,6 +18,56 @@ import {
   uploadPolicyText,
 } from "../../app/static/desk.js";
 
+function relativeLuminance(hex) {
+  const channels = hex.match(/[a-f0-9]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
+  const linear = channels.map((value) => value <= 0.04045
+    ? value / 12.92
+    : ((value + 0.055) / 1.055) ** 2.4);
+  return (0.2126 * linear[0]) + (0.7152 * linear[1]) + (0.0722 * linear[2]);
+}
+
+function contrastRatio(foreground, background) {
+  const light = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const dark = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function cssToken(styles, name) {
+  return styles.match(new RegExp(`--${name}:\\s*(#[a-fA-F0-9]{6})`))?.[1];
+}
+
+function simpleComputedDeclarations(styles, tagName, classes) {
+  const classSet = new Set(classes);
+  const computed = new Map();
+  let order = 0;
+  for (const match of styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const body = match[2];
+    for (const branch of match[1].split(",")) {
+      const selector = branch.trim();
+      if (!selector || /[\s>:+~\[\]#@]/.test(selector)) continue;
+      const requiredClasses = [...selector.matchAll(/\.([a-zA-Z0-9_-]+)/g)].map((item) => item[1]);
+      const requiredTag = selector.replace(/\.[a-zA-Z0-9_-]+/g, "").toLowerCase();
+      if (requiredTag && requiredTag !== tagName.toLowerCase()) continue;
+      if (!requiredClasses.every((name) => classSet.has(name))) continue;
+      const specificity = (requiredClasses.length * 10) + (requiredTag ? 1 : 0);
+      for (const declaration of body.split(";")) {
+        const separator = declaration.indexOf(":");
+        if (separator < 0) continue;
+        let property = declaration.slice(0, separator).trim();
+        const value = declaration.slice(separator + 1).trim();
+        if (property === "background" && /^var\(--[^)]+\)$/.test(value)) property = "background-color";
+        if (!["display", "place-items", "background-color", "color", "text-align"].includes(property)) continue;
+        const prior = computed.get(property);
+        if (!prior || specificity > prior.specificity || (specificity === prior.specificity && order > prior.order)) {
+          computed.set(property, { value, specificity, order });
+        }
+      }
+      order += 1;
+    }
+  }
+  return Object.fromEntries([...computed].map(([property, entry]) => [property, entry.value]));
+}
+
 test("parseSourceLines trims source URLs and preserves their entered order", () => {
   const parsed = parseSourceLines("  https://example.com/first  \n\nhttps://example.com/second\n https://example.com/third ");
 
@@ -374,4 +424,25 @@ test("work cart progress is determinate only when the server supplies a real val
   });
   const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
   assert.doesNotMatch(css, /work-cart-progress-fill[^}]*width:\s*(?:38|72)%/s);
+});
+
+test("queued and extracting stamps meet small-text contrast on paper surfaces", () => {
+  const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
+  const info = cssToken(css, "info");
+  const paper = cssToken(css, "paper");
+
+  assert.ok(contrastRatio(info, "#ffffff") >= 4.5);
+  assert.ok(contrastRatio(info, paper) >= 4.5);
+});
+
+test("collection fallback jackets compute to the shared bookcloth treatment", () => {
+  const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
+  for (const componentClass of ["review-shelf-cover", "library-cover", "review-detail-cover"]) {
+    const style = simpleComputedDeclarations(css, "span", [componentClass, "collection-cover-fallback"]);
+    assert.equal(style.display, "grid");
+    assert.equal(style["place-items"], "center");
+    assert.equal(style["background-color"], "var(--bookcloth)");
+    assert.equal(style.color, "var(--action)");
+    assert.equal(style["text-align"], "center");
+  }
 });

@@ -81,6 +81,7 @@ def test_forge_failure_after_each_audio_transform_keeps_visible_collection_uncha
     with pytest.raises(RuntimeError, match=f"transform {fail_after} stopped"):
         forge.run(
             slug,
+            operation_id=f"forge-transform-{fail_after}",
             normalize=True,
             clean_titles=False,
             trim_head=1,
@@ -114,6 +115,7 @@ def test_forge_retry_applies_trim_and_normalization_exactly_once(isolated, monke
     with pytest.raises(RuntimeError, match="normalization stopped"):
         forge.run(
             slug,
+            operation_id="forge-retry-after-transform-failure",
             normalize=True,
             clean_titles=False,
             trim_head=1,
@@ -122,6 +124,7 @@ def test_forge_retry_applies_trim_and_normalization_exactly_once(isolated, monke
 
     result = forge.run(
         slug,
+        operation_id="forge-retry-after-transform-failure",
         normalize=True,
         clean_titles=False,
         trim_head=1,
@@ -131,6 +134,70 @@ def test_forge_retry_applies_trim_and_normalization_exactly_once(isolated, monke
     assert (path / "one.mp3").read_bytes() == b"one.mp3|trim|level"
     assert (path / "two.mp3").read_bytes() == b"two.mp3|trim|level"
     assert result["stage"] == "forged"
+
+
+def test_manual_forge_retry_after_published_process_death_is_a_verified_noop(
+    isolated,
+    monkeypatch,
+):
+    slug = make_collection()
+    path = config.LIBRARY_DIR / slug
+    transforms = {"trim": 0, "normalize": 0}
+
+    def trim(target: Path, *_):
+        transforms["trim"] += 1
+        target.write_bytes(target.read_bytes() + b"|trim")
+
+    def normalize(target: Path, **_):
+        transforms["normalize"] += 1
+        target.write_bytes(target.read_bytes() + b"|level")
+
+    monkeypatch.setattr(forge, "trim_track", trim)
+    monkeypatch.setattr(forge, "normalize_track", normalize)
+    monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 1000)
+    job_id = db.create_forge_job_once(
+        f"Forge {slug}",
+        {
+            "slug": slug,
+            "normalize": True,
+            "clean_titles": False,
+            "trim_head": 1,
+            "trim_tail": 0,
+            "split_oversized": False,
+        },
+    )
+    claimed = db.claim_job()
+    assert claimed["id"] == job_id
+
+    first = jobs._handle(claimed)
+    interrupted = db.fail_stale_running()
+    library.recover_collection_publications()
+    retry_id = jobs.retry_failed_job(job_id)
+    retried = db.claim_job()
+    second = jobs._handle(retried)
+
+    assert [job["id"] for job in interrupted] == [job_id]
+    assert retried["id"] == retry_id
+    assert first["slug"] == second["slug"] == slug
+    assert transforms == {"trim": 2, "normalize": 2}
+    assert (path / "one.mp3").read_bytes() == b"one.mp3|trim|level"
+    assert (path / "two.mp3").read_bytes() == b"two.mp3|trim|level"
+
+
+def test_duplicate_history_retry_reuses_the_active_forge_job(isolated):
+    slug = make_collection()
+    failed_id = db.create_forge_job_once(f"Forge {slug}", {"slug": slug})
+    db.update_job(failed_id, status="failed", error="worker stopped")
+
+    first_retry = jobs.retry_failed_job(failed_id)
+    second_retry = jobs.retry_failed_job(failed_id)
+    active = [
+        job for job in db.jobs_for_refresh()
+        if job["kind"] == "forge" and job["status"] in {"queued", "running"}
+    ]
+
+    assert second_retry == first_retry
+    assert [job["id"] for job in active] == [first_retry]
 
 
 def test_hidden_collection_stage_publishes_once_and_is_absent_from_library(isolated, monkeypatch):
@@ -164,6 +231,54 @@ def test_hidden_collection_stage_publishes_once_and_is_absent_from_library(isola
     assert second["slug"] == "the-secret-garden"
     assert [collection["slug"] for collection in library.list_all()] == ["the-secret-garden"]
     assert not stage.path.exists()
+
+
+def test_same_title_hidden_jobs_reserve_distinct_retry_stable_final_slugs(
+    isolated,
+    monkeypatch,
+):
+    stages = [
+        library.begin_collection_stage(
+            identity,
+            title="Shared Story",
+            source=source,
+        )
+        for identity, source in (
+            ("url-shared-story", "url"),
+            ("librivox-shared-story", "librivox"),
+            ("upload-shared-story", "upload"),
+        )
+    ]
+
+    assert [stage.slug for stage in stages] == [
+        "shared-story",
+        "shared-story-2",
+        "shared-story-3",
+    ]
+
+    monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 60)
+    published = []
+    for stage in stages:
+        (stage.path / "story.mp3").write_bytes(stage.identity.encode("utf-8"))
+        library.rescan_collection_stage(stage.identity)
+        library.complete_collection_stage(stage.identity)
+        first = forge.run_collection_stage(
+            stage.identity,
+            normalize=False,
+            clean_titles=False,
+            split_oversized=False,
+        )
+        retry = forge.run_collection_stage(
+            stage.identity,
+            normalize=False,
+            clean_titles=False,
+            split_oversized=False,
+        )
+        assert retry["slug"] == first["slug"] == stage.slug
+        published.append(first["slug"])
+
+    assert published == ["shared-story", "shared-story-2", "shared-story-3"]
+    assert {item["slug"] for item in library.list_all()} == set(published)
 
 
 def test_librivox_network_failure_resumes_hidden_stage_and_publishes_one_collection(
