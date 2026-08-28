@@ -1,0 +1,17 @@
+{
+  "title": "Command Desk",
+  "image": ".impeccable/mocks/command-desk.png",
+  "approved": true,
+  "composition": "Large multi-source intake in the center with the live work cart permanently visible at right.",
+  "carry_forward": [
+    "slim service index",
+    "five-row URL intake",
+    "visible Forge defaults",
+    "persistent collection progress and recovery states"
+  ],
+  "do_not_literalize": [
+    "generated cover artwork",
+    "illustrative job counts",
+    "illustrative storage and sync values"
+  ]
+}
