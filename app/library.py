@@ -22,6 +22,7 @@ import re
 import shutil
 import threading
 import time
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,7 @@ BACKUP_STAGE_PREFIX = ".toniefi-backup-"
 SLUG_RESERVATION_PREFIX = ".toniefi-slug-"
 SLUG_RESERVATION_MARKER = ".toniefi-slug-reservation.json"
 INVALID_PUBLIC_COLLECTION_SLUG_DETAIL = "Invalid collection slug."
+PORTABLE_PUBLIC_SLUG_BYTES = 255
 PRIVATE_LIBRARY_PREFIXES = (
     COLLECTION_STAGE_PREFIX,
     FORGE_STAGE_PREFIX,
@@ -69,6 +71,15 @@ def collection_lease():
         yield
 
 
+def _unsafe_public_slug_character(character: str) -> bool:
+    codepoint = ord(character)
+    return (
+        unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+        or 0xFDD0 <= codepoint <= 0xFDEF
+        or (codepoint & 0xFFFE) == 0xFFFE
+    )
+
+
 def validate_public_collection_slug(slug: object) -> str:
     """Return one public collection name or raise the typed boundary error."""
     if (
@@ -78,8 +89,15 @@ def validate_public_collection_slug(slug: object) -> str:
         or slug.startswith(".")
         or "/" in slug
         or "\\" in slug
-        or Path(slug).is_absolute()
         or any(slug.startswith(prefix) for prefix in PRIVATE_LIBRARY_PREFIXES)
+    ):
+        raise InvalidPublicCollectionSlug()
+    try:
+        encoded = slug.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise InvalidPublicCollectionSlug() from exc
+    if len(encoded) > PORTABLE_PUBLIC_SLUG_BYTES or any(
+        _unsafe_public_slug_character(character) for character in slug
     ):
         raise InvalidPublicCollectionSlug()
     return slug

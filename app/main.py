@@ -411,6 +411,7 @@ def list_tonies() -> list[dict[str, Any]]:
 
 @app.post("/api/push/batch")
 def push_batch(body: PushBatch) -> dict[str, Any]:
+    library.validate_public_collection_slug(body.slug)
     assignments = [assignment.model_dump() for assignment in body.assignments]
     targets = [(item["household_id"], item["tonie_id"]) for item in assignments]
     if len(targets) != len(set(targets)):

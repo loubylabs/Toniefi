@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from pathlib import Path
@@ -341,6 +342,13 @@ def test_generic_job_creation_cannot_bypass_canonical_forge_payloads(isolated):
         ".toniefi-forge-live",
         ".toniefi-backup-live",
         ".toniefi-slug-live",
+        pytest.param("nul\x00slug", id="nul"),
+        pytest.param("control\x1fslug", id="ascii-control"),
+        pytest.param("format\u200bslug", id="unicode-format"),
+        pytest.param("surrogate\ud800slug", id="surrogate"),
+        pytest.param("noncharacter\ufdd0slug", id="noncharacter"),
+        pytest.param("界" * 86, id="multibyte-overlong"),
+        pytest.param("a" * 300, id="ascii-overlong"),
     ],
 )
 def test_collection_slug_boundary_rejects_every_non_collection_path(isolated, unsafe_slug):
@@ -352,6 +360,19 @@ def test_collection_slug_boundary_rejects_every_non_collection_path(isolated, un
     assert type(caught.value).__name__ == "InvalidPublicCollectionSlug"
     assert str(caught.value) == "Invalid collection slug."
     assert not root_manifest.exists()
+
+
+@pytest.mark.parametrize(
+    "safe_slug",
+    [
+        "the-secret-garden",
+        "café-夜の物語",
+        pytest.param("界" * 85, id="portable-255-byte-unicode"),
+    ],
+)
+def test_collection_slug_boundary_keeps_filesystem_safe_unicode(isolated, safe_slug):
+    assert library.validate_public_collection_slug(safe_slug) == safe_slug
+    assert library.get(safe_slug) is None
 
 
 PUBLIC_LIBRARY_SLUG_OPERATIONS = (
@@ -449,6 +470,13 @@ INVALID_API_SLUGS = (
         ".toniefi-stage-active-boundary-stage",
         ".toniefi-stage-active-boundary-stage",
     ),
+    ("nul", "nul\x00slug", "nul%00slug"),
+    ("ascii-control", "control\x1fslug", "control%1Fslug"),
+    ("unicode-format", "format\u200bslug", "format%E2%80%8Bslug"),
+    ("surrogate", "surrogate\ud800slug", "surrogate%ED%A0%80slug"),
+    ("noncharacter", "noncharacter\ufdd0slug", "noncharacter%EF%B7%90slug"),
+    ("multibyte-overlong", "界" * 86, "%E7%95%8C" * 86),
+    ("ascii-overlong", "a" * 300, "a" * 300),
 )
 
 INVALID_API_SLUG_ROUTES = (
@@ -467,20 +495,28 @@ INVALID_API_SLUG_ROUTES = (
 
 def request_with_invalid_collection_slug(client, route, slug, encoded_slug):
     if route == "forge":
-        return client.post("/api/forge", json={"slug": slug})
+        return client.post(
+            "/api/forge",
+            content=json.dumps({"slug": slug}),
+            headers={"content-type": "application/json"},
+        )
     if route == "push":
-        return client.post("/api/push/batch", json={
-            "operation_key": "invalid-public-collection-slug",
-            "slug": slug,
-            "manifest_fingerprint": "0" * 64,
-            "assignments": [{
-                "household_id": "house-1",
-                "tonie_id": "tonie-1",
-                "files": ["one.mp3"],
-                "replace": True,
-                "remote_chapters": [],
-            }],
-        })
+        return client.post(
+            "/api/push/batch",
+            content=json.dumps({
+                "operation_key": "invalid-public-collection-slug",
+                "slug": slug,
+                "manifest_fingerprint": "0" * 64,
+                "assignments": [{
+                    "household_id": "house-1",
+                    "tonie_id": "tonie-1",
+                    "files": ["one.mp3"],
+                    "replace": True,
+                    "remote_chapters": [],
+                }],
+            }),
+            headers={"content-type": "application/json"},
+        )
     base = f"/api/collections/{encoded_slug}"
     if route == "get":
         return client.get(f"{base}?refresh=true")
@@ -530,6 +566,62 @@ def test_every_collection_slug_route_returns_one_safe_4xx_without_side_effects(
     assert db.jobs_for_history() == stored_jobs
     assert stage.path.is_dir()
     assert not (config.LIBRARY_DIR / library.MANIFEST).exists()
+
+
+@pytest.mark.parametrize(
+    "matching_receipt,duplicate_targets",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_push_validates_hidden_slug_before_receipts_and_duplicate_targets(
+    isolated,
+    matching_receipt,
+    duplicate_targets,
+):
+    stage = library.begin_collection_stage(
+        "push-boundary-precedence",
+        title="Private Push Story",
+        source="url",
+    )
+    (stage.path / "one.mp3").write_bytes(b"private stage audio")
+    library.rescan_collection_stage(stage.identity)
+    assignment = {
+        "household_id": "house-1",
+        "tonie_id": "tonie-1",
+        "files": ["one.mp3"],
+        "replace": True,
+        "remote_chapters": [],
+    }
+    assignments = [assignment, dict(assignment)] if duplicate_targets else [assignment]
+    body = {
+        "operation_key": "invalid-slug-existing-receipt",
+        "slug": stage.path.name,
+        "manifest_fingerprint": "0" * 64,
+        "assignments": assignments,
+    }
+    if matching_receipt:
+        canonical = {key: value for key, value in body.items() if key != "operation_key"}
+        digest = hashlib.sha256(
+            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        db.create_idempotent_jobs(
+            body["operation_key"],
+            digest,
+            [("push", "Stored invalid fixture", {
+                **assignment,
+                "slug": stage.path.name,
+                "manifest_fingerprint": body["manifest_fingerprint"],
+            })],
+        )
+    before_tree = library_tree_snapshot()
+    before_jobs = db.jobs_for_history()
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid collection slug."}
+    assert library_tree_snapshot() == before_tree
+    assert db.jobs_for_history() == before_jobs
 
 
 def test_malformed_migrated_forge_history_is_safe_nonretryable_and_nonmutating(isolated):
