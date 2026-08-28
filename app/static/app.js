@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { createDeskScreen } from "./desk.js";
 import { icon } from "./icons.js";
 import { createRouter } from "./router.js";
 import { element, notify, replace } from "./shared.js";
@@ -278,7 +279,10 @@ export const router = createRouter(routeDefinitions, {
   },
 });
 
-Object.keys(placeholders).forEach((name) => router.register(name, placeholderRenderer(name)));
+Object.keys(placeholders)
+  .filter((name) => name !== "desk")
+  .forEach((name) => router.register(name, placeholderRenderer(name)));
+router.register("desk", createDeskScreen({ request: api, refresh }));
 injectIcons();
 initializeMobileMore();
 refresh.subscribe(updateShell);

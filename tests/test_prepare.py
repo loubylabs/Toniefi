@@ -89,6 +89,123 @@ def test_prepare_returns_an_already_forged_collection(monkeypatch):
     ) == forged
 
 
+def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monkeypatch):
+    calls = []
+    updates = []
+
+    def import_book(book_id, progress):
+        calls.append(("import", book_id))
+        progress("Downloading 1/2: Chapter one")
+        return {"slug": "wind-in-the-willows", "stage": "extracted"}
+
+    def run_forge(slug, **kwargs):
+        calls.append(("forge", slug, {
+            "normalize": kwargs["normalize"],
+            "clean_titles": kwargs["clean_titles"],
+            "trim_head": kwargs["trim_head"],
+            "trim_tail": kwargs["trim_tail"],
+            "split_oversized": kwargs["split_oversized"],
+        }))
+        kwargs["progress"]("Levelling 1/2: Chapter one")
+        return {"slug": slug, "stage": "forged"}
+
+    monkeypatch.setattr(jobs.ingest, "import_librivox", import_book)
+    monkeypatch.setattr(jobs.library, "get", lambda slug: None)
+    monkeypatch.setattr(jobs.forge, "run", run_forge)
+    monkeypatch.setattr(jobs.db, "update_job", lambda job_id, **fields: updates.append((job_id, fields)))
+
+    result = jobs._handle({
+        "id": 41,
+        "kind": "librivox",
+        "payload": {"book_id": "180"},
+    })
+
+    assert result == {"slug": "wind-in-the-willows", "stage": "forged"}
+    assert calls == [
+        ("import", "180"),
+        ("forge", "wind-in-the-willows", {
+            "normalize": True,
+            "clean_titles": True,
+            "trim_head": 0,
+            "trim_tail": 0,
+            "split_oversized": True,
+        }),
+    ]
+    assert updates == [
+        (41, {"progress": "extracting: Downloading 1/2: Chapter one"}),
+        (41, {"payload": {
+            "book_id": "180",
+            "slug": "wind-in-the-willows",
+            "options": {
+                "use_chapters": True,
+                "normalize": True,
+                "clean_titles": True,
+                "trim_head": 0,
+                "trim_tail": 0,
+                "split_oversized": True,
+            },
+        }}),
+        (41, {"progress": "forging: Levelling 1/2: Chapter one"}),
+    ]
+
+
+def test_librivox_retry_resumes_forge_without_importing_or_enqueuing_another_job(monkeypatch):
+    forge_calls = []
+    monkeypatch.setattr(
+        jobs.ingest,
+        "import_librivox",
+        lambda *args, **kwargs: pytest.fail("a checkpointed retry must not import again"),
+    )
+    monkeypatch.setattr(
+        jobs.library,
+        "get",
+        lambda slug: {"slug": slug, "stage": "extracted"},
+    )
+    monkeypatch.setattr(
+        jobs.forge,
+        "run",
+        lambda slug, **kwargs: forge_calls.append(slug) or {"slug": slug, "stage": "forged"},
+    )
+    monkeypatch.setattr(
+        jobs,
+        "enqueue",
+        lambda *args, **kwargs: pytest.fail("the same LibriVox job must complete Forge"),
+    )
+    monkeypatch.setattr(jobs.db, "update_job", lambda *args, **kwargs: None)
+
+    result = jobs._handle({
+        "id": 42,
+        "kind": "librivox",
+        "payload": {
+            "book_id": "180",
+            "slug": "wind-in-the-willows",
+            "options": {
+                "use_chapters": True,
+                "normalize": True,
+                "clean_titles": True,
+                "trim_head": 0,
+                "trim_tail": 0,
+                "split_oversized": True,
+            },
+        },
+    })
+
+    assert forge_calls == ["wind-in-the-willows"]
+    assert result == {"slug": "wind-in-the-willows", "stage": "forged"}
+
+
+def test_failed_librivox_forge_progress_is_presented_as_failed():
+    presented = jobs.present({
+        "id": 43,
+        "kind": "librivox",
+        "status": "failed",
+        "progress": "forging: Levelling 1/2: Chapter one",
+    })
+
+    assert presented["phase"] == "failed"
+    assert presented["progress"] == "Levelling 1/2: Chapter one"
+
+
 def test_prepare_restarts_extraction_when_checkpoint_is_missing(monkeypatch):
     checkpoints = []
     monkeypatch.setattr(prepare.library, "get", lambda slug: None)

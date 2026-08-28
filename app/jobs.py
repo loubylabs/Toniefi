@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import traceback
 
-from . import config, db, forge, ingest, prepare, push
+from . import config, db, forge, ingest, library, prepare, push
 
 _threads: list[threading.Thread] = []
 _stop = threading.Event()
@@ -21,15 +21,17 @@ def present(job: dict) -> dict:
     stored_progress = displayed.get("progress", "")
     prefix, separator, message = stored_progress.partition(": ")
     if separator and prefix in {"extracting", "forging"}:
-        displayed["phase"] = prefix
         displayed["progress"] = message
-        return displayed
 
     status = displayed.get("status", "")
     kind = displayed.get("kind", "")
-    if status == "done" and kind in {"prepare_url", "forge"}:
+    if status == "failed":
+        displayed["phase"] = "failed"
+    elif separator and prefix in {"extracting", "forging"}:
+        displayed["phase"] = prefix
+    elif status == "done" and kind in {"prepare_url", "librivox", "forge"}:
         displayed["phase"] = "ready"
-    elif status == "running" and kind == "prepare_url":
+    elif status == "running" and kind in {"prepare_url", "librivox"}:
         displayed["phase"] = "extracting"
     elif status == "running" and kind == "forge":
         displayed["phase"] = "forging"
@@ -47,7 +49,30 @@ def _handle(job: dict) -> dict:
         db.update_job(job_id, progress=message)
 
     if kind == "librivox":
-        return ingest.import_librivox(payload["book_id"], progress)
+        current = dict(payload)
+        options = {**prepare.DEFAULT_OPTIONS, **current.get("options", {})}
+        slug = current.get("slug")
+        collection = library.get(slug) if slug else None
+        if collection and collection.get("stage") == "forged":
+            return collection
+        if not collection:
+            extracted = ingest.import_librivox(
+                current["book_id"],
+                lambda message: progress(f"extracting: {message}"),
+            )
+            slug = extracted["slug"]
+            current["slug"] = slug
+            current["options"] = options
+            db.update_job(job_id, payload=current)
+        return forge.run(
+            slug,
+            normalize=options["normalize"],
+            clean_titles=options["clean_titles"],
+            trim_head=options["trim_head"],
+            trim_tail=options["trim_tail"],
+            split_oversized=options["split_oversized"],
+            progress=lambda message: progress(f"forging: {message}"),
+        )
 
     if kind == "prepare_url":
         return prepare.run(
