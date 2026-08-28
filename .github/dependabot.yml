@@ -1,8 +1,17 @@
 # Pinned action SHAs do not receive upstream fixes on their own, including
 # security fixes to the actions themselves. This keeps them moving.
+#
+# They arrive as ONE grouped pull request rather than one per action. Every
+# pull request here runs the full build, including the emulated arm64 leg, so
+# five separate bumps meant five slow builds to review a single change of the
+# same kind.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
