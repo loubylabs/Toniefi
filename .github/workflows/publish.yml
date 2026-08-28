@@ -101,6 +101,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            YTDLP_REFRESH=${{ github.sha }}
           # Without a cache every run reinstalls ffmpeg and every wheel twice,
           # once per architecture.
           cache-from: type=gha
