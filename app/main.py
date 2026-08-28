@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -237,6 +236,7 @@ async def prepare_uploads(
                             "Choose fewer or smaller files and submit the collection again.",
                         )
                     output.write(chunk)
+                    jobs.mark_upload_stage(stage)
         payload = {
             "title": title.strip(),
             "stage": stage_name,
@@ -246,8 +246,9 @@ async def prepare_uploads(
         label = title.strip() or described[0]["name"]
         job_id = jobs.enqueue("upload_prepare", f"Upload {label}", payload)
     except Exception:
-        shutil.rmtree(stage, ignore_errors=True)
+        jobs.remove_upload_stage(stage)
         raise
+    jobs.release_upload_stage(stage)
     return {"job_id": job_id}
 
 

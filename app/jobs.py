@@ -14,6 +14,8 @@ from . import audio, config, db, forge, ingest, library, prepare, push
 
 _threads: list[threading.Thread] = []
 _stop = threading.Event()
+_upload_stage_lock = threading.RLock()
+_upload_stage_leases: set[Path] = set()
 
 UPLOAD_MAX_FILES = 500
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024 * 1024
@@ -41,6 +43,19 @@ def mark_upload_stage(stage: Path) -> None:
     )
 
 
+def release_upload_stage(stage: Path) -> None:
+    with _upload_stage_lock:
+        _upload_stage_leases.discard(stage.resolve())
+
+
+def remove_upload_stage(stage: Path) -> None:
+    stage = stage.resolve()
+    with _upload_stage_lock:
+        _upload_stage_leases.discard(stage)
+        if _owned_upload_stage(stage):
+            shutil.rmtree(stage)
+
+
 def sweep_upload_staging() -> None:
     """Remove expired TonieFi upload stages and leave all other work intact."""
     config.ensure_dirs()
@@ -59,18 +74,28 @@ def sweep_upload_staging() -> None:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
             continue
         if retained_at <= cutoff:
-            shutil.rmtree(stage)
+            with _upload_stage_lock:
+                if stage.resolve() in _upload_stage_leases:
+                    continue
+                shutil.rmtree(stage)
 
 
 def create_upload_stage() -> tuple[str, Path]:
     config.ensure_dirs()
     stage_name = f"upload-{uuid4().hex}"
     stage = config.WORK_DIR / stage_name
-    stage.mkdir()
-    (stage / UPLOAD_STAGE_MARKER).write_text(
-        json.dumps({"retained_at": _now()}),
-        encoding="utf-8",
-    )
+    with _upload_stage_lock:
+        _upload_stage_leases.add(stage.resolve())
+        try:
+            stage.mkdir()
+            (stage / UPLOAD_STAGE_MARKER).write_text(
+                json.dumps({"retained_at": _now()}),
+                encoding="utf-8",
+            )
+        except Exception:
+            _upload_stage_leases.discard(stage.resolve())
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
     return stage_name, stage
 
 
@@ -280,8 +305,14 @@ def _worker() -> None:
 
 def start() -> None:
     db.init()
+    interrupted = db.fail_stale_running()
+    for job in interrupted:
+        if job.get("kind") != "upload_prepare":
+            continue
+        stage_name = job.get("payload", {}).get("stage")
+        if isinstance(stage_name, str):
+            mark_upload_stage(config.WORK_DIR / stage_name)
     sweep_upload_staging()
-    db.requeue_stale_running()
     for _ in range(config.WORKER_THREADS):
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()

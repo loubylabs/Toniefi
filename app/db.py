@@ -192,16 +192,31 @@ def active_upload_stages() -> set[str]:
     return stages
 
 
-def requeue_stale_running() -> None:
-    """Anything left 'running' when the process died is not coming back."""
+def fail_stale_running() -> list[dict[str, Any]]:
+    """Fail jobs interrupted by restart and return exactly those rows."""
     conn = connect()
     with _lock:
-        conn.execute(
-            "UPDATE jobs SET status='failed', error='interrupted by restart', updated_at=? "
-            "WHERE status='running'",
-            (time.time(),),
-        )
-        conn.commit()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE status='running' ORDER BY id"
+            ).fetchall()
+            now = time.time()
+            conn.execute(
+                "UPDATE jobs SET status='failed', error='interrupted by restart', updated_at=? "
+                "WHERE status='running'",
+                (now,),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    transitioned = []
+    for row in rows:
+        job = _hydrate(row)
+        job.update(status="failed", error="interrupted by restart", updated_at=now)
+        transitioned.append(job)
+    return transitioned
 
 
 def _hydrate(row: sqlite3.Row) -> dict[str, Any]:

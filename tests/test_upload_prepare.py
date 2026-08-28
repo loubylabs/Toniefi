@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from copy import deepcopy
 
 import pytest
@@ -134,6 +135,83 @@ def test_worker_startup_sweeps_only_expired_owned_upload_staging(monkeypatch, is
     assert (unrelated / "keep.txt").read_text(encoding="utf-8") == "keep"
 
 
+def test_restart_transition_returns_only_jobs_newly_interrupted(isolated_db):
+    interrupted = db.create_job("upload_prepare", "Interrupted", {"stage": "upload-interrupted"})
+    historical = db.create_job("upload_prepare", "Historical", {"stage": "upload-historical"})
+    queued = db.create_job("upload_prepare", "Queued", {"stage": "upload-queued"})
+    db.update_job(interrupted, status="running")
+    db.update_job(historical, status="failed", error="older failure")
+
+    transitioned = db.fail_stale_running()
+
+    assert [job["id"] for job in transitioned] == [interrupted]
+    assert transitioned[0]["kind"] == "upload_prepare"
+    assert transitioned[0]["payload"] == {"stage": "upload-interrupted"}
+    assert db.get_job(interrupted)["status"] == "failed"
+    assert db.get_job(historical)["error"] == "older failure"
+    assert db.get_job(queued)["status"] == "queued"
+    assert db.fail_stale_running() == []
+
+
+def test_restart_renews_only_newly_interrupted_upload_staging_before_sweep(
+    monkeypatch,
+    isolated_db,
+):
+    now = 2_000_000
+    old = now - (24 * 60 * 60) - 1
+    interrupted_stage = owned_stage("upload-interrupted", old)
+    historical_stage = owned_stage("upload-historical", old)
+    abandoned_stage = owned_stage("upload-abandoned", old)
+    interrupted = db.create_job(
+        "upload_prepare",
+        "Interrupted upload",
+        {"stage": interrupted_stage.name},
+    )
+    historical = db.create_job(
+        "upload_prepare",
+        "Historical failure",
+        {"stage": historical_stage.name},
+    )
+    db.update_job(interrupted, status="running")
+    db.update_job(historical, status="failed", error="older failure")
+    monkeypatch.setattr(jobs, "_now", lambda: now, raising=False)
+    monkeypatch.setattr(config, "WORKER_THREADS", 0)
+    jobs._stop.clear()
+
+    try:
+        jobs.start()
+    finally:
+        jobs.stop()
+        jobs._stop.clear()
+
+    assert db.get_job(interrupted)["status"] == "failed"
+    assert db.get_job(historical)["error"] == "older failure"
+    assert json.loads((interrupted_stage / STAGE_MARKER).read_text(encoding="utf-8")) == {
+        "retained_at": now,
+    }
+    assert not historical_stage.exists()
+    assert not abandoned_stage.exists()
+
+
+def test_concurrent_sweep_cannot_remove_a_leased_old_stage(monkeypatch, isolated_db):
+    now = 2_000_000
+    monkeypatch.setattr(jobs, "_now", lambda: now, raising=False)
+    _, stage = jobs.create_upload_stage()
+    (stage / STAGE_MARKER).write_text(
+        json.dumps({"retained_at": now - (24 * 60 * 60) - 1}),
+        encoding="utf-8",
+    )
+
+    sweep = threading.Thread(target=jobs.sweep_upload_staging)
+    sweep.start()
+    sweep.join()
+
+    assert stage.is_dir()
+    jobs.release_upload_stage(stage)
+    jobs.sweep_upload_staging()
+    assert not stage.exists()
+
+
 def test_upload_endpoint_sweeps_expired_staging_before_accepting_a_batch(
     client,
     isolated_db,
@@ -150,6 +228,95 @@ def test_upload_endpoint_sweeps_expired_staging_before_accepting_a_batch(
 
     assert response.status_code == 200
     assert not expired.exists()
+
+
+def test_upload_stream_renews_the_stage_heartbeat_for_each_chunk(
+    client,
+    isolated_db,
+    monkeypatch,
+):
+    tick = 2_000_000
+
+    def clock():
+        nonlocal tick
+        current = tick
+        tick += 1
+        return current
+
+    monkeypatch.setattr(jobs, "_now", clock, raising=False)
+    response = client.post(
+        "/api/uploads/prepare",
+        files=[("files", ("story.mp3", b"x" * (2 * 1024 * 1024 + 1), "audio/mpeg"))],
+    )
+
+    assert response.status_code == 200
+    stage = config.WORK_DIR / db.get_job(response.json()["job_id"])["payload"]["stage"]
+    assert json.loads((stage / STAGE_MARKER).read_text(encoding="utf-8")) == {
+        "retained_at": 2_000_004,
+    }
+
+
+def test_upload_job_is_persisted_before_the_stage_lease_is_released(
+    client,
+    isolated_db,
+    monkeypatch,
+):
+    real_release = jobs.release_upload_stage
+    persisted_at_release = []
+
+    def release_after_persistence(stage):
+        persisted_at_release.append(any(
+            job["kind"] == "upload_prepare" and job["payload"].get("stage") == stage.name
+            for job in db.jobs_for_refresh()
+        ))
+        real_release(stage)
+
+    monkeypatch.setattr(jobs, "release_upload_stage", release_after_persistence)
+    response = client.post(
+        "/api/uploads/prepare",
+        files=[("files", ("story.mp3", b"story", "audio/mpeg"))],
+    )
+
+    assert response.status_code == 200
+    assert persisted_at_release == [True]
+
+
+def test_upload_failure_releases_and_removes_its_pre_job_stage(
+    client,
+    isolated_db,
+    monkeypatch,
+):
+    created = []
+    real_create = jobs.create_upload_stage
+
+    def capture_stage():
+        result = real_create()
+        created.append(result[1])
+        return result
+
+    monkeypatch.setattr(jobs, "create_upload_stage", capture_stage)
+    monkeypatch.setattr(
+        jobs,
+        "enqueue",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("database stopped")),
+    )
+
+    with pytest.raises(RuntimeError, match="database stopped"):
+        client.post(
+            "/api/uploads/prepare",
+            files=[("files", ("story.mp3", b"story", "audio/mpeg"))],
+        )
+
+    stage = created[0]
+    assert not stage.exists()
+    stage.mkdir()
+    (stage / STAGE_MARKER).write_text(
+        json.dumps({"retained_at": 1_000_000}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(jobs, "_now", lambda: 2_000_000, raising=False)
+    jobs.sweep_upload_staging()
+    assert not stage.exists()
 
 
 def test_upload_endpoint_rejects_more_than_500_files_without_staging(client, isolated_db):
