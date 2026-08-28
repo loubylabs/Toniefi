@@ -1,0 +1,170 @@
+import { icon } from "./icons.js";
+
+export function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
+}
+
+export function query(selector, root = document) {
+  return root.querySelector(selector);
+}
+
+export function queryAll(selector, root = document) {
+  return Array.from(root.querySelectorAll(selector));
+}
+
+export function element(tagName, attributes = {}, children = []) {
+  const node = document.createElement(tagName);
+  for (const [name, value] of Object.entries(attributes)) {
+    if (value == null || value === false) continue;
+    if (name === "className") {
+      node.className = value;
+    } else if (name === "text") {
+      node.textContent = value;
+    } else if (name.startsWith("on") && typeof value === "function") {
+      node.addEventListener(name.slice(2).toLowerCase(), value);
+    } else if (value === true) {
+      node.setAttribute(name, "");
+    } else {
+      node.setAttribute(name, String(value));
+    }
+  }
+  node.append(...(Array.isArray(children) ? children : [children]).filter((child) => child != null));
+  return node;
+}
+
+export function replace(host, ...children) {
+  host.replaceChildren(...children.flat().filter((child) => child != null));
+  return host;
+}
+
+export function announce(message, { assertive = false } = {}) {
+  const region = document.getElementById("liveRegion");
+  if (!region) return;
+  region.setAttribute("aria-live", assertive ? "assertive" : "polite");
+  region.textContent = "";
+  window.requestAnimationFrame(() => {
+    region.textContent = String(message);
+  });
+}
+
+export function notify(message, { kind = "info", timeout = 5000 } = {}) {
+  const host = document.getElementById("notifications");
+  if (!host) {
+    announce(message, { assertive: kind === "failure" });
+    return null;
+  }
+
+  const notice = element("div", {
+    className: "notification",
+    role: kind === "failure" ? "alert" : "status",
+    "data-kind": kind,
+  });
+  const symbol = element("span", { className: "notification-icon", "aria-hidden": "true" });
+  symbol.innerHTML = icon(kind === "failure" ? "alert" : kind === "success" ? "check" : "info");
+  const copy = element("span", { className: "notification-copy", text: message });
+  const close = element("button", {
+    type: "button",
+    className: "icon-button notification-close",
+    "aria-label": "Dismiss notification",
+    onclick: () => notice.remove(),
+  });
+  close.innerHTML = icon("close");
+  notice.append(symbol, copy, close);
+  host.append(notice);
+  announce(message, { assertive: kind === "failure" });
+
+  if (timeout > 0) window.setTimeout(() => notice.remove(), timeout);
+  return notice;
+}
+
+export function rememberFocus(root = document) {
+  const active = document.activeElement;
+  if (!active || !root.contains(active)) return null;
+  return {
+    id: active.id || "",
+    key: active.getAttribute("data-focus-key") || "",
+    name: active.getAttribute("name") || "",
+    selectionStart: typeof active.selectionStart === "number" ? active.selectionStart : null,
+    selectionEnd: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+  };
+}
+
+function matchingAttribute(root, name, value) {
+  if (!value) return null;
+  return queryAll(`[${name}]`, root).find((node) => node.getAttribute(name) === value) || null;
+}
+
+export function restoreFocus(token, { root = document, fallback = null } = {}) {
+  let target = null;
+  if (token?.id) target = document.getElementById(token.id);
+  if (!target && token?.key) target = matchingAttribute(root, "data-focus-key", token.key);
+  if (!target && token?.name) target = matchingAttribute(root, "name", token.name);
+  if (!target) target = fallback;
+  if (!target || typeof target.focus !== "function") return false;
+  target.focus({ preventScroll: true });
+  if (token?.selectionStart != null && typeof target.setSelectionRange === "function") {
+    target.setSelectionRange(token.selectionStart, token.selectionEnd);
+  }
+  return true;
+}
+
+export function withFocusRestored(render, options = {}) {
+  const token = rememberFocus(options.root || document);
+  const result = render();
+  restoreFocus(token, options);
+  return result;
+}
+
+export function setBusy(host, busy, label = "Working") {
+  host.toggleAttribute("aria-busy", busy);
+  if (busy) host.setAttribute("aria-label", label);
+  else host.removeAttribute("aria-label");
+}
+
+export function showConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  cancelLabel = "Cancel",
+  destructive = false,
+}) {
+  const host = document.getElementById("dialogHost");
+  if (!host) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    const dialog = element("dialog", { className: "confirmation-dialog" });
+    const heading = element("h2", { text: title });
+    const copy = element("p", { text: message });
+    const actions = element("div", { className: "dialog-actions" });
+    const cancel = element("button", { type: "button", className: "button button-secondary", text: cancelLabel });
+    const confirm = element("button", {
+      type: "button",
+      className: destructive ? "button button-danger" : "button button-primary",
+      text: confirmLabel,
+    });
+
+    const finish = (answer) => {
+      dialog.close();
+      dialog.remove();
+      resolve(answer);
+    };
+    cancel.addEventListener("click", () => finish(false));
+    confirm.addEventListener("click", () => finish(true));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish(false);
+    });
+
+    actions.append(cancel, confirm);
+    dialog.append(heading, copy, actions);
+    host.append(dialog);
+    dialog.showModal();
+    cancel.focus();
+  });
+}
