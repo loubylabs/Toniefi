@@ -56,11 +56,20 @@ def collection_lease():
 
 
 def _dir_for(slug: str) -> Path:
-    """Resolve a slug to a directory, refusing anything outside the library."""
-    candidate = (config.LIBRARY_DIR / slug).resolve()
+    """Resolve exactly one safe collection slug beneath the library."""
+    if (
+        not isinstance(slug, str)
+        or not slug
+        or slug in {".", ".."}
+        or "/" in slug
+        or "\\" in slug
+        or Path(slug).is_absolute()
+    ):
+        raise ValueError("Invalid collection slug.")
     root = config.LIBRARY_DIR.resolve()
-    if candidate != root and root not in candidate.parents:
-        raise ValueError(f"Refusing to touch {slug!r}: outside the library.")
+    candidate = (root / slug).resolve()
+    if candidate.parent != root:
+        raise ValueError("Invalid collection slug.")
     return candidate
 
 

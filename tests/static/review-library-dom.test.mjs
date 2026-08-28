@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDeskScreen } from "../../app/static/desk.js";
+import { createDeskScreen, createLiveWorkCart } from "../../app/static/desk.js";
 import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
 import { createFocusedReview } from "../../app/static/review.js";
 
@@ -274,6 +274,66 @@ test("Desk gives every accepted source URL textbox a distinct accessible name", 
       "Source URL 1",
       "Source URL 2",
     ]);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Desk renders forged truth instead of an obsolete failed Forge card", () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  try {
+    const cart = createLiveWorkCart({
+      request: async () => ({}),
+      requestRefresh: async () => ({}),
+      navigate() {},
+      signal: controller.signal,
+    });
+    dom.workspace.append(cart.host);
+    cart.onRefresh({
+      jobs: [
+        {
+          id: 41,
+          kind: "forge",
+          status: "failed",
+          phase: "failed",
+          label: "Older Forge attempt",
+          progress: "",
+          error: "Worker stopped",
+          retryable: false,
+          payload: { slug: "night-story" },
+          result: {},
+        },
+        {
+          id: 42,
+          kind: "forge",
+          status: "done",
+          phase: "ready",
+          label: "Successful Forge attempt",
+          progress: "Finished",
+          error: "",
+          retryable: false,
+          payload: { slug: "night-story" },
+          result: { slug: "night-story" },
+        },
+      ],
+      collections: [{
+        slug: "night-story",
+        title: "Night Story",
+        stage: "forged",
+        track_count: 4,
+        total_duration: "42m 00s",
+      }],
+      stale: [],
+      errors: {},
+    });
+
+    const rows = dom.workspace.querySelectorAll(".work-cart-row");
+    assert.equal(rows.length, 1);
+    assert.match(rows[0].textContent, /Ready to review/);
+    assert.match(rows[0].textContent, /Review/);
+    assert.doesNotMatch(rows[0].textContent, /Failed|Retry|Worker stopped/);
   } finally {
     controller.abort();
     dom.restore();

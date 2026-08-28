@@ -136,6 +136,18 @@ class PushRetryConflict(RuntimeError):
     """Confirmed sends must return to Review instead of cloning a job."""
 
 
+INVALID_FORGE_SLUG_ERROR = "This Forge job has an invalid collection slug."
+
+
+def _forge_completion(payload: object) -> tuple[dict | None, bool]:
+    if not isinstance(payload, dict):
+        return None, True
+    try:
+        return library.completed_forge(payload.get("slug")), False
+    except ValueError:
+        return None, True
+
+
 def retry_failed_job(job_id: int) -> int:
     with _upload_stage_lock:
         job = db.get_job(job_id)
@@ -144,8 +156,9 @@ def retry_failed_job(job_id: int) -> int:
                 "Creative Tonie sends must be reviewed and confirmed again in Review."
             )
         if job and job.get("status") == "failed" and job.get("kind") == "forge":
-            payload = job.get("payload") or {}
-            completed = library.completed_forge(payload.get("slug", ""))
+            completed, invalid_slug = _forge_completion(job.get("payload"))
+            if invalid_slug:
+                return 0
             if completed:
                 db.update_job(
                     job_id,
@@ -169,9 +182,10 @@ def present(job: dict) -> dict:
     status = displayed.get("status", "")
     kind = displayed.get("kind", "")
     terminal_forge = False
-    if status == "failed" and kind == "forge":
-        payload = displayed.get("payload") or {}
-        terminal_forge = library.completed_forge(payload.get("slug", "")) is not None
+    invalid_forge_slug = False
+    if kind == "forge":
+        completed, invalid_forge_slug = _forge_completion(displayed.get("payload"))
+        terminal_forge = completed is not None
     collection_stage = ""
     if status == "done" and kind == "librivox":
         payload = displayed.get("payload") or {}
@@ -180,8 +194,16 @@ def present(job: dict) -> dict:
         collection = library.get(slug) if slug else None
         collection_stage = (collection or {}).get("stage", "")
         displayed["collection_stage"] = collection_stage
-    displayed["retryable"] = status == "failed" and kind != "push" and not terminal_forge
-    if status == "failed":
+    displayed["retryable"] = (
+        status == "failed"
+        and kind != "push"
+        and not terminal_forge
+        and not invalid_forge_slug
+    )
+    if invalid_forge_slug:
+        displayed["error"] = INVALID_FORGE_SLUG_ERROR
+        displayed["phase"] = "failed"
+    elif status == "failed":
         displayed["phase"] = "failed"
     elif separator and prefix in {"extracting", "forging"}:
         displayed["phase"] = prefix

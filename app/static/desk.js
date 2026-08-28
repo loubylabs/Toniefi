@@ -188,14 +188,26 @@ function jobSlug(job) {
 }
 
 function workPhase(job, collection) {
-  if (job.status === "failed") return "failed";
-  if (collection?.stage === "forged") return "ready";
   if (job.status === "queued") return "queued";
-  if (job.phase === "forging" || job.kind === "forge") return "forging";
-  if (job.phase === "extracting" || job.kind === "librivox" || job.kind === "prepare_url") {
-    return "extracting";
+  if (job.status === "running") {
+    if (job.phase === "forging" || job.kind === "forge") return "forging";
+    if (job.phase === "extracting" || job.kind === "librivox" || job.kind === "prepare_url") {
+      return "extracting";
+    }
+    return "queued";
   }
+  if (collection?.stage === "forged") return "ready";
+  if (job.status === "failed") return "failed";
   return "queued";
+}
+
+function workRelevance(job, collection) {
+  if (job.status === "queued" || job.status === "running") return "active";
+  if (collection?.stage === "forged") return "collection";
+  if (job.status === "failed" && job.retryable && collection?.stage === "extracted") {
+    return "recovery";
+  }
+  return "history";
 }
 
 function sourceLabel(job, collection) {
@@ -217,6 +229,7 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
     const slug = jobSlug(job);
     if (slug && represented.has(slug)) continue;
     const collection = slug ? collectionBySlug.get(slug) : null;
+    if (workRelevance(job, collection) === "collection") continue;
     if (job.status === "done" && collection?.stage !== "forged") continue;
     if (slug) represented.add(slug);
     const phase = workPhase(job, collection);

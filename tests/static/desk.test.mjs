@@ -306,7 +306,14 @@ test("buildWorkCartItems merges preparation jobs with collection facts and keeps
     },
   ], [
     { slug: "failed-book", title: "Failed Book", stage: "extracted", track_count: 8, total_duration: "1h 12m", cover: "cover.jpg" },
-    { slug: "ready-book", title: "Ready Book", stage: "forged", track_count: 12, total_duration: "1h 45m" },
+    {
+      slug: "ready-book",
+      title: "Ready Book",
+      stage: "forged",
+      url: "https://example.com/ready",
+      track_count: 12,
+      total_duration: "1h 45m",
+    },
   ]);
 
   assert.deepEqual(items.map((item) => ({
@@ -332,7 +339,7 @@ test("buildWorkCartItems merges preparation jobs with collection facts and keeps
       hasCover: true,
     },
     {
-      key: "job-13",
+      key: "collection-ready-book",
       phase: "ready",
       title: "Ready Book",
       source: "https://example.com/ready",
@@ -363,7 +370,7 @@ test("buildWorkCartItems keeps every active job ahead of failed and completed wo
 
   assert.deepEqual(
     buildWorkCartItems(jobs, collections, 5).map((item) => item.jobId),
-    [6, 5, 4, 7, 9],
+    [6, 5, 4, 7, null],
   );
   assert.deepEqual(
     buildWorkCartItems([job(6, "running"), job(5, "queued"), job(4, "running")], [], 2).map((item) => item.jobId),
@@ -386,6 +393,89 @@ test("buildWorkCartItems honors the server retryable contract", () => {
   }], []);
 
   assert.equal(item.canRetry, false);
+});
+
+test("forged collection truth replaces obsolete completed and failed Forge rows", () => {
+  const jobs = [
+    {
+      id: 41,
+      kind: "forge",
+      status: "failed",
+      phase: "failed",
+      label: "Older Forge attempt",
+      progress: "",
+      error: "Worker stopped",
+      retryable: false,
+      payload: { slug: "night-story" },
+      result: {},
+    },
+    {
+      id: 42,
+      kind: "forge",
+      status: "done",
+      phase: "ready",
+      label: "Completed Forge attempt",
+      progress: "Finished",
+      error: "",
+      retryable: false,
+      payload: { slug: "night-story" },
+      result: { slug: "night-story" },
+    },
+  ];
+  const collections = [{
+    slug: "night-story",
+    title: "Night Story",
+    stage: "forged",
+    track_count: 4,
+    total_duration: "42m 00s",
+  }];
+
+  assert.deepEqual(buildWorkCartItems(jobs, collections).map((item) => ({
+    key: item.key,
+    phase: item.phase,
+    canRetry: item.canRetry,
+  })), [{
+    key: "collection-night-story",
+    phase: "ready",
+    canRetry: false,
+  }]);
+});
+
+test("active work leads authoritative collection truth until it stops", () => {
+  const [item] = buildWorkCartItems([{
+    id: 43,
+    kind: "forge",
+    status: "running",
+    phase: "forging",
+    label: "Active Forge",
+    progress: "Levelling 2/4",
+    error: "",
+    retryable: false,
+    payload: { slug: "night-story" },
+    result: {},
+  }], [{ slug: "night-story", title: "Night Story", stage: "forged" }]);
+
+  assert.equal(item.key, "job-43");
+  assert.equal(item.phase, "forging");
+});
+
+test("retryable extracted Forge failure remains useful recovery work", () => {
+  const [item] = buildWorkCartItems([{
+    id: 44,
+    kind: "forge",
+    status: "failed",
+    phase: "failed",
+    label: "Extracted Forge",
+    progress: "",
+    error: "Audio processing stopped",
+    retryable: true,
+    payload: { slug: "unfinished-story" },
+    result: {},
+  }], [{ slug: "unfinished-story", title: "Unfinished Story", stage: "extracted" }]);
+
+  assert.equal(item.key, "job-44");
+  assert.equal(item.phase, "failed");
+  assert.equal(item.canRetry, true);
 });
 
 test("buildWorkCartItems does not mark a legacy import-only LibriVox job ready", () => {

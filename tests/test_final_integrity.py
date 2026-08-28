@@ -326,6 +326,51 @@ def test_generic_job_creation_cannot_bypass_canonical_forge_payloads(isolated):
         db.create_job("forge", "Legacy bypass", {"slug": "legacy-bypass"})
 
 
+@pytest.mark.parametrize(
+    "unsafe_slug",
+    ["", ".", "..", "collection/..", "nested/collection", r"nested\collection", "/tmp/outside"],
+)
+def test_collection_slug_boundary_rejects_every_non_collection_path(isolated, unsafe_slug):
+    root_manifest = config.LIBRARY_DIR / library.MANIFEST
+
+    with pytest.raises(ValueError, match="collection slug"):
+        library.get(unsafe_slug)
+
+    assert not root_manifest.exists()
+
+
+def test_malformed_migrated_forge_history_is_safe_nonretryable_and_nonmutating(isolated):
+    conn = db.connect()
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE name=?",
+        (db.FORGE_OPERATION_IDS_MIGRATION,),
+    )
+    cursor = conn.execute(
+        "INSERT INTO jobs(kind,status,label,payload,error,created_at,updated_at) "
+        "VALUES('forge','failed',?,?,?,?,?)",
+        (
+            "Malformed Forge",
+            json.dumps({"slug": ""}),
+            "interrupted by restart",
+            1.0,
+            1.0,
+        ),
+    )
+    conn.commit()
+    db.init()
+    job_id = int(cursor.lastrowid)
+    stored = db.get_job(job_id)
+
+    presented = jobs.present(stored)
+
+    assert presented["phase"] == "failed"
+    assert presented["retryable"] is False
+    assert presented["error"] == "This Forge job has an invalid collection slug."
+    assert db.get_job(job_id) == stored
+    assert jobs.retry_failed_job(job_id) == 0
+    assert not (config.LIBRARY_DIR / library.MANIFEST).exists()
+
+
 def test_hidden_collection_stage_publishes_once_and_is_absent_from_library(isolated, monkeypatch):
     stage = library.begin_collection_stage(
         "url-job-41",
