@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import traceback
 
-from . import config, db, forge, ingest, push
+from . import config, db, forge, ingest, prepare, push
 
 _threads: list[threading.Thread] = []
 _stop = threading.Event()
@@ -13,6 +13,29 @@ _stop = threading.Event()
 
 def enqueue(kind: str, label: str, payload: dict) -> int:
     return db.create_job(kind, label, payload)
+
+
+def present(job: dict) -> dict:
+    """Add display-only phase data without changing stored job history."""
+    displayed = dict(job)
+    stored_progress = displayed.get("progress", "")
+    prefix, separator, message = stored_progress.partition(": ")
+    if separator and prefix in {"extracting", "forging"}:
+        displayed["phase"] = prefix
+        displayed["progress"] = message
+        return displayed
+
+    status = displayed.get("status", "")
+    kind = displayed.get("kind", "")
+    if status == "done" and kind in {"prepare_url", "forge"}:
+        displayed["phase"] = "ready"
+    elif status == "running" and kind == "prepare_url":
+        displayed["phase"] = "extracting"
+    elif status == "running" and kind == "forge":
+        displayed["phase"] = "forging"
+    else:
+        displayed["phase"] = status
+    return displayed
 
 
 def _handle(job: dict) -> dict:
@@ -26,13 +49,11 @@ def _handle(job: dict) -> dict:
     if kind == "librivox":
         return ingest.import_librivox(payload["book_id"], progress)
 
-    if kind == "url":
-        return ingest.import_url(
-            payload["url"],
-            title=payload.get("title"),
-            slug=payload.get("slug"),
-            use_chapters=payload.get("use_chapters", True),
+    if kind == "prepare_url":
+        return prepare.run(
+            payload,
             progress=progress,
+            checkpoint=lambda updated_payload: db.update_job(job_id, payload=updated_payload),
         )
 
     if kind == "forge":

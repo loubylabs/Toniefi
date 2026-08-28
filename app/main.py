@@ -4,11 +4,12 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import audio, config, db, ingest, jobs, library, push, tonies
 
@@ -40,15 +41,22 @@ class ReorderRequest(BaseModel):
     names: list[str]
 
 
-class ProbeRequest(BaseModel):
+class PrepareSource(BaseModel):
     url: str
 
 
-class UrlIngest(BaseModel):
-    url: str
-    title: str | None = None
-    slug: str | None = None
+class PrepareOptions(BaseModel):
     use_chapters: bool = True
+    normalize: bool = True
+    clean_titles: bool = True
+    trim_head: float = 0
+    trim_tail: float = 0
+    split_oversized: bool = True
+
+
+class PrepareBatch(BaseModel):
+    sources: list[PrepareSource]
+    options: PrepareOptions = Field(default_factory=PrepareOptions)
 
 
 class LibrivoxImport(BaseModel):
@@ -128,27 +136,26 @@ def test_credentials() -> dict[str, Any]:
     return {"ok": True, "email": profile.get("email", "")}
 
 
-# --------------------------------------------------------- 1. paste/probe
+# ---------------------------------------------------------- 1. preparation
 
-@app.post("/api/probe")
-def probe(body: ProbeRequest) -> dict[str, Any]:
-    """Look at a URL without downloading, so step 1 can show what's coming."""
-    if not body.url.strip():
-        raise fail(400, "A URL is required.")
-    try:
-        return ingest.probe_url(body.url.strip())
-    except RuntimeError as exc:
-        raise fail(400, str(exc)) from exc
+@app.post("/api/prepare")
+def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
+    sources = [source.url.strip() for source in body.sources]
+    if not sources:
+        raise fail(400, "At least one source URL is required.")
+    if any(urlparse(url).scheme not in {"http", "https"} for url in sources):
+        raise fail(400, "Sources must use HTTP or HTTPS.")
+    if len(set(sources)) != len(sources):
+        raise fail(400, "Duplicate source URLs are not allowed.")
+    if len(sources) > 50:
+        raise fail(400, "A batch can contain at most 50 sources.")
 
-
-# ------------------------------------------------------------- 2. extract
-
-@app.post("/api/ingest/url")
-def ingest_url(body: UrlIngest) -> dict[str, Any]:
-    if not body.url.strip():
-        raise fail(400, "A URL is required.")
-    job_id = jobs.enqueue("url", body.title or body.url, body.model_dump())
-    return {"job_id": job_id}
+    options = body.options.model_dump()
+    created = []
+    for url in sources:
+        job_id = jobs.enqueue("prepare_url", url, {"url": url, "options": options})
+        created.append({"id": job_id, "url": url})
+    return {"jobs": created}
 
 
 @app.get("/api/librivox/search")
@@ -307,7 +314,7 @@ def put_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> d
 
 @app.get("/api/jobs")
 def list_jobs(limit: int = 40) -> list[dict[str, Any]]:
-    return db.recent_jobs(limit)
+    return [jobs.present(job) for job in db.recent_jobs(limit)]
 
 
 @app.get("/api/jobs/{job_id}")
@@ -315,7 +322,18 @@ def get_job(job_id: int) -> dict[str, Any]:
     job = db.get_job(job_id)
     if not job:
         raise fail(404, "No such job.")
-    return job
+    return jobs.present(job)
+
+
+@app.post("/api/jobs/{job_id}/retry")
+def retry_job(job_id: int) -> dict[str, Any]:
+    retry_id = db.retry_failed_job(job_id)
+    if not retry_id:
+        raise fail(400, "Only failed jobs can be retried.")
+    job = db.get_job(retry_id)
+    if not job:
+        raise fail(404, "No such job.")
+    return jobs.present(job)
 
 
 # ------------------------------------------------------------------- pages

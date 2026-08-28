@@ -85,6 +85,23 @@ def create_job(kind: str, label: str, payload: dict[str, Any]) -> int:
         return int(cur.lastrowid)
 
 
+def retry_failed_job(job_id: int) -> int:
+    """Clone a failed job into a new queued job, preserving the original."""
+    now = time.time()
+    conn = connect()
+    with _lock:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if row is None or row["status"] != "failed":
+            return 0
+        cur = conn.execute(
+            "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+            "VALUES(?,'queued',?,?,?,?)",
+            (row["kind"], row["label"], row["payload"], now, now),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
 def claim_job() -> dict[str, Any] | None:
     """Atomically move the oldest queued job to running."""
     conn = connect()
