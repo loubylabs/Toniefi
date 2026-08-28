@@ -10,6 +10,13 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# yt-dlp ships fixes within days of YouTube changing its player, and the layer
+# above keys on requirements.txt, which never changes. Without something to
+# break the cache, a rebuild replays a months-old yt-dlp and reintroduces
+# exactly the pin that file's comment warns against.
+ARG YTDLP_REFRESH=local
+RUN pip install --no-cache-dir --upgrade yt-dlp
+
 COPY app ./app
 
 ENV LIBRARY_DIR=/library \

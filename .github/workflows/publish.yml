@@ -1,0 +1,145 @@
+# Builds the image GitHub hosts, and refuses to publish one whose tests fail.
+#
+# A pull request builds both architectures but pushes nothing, so a broken
+# Dockerfile is caught before it can reach the registry and before anyone's
+# `docker compose pull` picks it up.
+name: publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only by default for every job. The publish job declares its own
+# elevated block below, which overrides this for that job only.
+permissions:
+  contents: read
+
+concurrency:
+  # Pull requests share a per-ref group and cancel: a superseded PR build is
+  # pure waste. Main runs share their own per-ref group but serialise rather
+  # than cancel, so latest always ends at the newest completed commit, not
+  # whichever commit's build happened to finish last. The accepted cost:
+  # three quick pushes to main can leave the middle one with no sha-<short>
+  # tag, since GitHub allows only one pending run per group and drops the
+  # older one. That is the right way round, because the dropped commit's
+  # code is superseded anyway and can still be hand-dispatched, whereas a
+  # stale latest is what the Unraid box actually pulls.
+  group: publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # requirements-dev.txt pulls in requirements.txt, so this is the whole set.
+      # ffmpeg is not installed: the suite never shells out to it.
+      - run: pip install -r requirements-dev.txt
+
+      - run: pytest tests/ -q
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    # An emulated arm64 apt-get that wedges would otherwise sit on the
+    # six-hour default. Sixty minutes is generous for this build.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # The only elevated permission here, and the only one GHCR needs.
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The build does not need git credentials, so do not leave a
+          # pushable token sitting in the build context.
+          persist-credentials: false
+
+      # arm64 is emulated. It is the slow half of the build, and it is the half
+      # an Apple Silicon machine actually runs.
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        # Skipped on pull requests, which have no write token and push nothing.
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the tags
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          # github.repository is loubylabs/Toniefi, and GHCR rejects the capital
+          # T. This action lowercases the name, which is why it is built here.
+          images: ghcr.io/${{ github.repository }}
+          # The default flavor also emits latest on a semver tag push, on top
+          # of the explicit rule below. Turn that off so latest only ever
+          # comes from the is_default_branch rule, and a v0.9.1 pushed after
+          # v1.0.0 cannot move it backwards.
+          flavor: latest=false
+          tags: |
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Keyed on the run and the attempt, not the commit: a hand-dispatched
+          # run of an unchanged commit must still bust the cache and resolve
+          # yt-dlp fresh, and a re-run keeps the same run id, so the attempt
+          # number is what tells that retry apart from the run it retries.
+          build-args: |
+            YTDLP_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+          # Without a cache every run reinstalls ffmpeg and every wheel twice,
+          # once per architecture.
+          cache-from: type=gha
+          # The cache export runs after the image push has already succeeded,
+          # so a quota eviction or a cache-service hiccup must not turn a good
+          # publish into a red run. Best-effort only.
+          cache-to: type=gha,mode=max,ignore-error=true
+
+      - name: Move latest, but only if main has not moved past this build
+        # The build can run for tens of minutes on the emulated arm64 leg, and
+        # GitHub does not guarantee that queued runs start in push order, so
+        # an older build can finish last. Re-checking the tip here, rather
+        # than before the build, shrinks the window from the whole build to
+        # the moment the tag actually moves. imagetools copies the manifest
+        # list, so this is a retag and not a second build.
+        if: github.event_name != 'pull_request'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+            echo "Not the default branch, leaving latest alone."
+            exit 0
+          fi
+          git fetch --depth=1 origin "$DEFAULT_BRANCH"
+          tip="$(git rev-parse FETCH_HEAD)"
+          if [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "main is at $tip, this build is $GITHUB_SHA. Leaving latest alone."
+            exit 0
+          fi
+          docker buildx imagetools create -t "$image:latest" "$image@$DIGEST"

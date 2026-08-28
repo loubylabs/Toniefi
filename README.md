@@ -48,7 +48,8 @@ Windows; on Linux, Docker Engine.
 ```bash
 git clone https://github.com/loubylabs/Toniefi.git
 cd Toniefi
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Open <http://127.0.0.1:8080>. `docker compose logs -f` follows it, and
@@ -63,7 +64,8 @@ into your library and you need `sudo` to delete them:
 
 ```bash
 printf 'TONIEFI_UID=%s\nTONIEFI_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Docker Desktop maps ownership back to you already, so macOS and Windows can
@@ -152,12 +154,20 @@ YTDLP_PLAYER_CLIENTS=default,android,web_safari ./run-local.sh
 quick way to find one that answers before you change the setting.
 
 **`The page needs to be reloaded`** on every URL is a stale `yt-dlp`. Sites
-change their player every few weeks and yt-dlp ships a fix within days.
-`run-local.sh` upgrades it on every start; under Docker, rebuild the image:
+change their player every few weeks and yt-dlp ships a fix within days. Every
+published image resolves `yt-dlp` fresh at build time, so pulling a newer
+image does get a newer `yt-dlp`:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
+
+If `main` has not moved since your last pull, `docker compose pull` reports
+the image as already up to date and there is no newer `yt-dlp` to fetch. Run
+the `publish` workflow by hand from the repository's Actions tab
+(`workflow_dispatch`) to publish a fresh image on demand. `run-local.sh` is
+the other route: it upgrades `yt-dlp` on every start.
 
 **Nothing will fix these:** a genuinely private, deleted or region-blocked
 video, and a DRM'd stream (Audible, Spotify, Apple Music).
@@ -195,6 +205,21 @@ each Tonie until the next chapter would overflow it. That is sequential
 first-fit, not a bin-packing optimum: chapter 7 never lands before chapter 6,
 which matters more for an audiobook than squeezing out the last three minutes.
 
+## Where the image comes from
+
+GitHub builds and publishes `ghcr.io/loubylabs/toniefi` on every push to
+`main`, but only after the test suite passes, so nothing broken reaches the
+registry. The package is meant to be public, so no `docker login` is needed
+to pull it. If a pull is denied with `unauthorized` or `denied`, the
+package's visibility needs setting to Public once, in its GHCR package
+settings. `latest` follows `main`, `sha-<short>` pins one exact commit, and a `v*` tag
+gets semver forms of its own. Taking an update is the same command as a
+first run:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
 ## Running it on Unraid
 
 Same compose file as everywhere else. Only the `.env` differs, because the
@@ -211,7 +236,7 @@ library belongs on the array rather than beside the repo.
    ```
 
    The two ids are Unraid's `nobody:users`, which is what its shares expect.
-3. `docker compose up -d --build`
+3. `docker compose pull && docker compose up -d`
 4. Open `http://<tower>:8080` and add your myTonies account on Settings, or
    put `TONIES_USERNAME` / `TONIES_PASSWORD` in that same `.env`, which keeps
    them out of the database.

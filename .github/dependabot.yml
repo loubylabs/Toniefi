@@ -1,0 +1,8 @@
+# Pinned action SHAs do not receive upstream fixes on their own, including
+# security fixes to the actions themselves. This keeps them moving.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

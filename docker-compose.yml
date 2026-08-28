@@ -1,11 +1,13 @@
 # One file for every host. It runs as-is on Docker Desktop (macOS, Windows) and
 # on plain Linux, keeping the library beside the repo. Unraid, or anyone who
 # wants the library elsewhere, overrides the paths in a .env file next to this
-# one. See .env.example.
+# one. See .env.example. The image comes from GHCR: docker compose pull is
+# how you take an update.
 services:
   toniefi:
-    build: .
-    image: toniefi:latest
+    # Built and hosted by GitHub, so a host does not compile ffmpeg and every
+    # wheel itself. To run your own local changes instead, use ./run-local.sh.
+    image: ghcr.io/loubylabs/toniefi:latest
     container_name: toniefi
     restart: unless-stopped
     ports:
