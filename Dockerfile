@@ -22,9 +22,10 @@ COPY app ./app
 ENV LIBRARY_DIR=/library \
     WORK_DIR=/work \
     DATA_DIR=/data \
+    UPLOAD_STAGE_DIR=/data/upload-staging \
     PYTHONUNBUFFERED=1
 
-RUN mkdir -p /library /work /data
+RUN mkdir -p /library /work /data/upload-staging
 VOLUME ["/library", "/data"]
 
 EXPOSE 8080

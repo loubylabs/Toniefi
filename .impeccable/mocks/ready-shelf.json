@@ -1,0 +1,17 @@
+{
+  "title": "Ready Shelf",
+  "image": ".impeccable/mocks/ready-shelf.png",
+  "approved": false,
+  "composition": "Collection state dominates as three library-cart bays, with batch intake docked across the lower viewport.",
+  "carry_forward": [
+    "shelf-like status organization",
+    "large cover rhythm",
+    "plain-language failure recovery",
+    "persistent intake drawer"
+  ],
+  "do_not_literalize": [
+    "generated cover artwork",
+    "illustrative durations and job counts",
+    "literal three-dimensional cart hardware on narrow screens"
+  ]
+}

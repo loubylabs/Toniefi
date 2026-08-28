@@ -10,6 +10,7 @@ Four passes, each independently optional:
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -35,17 +36,17 @@ _BRACKETED = re.compile(
     re.IGNORECASE,
 )
 _BARE = re.compile(
-    r"(?:^|\s[|\-–—]\s*)(?:"
+    r"(?:^|\s[|\-\u2013\u2014]\s*)(?:"
     r"full\s+(?:length\s+)?audio\s?book|audio\s?book|unabridged|complete\s+audio\s?book|"
     r"free\s+audio\s?book|full\s+audio|bedtime\s+story|read\s+aloud|"
     r"hd|hq|4k|1080p?|720p?|480p?|remastered|full\s+hd"
-    r")\s*(?=$|[|\-–—])",
+    r")\s*(?=$|[|\-\u2013\u2014])",
     re.IGNORECASE,
 )
-_TRAILING_JUNK = re.compile(r"\s*[|\-–—]\s*(?:youtube|topic)\s*$", re.IGNORECASE)
+_TRAILING_JUNK = re.compile(r"\s*[|\-\u2013\u2014]\s*(?:youtube|topic)\s*$", re.IGNORECASE)
 # The separator need not be followed by a space: yt-dlp names chapter files
 # "001-Intro". The trailing \D guard is what keeps "24-7" from becoming "7".
-_LEADING_INDEX = re.compile(r"^\s*\d{1,3}\s*[.\-–—:)]\s*(?=\D)")
+_LEADING_INDEX = re.compile(r"^\s*\d{1,3}\s*[.\-\u2013\u2014:)]\s*(?=\D)")
 _MULTISPACE = re.compile(r"\s{2,}")
 
 
@@ -75,7 +76,7 @@ def clean_title(raw: str, *, drop_leading_index: bool = False) -> str:
     if drop_leading_index:
         title = _LEADING_INDEX.sub("", title)
     title = title.replace("_", " ")
-    title = _MULTISPACE.sub(" ", title).strip(" -–—|:,.")
+    title = _MULTISPACE.sub(" ", title).strip(" -\u2013\u2014|:,.")
     return title or raw.strip() or "Untitled"
 
 
@@ -83,7 +84,7 @@ def strip_channel_prefix(title: str, uploader: str | None) -> str:
     """Drop a leading "Channel Name - " when it just repeats the uploader."""
     if not uploader:
         return title
-    pattern = re.compile(rf"^\s*{re.escape(uploader)}\s*[|\-–—:]\s*", re.IGNORECASE)
+    pattern = re.compile(rf"^\s*{re.escape(uploader)}\s*[|\-\u2013\u2014:]\s*", re.IGNORECASE)
     return pattern.sub("", title).strip() or title
 
 
@@ -137,6 +138,7 @@ def trim_track(path: Path, head_seconds: float = 0, tail_seconds: float = 0) -> 
 def run(
     slug: str,
     *,
+    operation_id: str,
     normalize: bool = True,
     clean_titles: bool = True,
     trim_head: float = 0,
@@ -144,11 +146,79 @@ def run(
     split_oversized: bool = True,
     progress: Progress = _noop,
 ) -> dict[str, Any]:
-    manifest = library.get(slug, refresh=True)
-    if not manifest:
-        raise RuntimeError(f"No collection named {slug}.")
+    with library.collection_lease():
+        library.recover_collection_publications()
+        completed = library.completed_forge(slug)
+        if completed:
+            return completed
+        stage = library.create_replacement_stage(slug, operation_id)
+        try:
+            _run_at_path(
+                stage,
+                normalize=normalize,
+                clean_titles=clean_titles,
+                trim_head=trim_head,
+                trim_tail=trim_tail,
+                split_oversized=split_oversized,
+                progress=progress,
+            )
+            return library.publish_replacement(slug, stage, operation_id)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
 
-    path = config.LIBRARY_DIR / slug
+
+def run_collection_stage(
+    stage_identity: str,
+    *,
+    normalize: bool = True,
+    clean_titles: bool = True,
+    trim_head: float = 0,
+    trim_tail: float = 0,
+    split_oversized: bool = True,
+    progress: Progress = _noop,
+) -> dict[str, Any]:
+    """Forge immutable extracted staging and publish only complete output."""
+    with library.collection_lease():
+        published = library.find_published_stage(stage_identity)
+        if published:
+            return published
+        forge_identity = f"prepare-{stage_identity}"
+        stage = library.create_forge_stage_from_collection_stage(stage_identity, forge_identity)
+        try:
+            _run_at_path(
+                stage,
+                normalize=normalize,
+                clean_titles=clean_titles,
+                trim_head=trim_head,
+                trim_tail=trim_tail,
+                split_oversized=split_oversized,
+                progress=progress,
+            )
+            return library.publish_forged_collection_stage(
+                stage_identity,
+                stage,
+                forge_identity,
+            )
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
+
+
+def _run_at_path(
+    path: Path,
+    *,
+    normalize: bool,
+    clean_titles: bool,
+    trim_head: float,
+    trim_tail: float,
+    split_oversized: bool,
+    progress: Progress,
+) -> dict[str, Any]:
+    manifest = library.get_at_path(path, refresh=True)
+    if not manifest:
+        raise RuntimeError("The Forge input collection is missing.")
+
     tracks = manifest["tracks"]
     total = len(tracks)
 
@@ -168,9 +238,9 @@ def run(
         for track in tracks:
             cleaned = clean_title(track.get("title") or Path(track["name"]).stem)
             cleaned = strip_channel_prefix(cleaned, uploader)
-            library.rename_track(slug, track["name"], cleaned)
+            library.rename_track_at_path(path, track["name"], cleaned)
 
-    manifest = library.get(slug, refresh=True)
+    manifest = library.get_at_path(path, refresh=True)
 
     if split_oversized:
         limit = config.usable_limit()
@@ -181,15 +251,14 @@ def run(
             parts = audio.split(src, path, limit, stem=Path(track["name"]).stem)
             if parts and parts[0] != src:
                 src.unlink()
-                library.replace_track(slug, track["name"], [p.name for p in parts])
+                library.replace_track_at_path(path, track["name"], [p.name for p in parts])
 
     progress("Re-probing")
-    result = library.get(slug, refresh=True)
-    library.set_forge_state(slug, {
+    library.get_at_path(path, refresh=True)
+    return library.set_forge_state_at_path(path, {
         "normalized": normalize,
         "titles_cleaned": clean_titles,
         "trim_head": trim_head,
         "trim_tail": trim_tail,
         "split": split_oversized,
     })
-    return result

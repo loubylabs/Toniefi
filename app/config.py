@@ -15,6 +15,18 @@ WORK_DIR = Path(os.getenv("WORK_DIR", "/work"))
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "portal.db"
 
+# Retained upload input must survive restarts and cannot share the bounded
+# RAM-backed transcode scratch directory.
+_UPLOAD_STAGE_ENV = os.getenv("UPLOAD_STAGE_DIR")
+UPLOAD_STAGE_DIR = Path(_UPLOAD_STAGE_ENV or DATA_DIR / "upload-staging")
+_INITIAL_UPLOAD_STAGE_DIR = UPLOAD_STAGE_DIR
+
+
+def upload_stage_dir() -> Path:
+    if _UPLOAD_STAGE_ENV or UPLOAD_STAGE_DIR != _INITIAL_UPLOAD_STAGE_DIR:
+        return UPLOAD_STAGE_DIR
+    return DATA_DIR / "upload-staging"
+
 # A Creative Tonie holds 90 minutes. Leave a little headroom so a rounding
 # error in a source file's duration never gets a push rejected.
 TONIE_LIMIT_SECONDS = int(os.getenv("TONIE_LIMIT_SECONDS", str(90 * 60)))
@@ -46,5 +58,5 @@ def usable_limit() -> int:
 
 
 def ensure_dirs() -> None:
-    for d in (LIBRARY_DIR, WORK_DIR, DATA_DIR):
+    for d in (LIBRARY_DIR, WORK_DIR, DATA_DIR, upload_stage_dir()):
         d.mkdir(parents=True, exist_ok=True)

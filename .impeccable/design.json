@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-28T12:20:07.000Z",
+  "title": "Design System: TonieFi Circulation Desk",
+  "extensions": {
+    "colorMeta": {
+      "bookcloth": { "role": "primary", "displayName": "Bottle-Green Bookcloth", "canonical": "#12372b", "tonalRamp": ["oklch(15% 0.048 168.8)", "oklch(26% 0.048 168.8)", "oklch(38% 0.048 168.8)", "oklch(50% 0.048 168.8)", "oklch(62% 0.048 168.8)", "oklch(74% 0.048 168.8)", "oklch(86% 0.048 168.8)", "oklch(95% 0.048 168.8)"] },
+      "bookcloth-deep": { "role": "primary", "displayName": "Deep Bookcloth", "canonical": "#0b2a20", "tonalRamp": ["oklch(15% 0.041 168.7)", "oklch(26% 0.041 168.7)", "oklch(38% 0.041 168.7)", "oklch(50% 0.041 168.7)", "oklch(62% 0.041 168.7)", "oklch(74% 0.041 168.7)", "oklch(86% 0.041 168.7)", "oklch(95% 0.041 168.7)"] },
+      "paper": { "role": "neutral", "displayName": "Cool Utility Paper", "canonical": "#f4f6ee", "tonalRamp": ["oklch(15% 0.011 118.0)", "oklch(26% 0.011 118.0)", "oklch(38% 0.011 118.0)", "oklch(50% 0.011 118.0)", "oklch(62% 0.011 118.0)", "oklch(74% 0.011 118.0)", "oklch(86% 0.011 118.0)", "oklch(95% 0.011 118.0)"] },
+      "paper-raised": { "role": "neutral", "displayName": "Raised White Paper", "canonical": "#ffffff", "tonalRamp": ["oklch(15% 0 0)", "oklch(26% 0 0)", "oklch(38% 0 0)", "oklch(50% 0 0)", "oklch(62% 0 0)", "oklch(74% 0 0)", "oklch(86% 0 0)", "oklch(95% 0 0)"] },
+      "ink": { "role": "neutral", "displayName": "Deep Green Ink", "canonical": "#17201c", "tonalRamp": ["oklch(15% 0.015 166.2)", "oklch(26% 0.015 166.2)", "oklch(38% 0.015 166.2)", "oklch(50% 0.015 166.2)", "oklch(62% 0.015 166.2)", "oklch(74% 0.015 166.2)", "oklch(86% 0.015 166.2)", "oklch(95% 0.015 166.2)"] },
+      "action": { "role": "secondary", "displayName": "Chartreuse Action Ink", "canonical": "#b9f227", "tonalRamp": ["oklch(15% 0.216 125.4)", "oklch(26% 0.216 125.4)", "oklch(38% 0.216 125.4)", "oklch(50% 0.216 125.4)", "oklch(62% 0.216 125.4)", "oklch(74% 0.216 125.4)", "oklch(86% 0.216 125.4)", "oklch(95% 0.216 125.4)"] },
+      "info": { "role": "tertiary", "displayName": "Periwinkle Information Ink", "canonical": "#334fcb", "tonalRamp": ["oklch(15% 0.194 268.3)", "oklch(26% 0.194 268.3)", "oklch(38% 0.194 268.3)", "oklch(50% 0.194 268.3)", "oklch(62% 0.194 268.3)", "oklch(74% 0.194 268.3)", "oklch(86% 0.194 268.3)", "oklch(95% 0.194 268.3)"] },
+      "rule": { "role": "neutral", "displayName": "Pale Rule", "canonical": "#cdd3c8", "tonalRamp": ["oklch(15% 0.016 130.4)", "oklch(26% 0.016 130.4)", "oklch(38% 0.016 130.4)", "oklch(50% 0.016 130.4)", "oklch(62% 0.016 130.4)", "oklch(74% 0.016 130.4)", "oklch(86% 0.016 130.4)", "oklch(95% 0.016 130.4)"] },
+      "focus": { "role": "tertiary", "displayName": "Electric Focus Ink", "canonical": "#234cff", "tonalRamp": ["oklch(15% 0.265 265.9)", "oklch(26% 0.265 265.9)", "oklch(38% 0.265 265.9)", "oklch(50% 0.265 265.9)", "oklch(62% 0.265 265.9)", "oklch(74% 0.265 265.9)", "oklch(86% 0.265 265.9)", "oklch(95% 0.265 265.9)"] },
+      "success": { "role": "tertiary", "displayName": "Success Stamp Ink", "canonical": "#24752f", "tonalRamp": ["oklch(15% 0.131 145.5)", "oklch(26% 0.131 145.5)", "oklch(38% 0.131 145.5)", "oklch(50% 0.131 145.5)", "oklch(62% 0.131 145.5)", "oklch(74% 0.131 145.5)", "oklch(86% 0.131 145.5)", "oklch(95% 0.131 145.5)"] },
+      "warning": { "role": "tertiary", "displayName": "Warning Stamp Ink", "canonical": "#9a5b00", "tonalRamp": ["oklch(15% 0.119 65.1)", "oklch(26% 0.119 65.1)", "oklch(38% 0.119 65.1)", "oklch(50% 0.119 65.1)", "oklch(62% 0.119 65.1)", "oklch(74% 0.119 65.1)", "oklch(86% 0.119 65.1)", "oklch(95% 0.119 65.1)"] },
+      "failure": { "role": "tertiary", "displayName": "Failure Stamp Ink", "canonical": "#c72c26", "tonalRamp": ["oklch(15% 0.192 28.0)", "oklch(26% 0.192 28.0)", "oklch(38% 0.192 28.0)", "oklch(50% 0.192 28.0)", "oklch(62% 0.192 28.0)", "oklch(74% 0.192 28.0)", "oklch(86% 0.192 28.0)", "oklch(95% 0.192 28.0)"] },
+      "ink-muted": { "role": "neutral", "displayName": "Muted Green Ink", "canonical": "#58625d", "tonalRamp": ["oklch(15% 0.015 164.3)", "oklch(26% 0.015 164.3)", "oklch(38% 0.015 164.3)", "oklch(50% 0.015 164.3)", "oklch(62% 0.015 164.3)", "oklch(74% 0.015 164.3)", "oklch(86% 0.015 164.3)", "oklch(95% 0.015 164.3)"] },
+      "paper-muted": { "role": "neutral", "displayName": "Muted Paper", "canonical": "#e9ece4", "tonalRamp": ["oklch(15% 0.011 123.5)", "oklch(26% 0.011 123.5)", "oklch(38% 0.011 123.5)", "oklch(50% 0.011 123.5)", "oklch(62% 0.011 123.5)", "oklch(74% 0.011 123.5)", "oklch(86% 0.011 123.5)", "oklch(95% 0.011 123.5)"] },
+      "bookcloth-ink": { "role": "neutral", "displayName": "Bookcloth White", "canonical": "#f5f8ef", "tonalRamp": ["oklch(15% 0.012 121.7)", "oklch(26% 0.012 121.7)", "oklch(38% 0.012 121.7)", "oklch(50% 0.012 121.7)", "oklch(62% 0.012 121.7)", "oklch(74% 0.012 121.7)", "oklch(86% 0.012 121.7)", "oklch(95% 0.012 121.7)"] },
+      "bookcloth-muted": { "role": "neutral", "displayName": "Bookcloth Mist", "canonical": "#c8d8cf", "tonalRamp": ["oklch(15% 0.021 161.4)", "oklch(26% 0.021 161.4)", "oklch(38% 0.021 161.4)", "oklch(50% 0.021 161.4)", "oklch(62% 0.021 161.4)", "oklch(74% 0.021 161.4)", "oklch(86% 0.021 161.4)", "oklch(95% 0.021 161.4)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Route and Desk headlines with short measures." },
+      "headline": { "displayName": "Headline", "purpose": "Collection titles and major section introductions." },
+      "title": { "displayName": "Title", "purpose": "Section, row, and dialog headings." },
+      "body": { "displayName": "Body", "purpose": "Primary explanatory copy and standard controls." },
+      "body-small": { "displayName": "Body Small", "purpose": "Metadata, field help, and compact actions." },
+      "label": { "displayName": "Label", "purpose": "Status stamps, counters, captions, and definition terms." },
+      "brand": { "displayName": "Brand", "purpose": "The TonieFi wordmark only." },
+      "jacket": { "displayName": "Jacket", "purpose": "Initials inside bookcloth cover fallbacks." },
+      "path": { "displayName": "Path", "purpose": "Filesystem paths in system settings only." }
+    },
+    "shadows": [
+      { "name": "raised-paper", "value": "0 0.5rem 1.5rem rgba(11, 42, 32, 0.12), 0 0.125rem 0.4rem rgba(11, 42, 32, 0.08)", "purpose": "Loading panels, focused covers, audio controls, and common raised surfaces." },
+      { "name": "quiet-record", "value": "0 0.35rem 0.9rem rgba(11, 42, 32, 0.08), 0 0.1rem 0.25rem rgba(11, 42, 32, 0.06)", "purpose": "Shelf, library, work-cart, Tonie, and settings records." },
+      { "name": "preparation-action", "value": "0 0.45rem 1rem rgba(51, 79, 203, 0.2), 0 0.125rem 0.35rem rgba(51, 79, 203, 0.16)", "purpose": "The count-aware Prepare action only." },
+      { "name": "overlay", "value": "0 1rem 3rem rgba(11, 42, 32, 0.28)", "purpose": "Confirmation dialogs above the deep translucent backdrop." }
+    ],
+    "motion": [
+      { "name": "state-fast", "value": "150ms ease-out", "purpose": "Color and border feedback on controls and rows." },
+      { "name": "movement-fast", "value": "160ms ease-out", "purpose": "Compact disclosure and chevron movement." },
+      { "name": "movement-spring", "value": "180ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Skip-link entry and small spatial feedback." },
+      { "name": "notice-entry", "value": "220ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Notification entry with opacity, vertical movement, and brief blur." },
+      { "name": "source-slip", "value": "650ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Accepted source slips travel from the intake tray to the work cart." },
+      { "name": "indeterminate-work", "value": "1.4s ease-in-out infinite", "purpose": "Looping meter only when no real percentage exists." },
+      { "name": "reduced-motion", "value": "0.01ms, one iteration", "purpose": "Global reduced-motion fallback; the indeterminate meter becomes a static centered bar." }
+    ],
+    "breakpoints": [
+      { "name": "focused-review-stack", "value": "1279.98px" },
+      { "name": "desk-stack", "value": "1199px" },
+      { "name": "service-index-compact", "value": "1199.98px" },
+      { "name": "mobile-bottom-navigation", "value": "759.98px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Action Button",
+      "kind": "button",
+      "refersTo": "button-action",
+      "description": "General affirmative action on paper surfaces.",
+      "html": "<button class=\"ds-button-action\">Save changes</button>",
+      "css": ".ds-button-action { min-height: 2.75rem; padding: 0.5rem 1rem; border: 1px solid var(--bookcloth-deep); border-radius: var(--radius); background: var(--action); color: var(--bookcloth-deep); font: 750 1rem/1.2 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; cursor: pointer; transition: background-color 150ms ease-out; } .ds-button-action:hover { background: #a9df1e; } .ds-button-action:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; } .ds-button-action:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Prepare Button",
+      "kind": "button",
+      "refersTo": "button-prepare",
+      "description": "Count-aware batch submission that closes the intake tray.",
+      "html": "<button class=\"ds-button-prepare\">Prepare 5 stories</button>",
+      "css": ".ds-button-prepare { width: 100%; min-height: 3.75rem; padding: 0.5rem 1rem; border: 1px solid #334fcb; border-radius: var(--radius); background: var(--info); color: #fff; box-shadow: 0 0.45rem 1rem rgba(51,79,203,.2), 0 0.125rem 0.35rem rgba(51,79,203,.16); font: 750 1.25rem/1.2 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; cursor: pointer; transition: background-color 150ms ease-out; } .ds-button-prepare:hover { background: #425ddd; } .ds-button-prepare:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; } .ds-button-prepare:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Quiet bounded action for refresh, edit, cancel, and secondary intake.",
+      "html": "<button class=\"ds-button-secondary\">Refresh</button>",
+      "css": ".ds-button-secondary { min-height: 2.75rem; padding: 0.5rem 1rem; border: 1px solid var(--bookcloth); border-radius: var(--radius); background: var(--paper-raised); color: var(--bookcloth); font: 750 1rem/1.2 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; cursor: pointer; transition: background-color 150ms ease-out; } .ds-button-secondary:hover { background: var(--paper-muted); } .ds-button-secondary:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; } .ds-button-secondary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Confirmed destructive action for local or remote removal.",
+      "html": "<button class=\"ds-button-danger\">Remove chapters</button>",
+      "css": ".ds-button-danger { min-height: 2.75rem; padding: 0.5rem 1rem; border: 1px solid var(--failure); border-radius: var(--radius); background: var(--failure); color: #fff; font: 750 1rem/1.2 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; cursor: pointer; transition: background-color 150ms ease-out; } .ds-button-danger:hover { background: #a9201c; } .ds-button-danger:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; } .ds-button-danger:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Standard paper field for URLs, names, search, and credentials.",
+      "html": "<label class=\"ds-field-label\" for=\"ds-source\">Source URL</label><input class=\"ds-field\" id=\"ds-source\" value=\"https://example.com/story\">",
+      "css": ".ds-field-label { display: block; margin-bottom: 0.5rem; color: var(--ink); font: 750 0.875rem/1.5 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; } .ds-field { width: 100%; min-height: 2.75rem; padding: 0.5rem 0.75rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper-raised); color: var(--ink); font: 400 1rem/1.5 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; } .ds-field:hover { border-color: var(--bookcloth-muted); } .ds-field:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; }"
+    },
+    {
+      "name": "Status Stamp",
+      "kind": "chip",
+      "refersTo": "status-stamp",
+      "description": "Text-first phase label with semantic ink and square stamp corners.",
+      "html": "<span class=\"ds-status-stamp ds-status-ready\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m5 12 4 4L19 6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Ready to review</span>",
+      "css": ".ds-status-stamp { display: inline-flex; min-height: 1.75rem; padding: 0.25rem 0.5rem; align-items: center; gap: 0.25rem; border: 1px solid currentColor; border-radius: calc(var(--radius) / 2); background: var(--paper-raised); color: var(--ink-muted); font: 800 0.75rem/1 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; text-transform: uppercase; } .ds-status-stamp svg { width: .9rem; height: .9rem; } .ds-status-ready { color: var(--success); } .ds-status-stamp:hover { background: var(--paper); } .ds-status-stamp:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; }"
+    },
+    {
+      "name": "Service Navigation Item",
+      "kind": "nav",
+      "description": "Current destination inside the deep bookcloth service index.",
+      "html": "<a class=\"ds-service-nav\" href=\"#\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/></svg><span>Desk</span></a>",
+      "css": ".ds-service-nav { display: grid; min-height: 3.75rem; padding: 0.75rem 1rem; grid-template-columns: 1.75rem minmax(0,1fr); align-items: center; gap: 0.75rem; border: 1px solid rgba(185,242,39,.18); border-radius: var(--radius); background: rgba(185,242,39,.14); color: var(--bookcloth-ink); font: 620 1rem/1.5 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; text-decoration: none; transition: background-color 150ms ease-out, border-color 150ms ease-out; } .ds-service-nav svg { width: 1.5rem; height: 1.5rem; color: var(--action); } .ds-service-nav:hover { background: rgba(244,246,238,.08); } .ds-service-nav:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; }"
+    },
+    {
+      "name": "Paper Record",
+      "kind": "card",
+      "refersTo": "paper-record",
+      "description": "Reusable raised record for shelf, library, Tonie, activity, and settings content.",
+      "html": "<article class=\"ds-paper-record\"><span class=\"ds-record-label\">12 chapters</span><h3>The Wind in the Willows</h3><p>Forge complete and ready for review.</p></article>",
+      "css": ".ds-paper-record { padding: 1rem; border: 1px solid var(--rule); border-radius: var(--radius); background: rgba(255,255,255,.88); box-shadow: 0 .35rem .9rem rgba(11,42,32,.08), 0 .1rem .25rem rgba(11,42,32,.06); color: var(--ink); font-family: \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; } .ds-paper-record h3 { margin: .5rem 0 0; font-size: 1.25rem; line-height: 1.15; letter-spacing: -.025em; } .ds-paper-record p { margin: .5rem 0 0; color: var(--ink-muted); } .ds-record-label { color: var(--ink-muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; } .ds-paper-record:hover { border-color: var(--bookcloth-muted); } .ds-paper-record:focus-visible { outline: .1875rem solid var(--focus); outline-offset: .1875rem; }"
+    },
+    {
+      "name": "Cover Jacket Fallback",
+      "kind": "custom",
+      "description": "Authored fallback that preserves collection identity when no cover art exists.",
+      "html": "<div class=\"ds-cover-fallback\" role=\"img\" aria-label=\"The Wind in the Willows cover fallback\">TW</div>",
+      "css": ".ds-cover-fallback { display: grid; width: 10rem; aspect-ratio: 1; place-items: center; border: 1px solid var(--rule); border-radius: var(--radius); background-color: var(--bookcloth); background-image: repeating-linear-gradient(22deg, rgba(255,255,255,.035) 0 1px, transparent 1px 6px), repeating-linear-gradient(102deg, rgba(0,0,0,.07) 0 1px, transparent 1px 8px); color: var(--action); font: 800 clamp(1.5rem,3vw,2.5rem)/1 Charter, \"Iowan Old Style\", Georgia, serif; letter-spacing: -.04em; } .ds-cover-fallback:hover { border-color: var(--bookcloth); } .ds-cover-fallback:focus-visible { outline: .1875rem solid var(--focus); outline-offset: .1875rem; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Circulation Desk",
+    "overview": "TonieFi is a working circulation desk for stories. The interface translates a contemporary library workroom into an operating surface: deep bottle-green bookcloth forms the service chrome, cool ruled paper holds the work, chartreuse marks immediate action, periwinkle carries preparation and information, and full-color cover jackets preserve each collection's identity. The system is dense enough for several independent jobs while staying calm, legible, and materially specific.\n\nThis world is operational before it is decorative. Thin rules structure records, square stamps name state in words, and shallow lift separates movable or persistent surfaces. Texture belongs to bookcloth and authored cover fallbacks. Paper remains clean enough for scanning. The shipped Command Desk records FORM seed `17e3c753`.",
+    "keyCharacteristics": [
+      "A persistent bookcloth service index beside a cool paper workspace.",
+      "Compact service labels, square status stamps, and thin ruled records.",
+      "Full-color cover jackets with a bookcloth monogram fallback.",
+      "Chartreuse action ink and periwinkle preparation ink used by role.",
+      "Truthful state language that stays visible during background work and failure."
+    ],
+    "rules": [
+      { "name": "The Paired-Ink Rule", "body": "Chartreuse identifies a direct affirmative action or current destination. Periwinkle identifies preparation, information, or a job in motion. Do not exchange their roles.", "section": "colors" },
+      { "name": "The Contrast Pairing Rule", "body": "Use the established foreground and ground pairs. Deep ink on paper is 15.29:1, muted ink on paper is 5.80:1, bookcloth white on deep bookcloth is 14.31:1, bookcloth mist on deep bookcloth is 10.38:1, and deep bookcloth on chartreuse is 11.56:1.", "section": "colors" },
+      { "name": "The State-Is-Words Rule", "body": "Semantic color accompanies a text label, icon, border, or explanation. Color never carries state alone.", "section": "colors" },
+      { "name": "The Jacket Voice Rule", "body": "Serif type appears on the wordmark and bookcloth cover fallbacks. Operational headings, buttons, labels, tables, and forms stay sans.", "section": "typography" },
+      { "name": "The Tight-Heading Rule", "body": "Major headings use negative tracking, short measures, and line heights from 1 to 1.15. Supporting prose returns to the 1.5 body rhythm.", "section": "typography" },
+      { "name": "The Persistent-Work Rule", "body": "On wide Desk views, intake and live work share the first viewport. At narrower widths the cart follows intake in document order and keeps the same records and state detail.", "section": "layout" },
+      { "name": "The One-Paper-Field Rule", "body": "Compose lists from ruled rows and bordered records on the workspace field. Avoid stacks of unrelated cards inside cards.", "section": "layout" },
+      { "name": "The Paper-First Rule", "body": "Borders and tonal layers establish structure before shadow. Shadow confirms a raised role; it does not turn every container into a floating card.", "section": "elevation" },
+      { "name": "The Bookcloth Fiber Rule", "body": "Bookcloth uses two subtle repeating linear gradients over a solid green field. Texture remains subordinate to labels, icons, and focus outlines.", "section": "elevation" },
+      { "name": "The Stamp-Corner Rule", "body": "State labels stay compact and square-cornered at 0.25rem. Do not turn them into soft filled pills.", "section": "shapes" },
+      { "name": "The Meter-Pill Rule", "body": "Reserve full pills for counts and progress. Ordinary buttons and records keep working or stamp corners.", "section": "shapes" },
+      { "name": "The Retained-Truth Rule", "body": "On refresh failure, keep the last known record visible, mark it stale, show the real error where useful, and offer an explicit retry.", "section": "components" },
+      { "name": "The Safe-Next-Action Rule", "body": "Every empty, failed, extracted, forged, disconnected, or stale state names the next safe action without implying completion that has not occurred.", "section": "components" }
+    ],
+    "dos": [
+      "Do preserve the Circulation Desk split between bookcloth service chrome and cool paper work surfaces.",
+      "Do use thin rules, compact labels, authored jacket fallbacks, and restrained lift to keep dense workflows scannable.",
+      "Do keep real cover jackets prominent enough to preserve collection identity across Desk, Review Shelf, Library, and focused review.",
+      "Do pair every semantic color with visible words, an icon, a border, or an explanatory message.",
+      "Do keep the 0.1875rem focus outline visible and provide 44px controls plus safe-area spacing below 759.98px.",
+      "Do use the 150ms to 220ms state-transition family for ordinary feedback, the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.",
+      "Do honor reduced motion by collapsing animation and transition duration to 0.01ms and replacing the moving indeterminate meter with a static centered bar.",
+      "Do preserve truthful labels for configured, connected, stale, forged, failed, and irreversible states."
+    ],
+    "donts": [
+      "Don't replace the circulation desk with a generic dark dashboard, top-tab shell, or linear wizard.",
+      "Don't spread bookcloth texture across paper work areas or let texture compete with text and focus.",
+      "Don't exchange chartreuse action ink with periwinkle preparation ink.",
+      "Don't turn square status stamps into filled pills or use color as the only state signal.",
+      "Don't invent cover art, counts, durations, storage totals, sync times, account claims, or progress percentages.",
+      "Don't label extracted work ready, label configured credentials connected, or hide stale data behind an empty state.",
+      "Don't remove explicit keyboard alternatives for drag ordering or animate accepted slips and progress against reduced-motion preference."
+    ]
+  }
+}

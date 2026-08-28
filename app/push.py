@@ -7,33 +7,94 @@ chapter per track.
 """
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
 
 from . import audio, config, library, tonies
 
 
-def client_from_settings() -> tonies.TonieCloud:
-    """Env vars win; the UI-stored credentials are the fallback."""
+class SelectedCredentials(TypedDict):
+    source: str
+    configured: bool
+    username: str
+    password: str
+
+
+def select_credentials() -> SelectedCredentials:
+    """Select one complete credential source without mixing pairs."""
     from . import db
 
-    username = config.TONIES_USERNAME or db.get_setting("tonies_username")
-    password = config.TONIES_PASSWORD or db.get_setting("tonies_password")
-    if not username or not password:
+    if config.TONIES_USERNAME or config.TONIES_PASSWORD:
+        source = "environment"
+        username = config.TONIES_USERNAME
+        password = config.TONIES_PASSWORD
+    else:
+        username, password = db.get_credentials()
+        source = "saved" if username or password else "none"
+    return {
+        "source": source,
+        "configured": bool(username and password),
+        "username": username,
+        "password": password,
+    }
+
+
+def credential_status() -> dict[str, Any]:
+    """Report the selected pair without exposing its password."""
+    selected = select_credentials()
+    return {
+        "configured": selected["configured"],
+        "source": selected["source"],
+        "username": selected["username"],
+    }
+
+
+def client_from_settings() -> tonies.TonieCloud:
+    """Create a client from the one atomically selected credential pair."""
+    selected = select_credentials()
+    if not selected["configured"]:
+        if selected["source"] == "environment":
+            raise tonies.AuthError(
+                "Environment credentials are incomplete. Set both "
+                "TONIES_USERNAME and TONIES_PASSWORD."
+            )
+        if selected["source"] == "saved":
+            raise tonies.AuthError(
+                "Saved myTonies credentials are incomplete. Save both the "
+                "username and password."
+            )
         raise tonies.AuthError(
             "No myTonies credentials configured. Set TONIES_USERNAME and "
             "TONIES_PASSWORD, or save them on the Settings tab."
         )
-    return tonies.TonieCloud(username, password)
+    return tonies.TonieCloud(selected["username"], selected["password"])
 
 
 # ------------------------------------------------------ chapter management
 
 TITLE_LIMIT = 128
+_target_locks_guard = threading.Lock()
+_target_locks: dict[tuple[str, str], threading.RLock] = {}
+
+
+@contextmanager
+def target_lease(household_id: str, tonie_id: str):
+    """Serialize every write to one Creative Tonie in this process."""
+    key = (str(household_id), str(tonie_id))
+    with _target_locks_guard:
+        lock = _target_locks.setdefault(key, threading.RLock())
+    with lock:
+        yield
 
 
 class StaleChapters(RuntimeError):
     """The Tonie's chapters changed since the browser last looked at them."""
+
+
+class StalePush(RuntimeError):
+    """A confirmed local or remote send precondition no longer holds."""
 
 
 def _identity(chapter: dict) -> tuple[str, str]:
@@ -145,6 +206,16 @@ def set_tonie_chapters(
     """Rewrite a Tonie's chapter list. Rename, reorder and remove are all
     this one call, because the Tonie Cloud only offers a whole-list PATCH.
     """
+    with target_lease(household_id, tonie_id):
+        return _set_tonie_chapters_locked(household_id, tonie_id, base, requested)
+
+
+def _set_tonie_chapters_locked(
+    household_id: str,
+    tonie_id: str,
+    base: list[dict],
+    requested: list[dict],
+) -> dict[str, Any]:
     client = client_from_settings()
     try:
         tonie = client.get_tonie(household_id, tonie_id)
@@ -234,79 +305,106 @@ def _noop(_: str) -> None:
     return None
 
 
-def resolve_tracks(slug: str, names: list[str] | None, group_index: int | None) -> list[dict[str, Any]]:
+def confirmed_tracks(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    slug = payload["slug"]
     manifest = library.get(slug)
     if not manifest:
-        raise RuntimeError(f"No collection named {slug}.")
-    tracks = manifest["tracks"]
-
-    if names:
-        by_name = {t["name"]: t for t in tracks}
-        missing = [n for n in names if n not in by_name]
-        if missing:
-            raise RuntimeError(f"Not in this collection: {', '.join(missing)}")
-        return [by_name[n] for n in names]
-
-    if group_index:
-        groups = library.plan_groups(tracks)
-        if group_index < 1 or group_index > len(groups):
-            raise RuntimeError(f"This collection only has {len(groups)} group(s).")
-        by_name = {t["name"]: t for t in tracks}
-        # Match on filename only: two chapters can share a title.
-        return [by_name[str(t.path)] for t in groups[group_index - 1].tracks
-                if str(t.path) in by_name]
-
-    return tracks
+        raise StalePush(f"The collection changed because {slug} no longer exists.")
+    if manifest.get("stage") != "forged":
+        raise StalePush("Forge is incomplete for this collection. Finish preparation before sending it.")
+    if library.manifest_fingerprint(manifest) != payload["manifest_fingerprint"]:
+        raise StalePush("The local collection changed after confirmation. Review it again.")
+    names = payload.get("files") or []
+    by_name = {track["name"]: track for track in manifest["tracks"]}
+    if len(names) != len(set(names)) or any(name not in by_name for name in names):
+        raise StalePush("The confirmed audio files no longer match this collection.")
+    tracks = [by_name[name] for name in names]
+    for track in tracks:
+        try:
+            library.track_path(slug, track["name"])
+        except ValueError as exc:
+            raise StalePush("A confirmed audio file is no longer available.") from exc
+    return manifest, tracks
 
 
-def push(
-    slug: str,
-    household_id: str,
-    tonie_id: str,
-    names: list[str] | None = None,
-    group_index: int | None = None,
-    replace: bool = True,
-    progress: Progress = _noop,
+def validate_confirmed_groups(slug: str, fingerprint: str, assignments: list[dict[str, Any]]) -> None:
+    manifest = library.get(slug)
+    if manifest and manifest.get("stage") != "forged":
+        raise StalePush("Forge is incomplete for this collection. Finish preparation before assignment.")
+    if not manifest or library.manifest_fingerprint(manifest) != fingerprint:
+        raise StalePush("The local collection changed after review. Review it again.")
+    planned = [[track["name"] for track in group.as_dict()["tracks"]]
+               for group in library.plan_groups(manifest["tracks"])]
+    received = [assignment.get("files") or [] for assignment in assignments]
+    if received != planned:
+        raise StalePush("The confirmed files do not match the reviewed capacity plan.")
+
+
+def _remote_identity(chapters: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    return [(chapter.get("id"), chapter.get("title") or "") for chapter in chapters]
+
+
+def push_confirmed(payload: dict[str, Any], progress: Progress = _noop) -> dict[str, Any]:
+    with library.collection_lease():
+        _, tracks = confirmed_tracks(payload)
+        return _push_confirmed_tracks(payload, tracks, progress)
+
+
+def _push_confirmed_tracks(
+    payload: dict[str, Any],
+    tracks: list[dict[str, Any]],
+    progress: Progress,
 ) -> dict[str, Any]:
-    tracks = resolve_tracks(slug, names, group_index)
+    slug = payload["slug"]
     if not tracks:
         raise RuntimeError("Nothing selected to push.")
 
     total = sum(t.get("seconds", 0) for t in tracks)
-    limit = config.TONIE_LIMIT_SECONDS
+    limit = config.usable_limit()
     if total > limit:
         raise RuntimeError(
             f"That selection is {audio.human_duration(total)}, over the "
-            f"{audio.human_duration(limit)} a Creative Tonie holds. "
+            f"{audio.human_duration(limit)} usable audio limit. "
             f"Split it or push one group at a time."
         )
 
-    client = client_from_settings()
-    try:
-        progress("Signing in to myTonies")
-        client.check_login()
+    with target_lease(payload["household_id"], payload["tonie_id"]):
+        client = client_from_settings()
+        try:
+            progress("Signing in to myTonies")
+            client.check_login()
 
-        if replace:
-            progress("Clearing the Tonie")
-            client.clear_tonie(household_id, tonie_id)
+            state = client.get_tonie(payload["household_id"], payload["tonie_id"])
+            current_chapters = state.get("chapters") or []
+            if _remote_identity(current_chapters) != _remote_identity(payload.get("remote_chapters") or []):
+                raise StalePush("The Creative Tonie changed after confirmation. Refresh targets and review again.")
+            replace = payload["replace"]
+            if not replace:
+                present = float(state.get("secondsPresent") or 0)
+                if total > max(0, limit - present):
+                    raise StalePush("The Creative Tonie no longer has enough free space for this append.")
 
-        uploaded = []
-        for position, track in enumerate(tracks, start=1):
-            path = library.track_path(slug, track["name"])
-            label = track.get("title") or Path(track["name"]).stem
-            progress(f"Uploading {position}/{len(tracks)}: {label}")
-            file_id = client.upload_file(path)
-            client.add_chapter(household_id, tonie_id, label, file_id)
-            uploaded.append({"title": label, "file": file_id})
+            if replace:
+                progress("Clearing the Tonie")
+                client.clear_tonie(payload["household_id"], payload["tonie_id"])
 
-        progress("Confirming")
-        state = client.get_tonie(household_id, tonie_id)
-        return {
-            "tonie": state.get("name", tonie_id),
-            "chapters": len(state.get("chapters", [])),
-            "uploaded": uploaded,
-            "seconds": round(total, 1),
-            "duration": audio.human_duration(total),
-        }
-    finally:
-        client.close()
+            uploaded = []
+            for position, track in enumerate(tracks, start=1):
+                path = library.track_path(slug, track["name"])
+                label = track.get("title") or Path(track["name"]).stem
+                progress(f"Uploading {position}/{len(tracks)}: {label}")
+                file_id = client.upload_file(path)
+                client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
+                uploaded.append({"title": label, "file": file_id})
+
+            progress("Confirming")
+            state = client.get_tonie(payload["household_id"], payload["tonie_id"])
+            return {
+                "tonie": state.get("name", payload["tonie_id"]),
+                "chapters": len(state.get("chapters", [])),
+                "uploaded": uploaded,
+                "seconds": round(total, 1),
+                "duration": audio.human_duration(total),
+            }
+        finally:
+            client.close()
