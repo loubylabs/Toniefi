@@ -18,18 +18,16 @@ permissions:
   contents: read
 
 concurrency:
-  # Pull requests on the same ref share one group, so a newer push cancels a
-  # superseded build in flight: that is where the waste is. Every other run
-  # (a push to main, a tag, a manual dispatch) gets its own group keyed on
-  # the commit, because GitHub allows only one pending run per group and
-  # would otherwise cancel a queued main-branch publish out from under a
-  # later push, silently dropping that commit's sha-<short> tag with a
-  # cancelled run, not a failed one, to show for it.
-  group: publish-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  # Only cancel on pull requests, where a superseded build is pure waste. A
-  # push to main must always finish: cancelling it would leave the commit
-  # with no sha-<short> tag and a cancelled run, not a failed one, so nobody
-  # would notice.
+  # Pull requests share a per-ref group and cancel: a superseded PR build is
+  # pure waste. Main runs share their own per-ref group but serialise rather
+  # than cancel, so latest always ends at the newest completed commit, not
+  # whichever commit's build happened to finish last. The accepted cost:
+  # three quick pushes to main can leave the middle one with no sha-<short>
+  # tag, since GitHub allows only one pending run per group and drops the
+  # older one. That is the right way round, because the dropped commit's
+  # code is superseded anyway and can still be hand-dispatched, whereas a
+  # stale latest is what the Unraid box actually pulls.
+  group: publish-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
