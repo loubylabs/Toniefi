@@ -73,16 +73,30 @@ def set_setting(key: str, value: str) -> None:
 # -------------------------------------------------------------------- jobs
 
 def create_job(kind: str, label: str, payload: dict[str, Any]) -> int:
+    return create_jobs([(kind, label, payload)])[0]
+
+
+def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
+    """Create one logical batch atomically and return ids in input order."""
+    if not entries:
+        return []
     now = time.time()
     conn = connect()
     with _lock:
-        cur = conn.execute(
-            "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
-            "VALUES(?,'queued',?,?,?,?)",
-            (kind, label, json.dumps(payload), now, now),
-        )
-        conn.commit()
-        return int(cur.lastrowid)
+        created = []
+        try:
+            for kind, label, payload in entries:
+                cursor = conn.execute(
+                    "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+                    "VALUES(?,'queued',?,?,?,?)",
+                    (kind, label, json.dumps(payload), now, now),
+                )
+                created.append(int(cursor.lastrowid))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return created
 
 
 def retry_failed_job(job_id: int) -> int:
@@ -145,11 +159,21 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     return _hydrate(row) if row else None
 
 
-def recent_jobs(limit: int = 40) -> list[dict[str, Any]]:
-    rows = connect().execute(
-        "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
+def jobs_for_refresh(limit: int = 40) -> list[dict[str, Any]]:
+    """Return every active job, then failed and completed history up to limit."""
+    conn = connect()
+    active = conn.execute(
+        "SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY id DESC"
     ).fetchall()
-    return [_hydrate(r) for r in rows]
+    remaining = max(0, int(limit) - len(active))
+    history = []
+    if remaining:
+        history = conn.execute(
+            "SELECT * FROM jobs WHERE status NOT IN ('queued','running') "
+            "ORDER BY CASE WHEN status='failed' THEN 0 ELSE 1 END, id DESC LIMIT ?",
+            (remaining,),
+        ).fetchall()
+    return [_hydrate(row) for row in [*active, *history]]
 
 
 def requeue_stale_running() -> None:

@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  buildForgePayload,
+  buildLibrivoxPayload,
   buildPreparePayload,
   buildWorkCartItems,
+  deskRefreshNotice,
+  forgeDefinitionValues,
+  moveSourceEntries,
   parseSourceLines,
+  removeSourceEntry,
+  submitUploadBatch,
 } from "../../app/static/desk.js";
 
 test("parseSourceLines trims source URLs and preserves their entered order", () => {
@@ -92,15 +97,90 @@ test("buildPreparePayload refuses to build a partial request from invalid rows",
   );
 });
 
-test("buildForgePayload keeps the safe Forge defaults for secondary intake", () => {
-  assert.deepEqual(buildForgePayload("the-secret-garden"), {
-    slug: "the-secret-garden",
-    normalize: true,
+test("buildLibrivoxPayload carries the selected Forge options", () => {
+  assert.deepEqual(buildLibrivoxPayload("42", { normalize: false, trim_head: 1.5 }), {
+    book_id: "42",
+    options: {
+      use_chapters: true,
+      normalize: false,
+      clean_titles: true,
+      trim_head: 1.5,
+      trim_tail: 0,
+      split_oversized: true,
+    },
+  });
+});
+
+test("forgeDefinitionValues reflects every edited setting", () => {
+  assert.deepEqual(forgeDefinitionValues({
+    normalize: false,
+    clean_titles: false,
+    use_chapters: false,
+    split_oversized: false,
+    trim_head: 1.5,
+    trim_tail: 2.5,
+  }), {
+    loudness: "Off",
+    titleCleanup: "Off",
+    chapters: "Ignored",
+    oversized: "Kept whole",
+    trimming: "1.5 sec start, 2.5 sec end",
+  });
+});
+
+test("source move and removal preserve stable identities for focus restoration", () => {
+  const entries = [
+    { id: "source-a", value: "https://example.com/a" },
+    { id: "source-b", value: "https://example.com/b" },
+    { id: "source-c", value: "https://example.com/c" },
+  ];
+
+  assert.deepEqual(moveSourceEntries(entries, "source-b", 1), [entries[0], entries[2], entries[1]]);
+  assert.deepEqual(removeSourceEntry(entries, "source-b"), {
+    entries: [entries[0], entries[2]],
+    nextFocusId: "source-c",
+  });
+});
+
+test("submitUploadBatch sends the whole selection to one persisted operation", async () => {
+  const calls = [];
+  const files = [
+    new Blob(["one"], { type: "audio/mpeg" }),
+    new Blob(["two"], { type: "audio/mpeg" }),
+  ];
+  files[0].name = "one.mp3";
+  files[1].name = "two.mp3";
+
+  await submitUploadBatch({
+    files,
+    title: "Family Stories",
+    options: { normalize: false },
+    request: async (...args) => calls.push(args) || { job_id: 51 },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "/api/uploads/prepare");
+  assert.equal(calls[0][1].method, "POST");
+  assert.deepEqual(calls[0][1].body.getAll("files").map((file) => file.name), ["one.mp3", "two.mp3"]);
+  assert.equal(calls[0][1].body.get("title"), "Family Stories");
+  assert.deepEqual(JSON.parse(calls[0][1].body.get("options")), {
+    use_chapters: true,
+    normalize: false,
     clean_titles: true,
     trim_head: 0,
     trim_tail: 0,
     split_oversized: true,
   });
+});
+
+test("deskRefreshNotice preserves cached work and exposes a retry for partial failure", () => {
+  const error = new Error("Jobs could not refresh.");
+  assert.deepEqual(deskRefreshNotice({ stale: ["jobs"], errors: { jobs: error } }), {
+    stale: true,
+    label: "Work cart may be out of date",
+    message: "Jobs could not refresh. Showing the last available information.",
+  });
+  assert.deepEqual(deskRefreshNotice({ stale: [], errors: {} }), { stale: false, label: "", message: "" });
 });
 
 test("buildWorkCartItems merges preparation jobs with collection facts and keeps real states", () => {
@@ -177,4 +257,45 @@ test("buildWorkCartItems merges preparation jobs with collection facts and keeps
       hasCover: false,
     },
   ]);
+});
+
+test("buildWorkCartItems keeps every active job ahead of failed and completed work", () => {
+  const job = (id, status, kind = "prepare_url") => ({
+    id,
+    kind,
+    status,
+    phase: status === "done" ? "ready" : status,
+    label: `Story ${id}`,
+    progress: "",
+    error: status === "failed" ? "Stopped" : "",
+    payload: { url: `https://example.com/${id}`, slug: `story-${id}` },
+    result: status === "done" ? { slug: `story-${id}` } : {},
+  });
+  const jobs = [job(9, "done"), job(8, "done"), job(7, "failed"), job(6, "running"), job(5, "queued"), job(4, "running")];
+  const collections = [9, 8].map((id) => ({ slug: `story-${id}`, title: `Story ${id}`, stage: "forged" }));
+
+  assert.deepEqual(
+    buildWorkCartItems(jobs, collections, 5).map((item) => item.jobId),
+    [6, 5, 4, 7, 9],
+  );
+  assert.deepEqual(
+    buildWorkCartItems([job(6, "running"), job(5, "queued"), job(4, "running")], [], 2).map((item) => item.jobId),
+    [6, 5, 4],
+  );
+});
+
+test("buildWorkCartItems does not mark a legacy import-only LibriVox job ready", () => {
+  const items = buildWorkCartItems([{
+    id: 31,
+    kind: "librivox",
+    status: "done",
+    phase: "done",
+    label: "LibriVox import 31",
+    progress: "Finished",
+    error: "",
+    payload: { book_id: "31", slug: "old-import" },
+    result: { slug: "old-import" },
+  }], [{ slug: "old-import", title: "Old Import", stage: "extracted" }]);
+
+  assert.deepEqual(items, []);
 });

@@ -1,6 +1,8 @@
 """Preparation orchestration starts extraction, then completes Forge."""
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -206,6 +208,17 @@ def test_failed_librivox_forge_progress_is_presented_as_failed():
     assert presented["progress"] == "Levelling 1/2: Chapter one"
 
 
+def test_completed_legacy_librivox_import_is_not_presented_as_ready():
+    presented = jobs.present({
+        "id": 44,
+        "kind": "librivox",
+        "status": "done",
+        "progress": "Finished",
+    })
+
+    assert presented["phase"] == "done"
+
+
 def test_prepare_restarts_extraction_when_checkpoint_is_missing(monkeypatch):
     checkpoints = []
     monkeypatch.setattr(prepare.library, "get", lambda slug: None)
@@ -246,6 +259,17 @@ def test_prepare_batch_rejects_unsupported_schemes(client, monkeypatch):
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("url", ["https:///missing-host", "https://", "http://[::1"])
+def test_prepare_batch_rejects_http_urls_without_a_host(client, isolated_db, url):
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": url}],
+        "options": {},
+    })
+
+    assert response.status_code == 400
+    assert db.jobs_for_refresh() == []
+
+
 def test_prepare_batch_rejects_exact_duplicates(client, monkeypatch):
     monkeypatch.setattr(jobs, "enqueue", lambda *args: pytest.fail("enqueue"))
 
@@ -273,8 +297,8 @@ def test_prepare_batch_creates_one_job_per_source(client, monkeypatch):
     created = []
     monkeypatch.setattr(
         jobs,
-        "enqueue",
-        lambda kind, label, payload: created.append((kind, label, payload)) or len(created),
+        "enqueue_many",
+        lambda entries: created.extend(entries) or [1, 2],
     )
 
     response = client.post("/api/prepare", json={
@@ -289,6 +313,96 @@ def test_prepare_batch_creates_one_job_per_source(client, monkeypatch):
     ]}
     assert [kind for kind, _, _ in created] == ["prepare_url", "prepare_url"]
     assert [payload["options"] for _, _, payload in created] == [prepare.DEFAULT_OPTIONS] * 2
+
+
+def test_prepare_batch_rolls_back_every_job_when_one_insert_fails(client, isolated_db):
+    connection = db.connect()
+    connection.execute(
+        "CREATE TRIGGER fail_second_prepare BEFORE INSERT ON jobs "
+        "WHEN NEW.label='https://example.com/b' "
+        "BEGIN SELECT RAISE(ABORT, 'second insert failed'); END"
+    )
+    connection.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="second insert failed"):
+        client.post("/api/prepare", json={
+            "sources": [
+                {"url": "https://example.com/a"},
+                {"url": "https://example.com/b"},
+            ],
+            "options": {},
+        })
+
+    assert db.jobs_for_refresh() == []
+
+
+def test_librivox_endpoint_persists_selected_forge_options(client, monkeypatch):
+    created = []
+    monkeypatch.setattr(
+        jobs,
+        "enqueue",
+        lambda kind, label, payload: created.append((kind, label, payload)) or 27,
+    )
+
+    response = client.post("/api/librivox/import", json={
+        "book_id": "180",
+        "options": {
+            "use_chapters": False,
+            "normalize": False,
+            "clean_titles": False,
+            "trim_head": 1.5,
+            "trim_tail": 2.5,
+            "split_oversized": False,
+        },
+    })
+
+    assert response.status_code == 200
+    assert response.json() == {"job_id": 27}
+    assert created == [(
+        "librivox",
+        "LibriVox import 180",
+        {
+            "book_id": "180",
+            "options": {
+                "use_chapters": False,
+                "normalize": False,
+                "clean_titles": False,
+                "trim_head": 1.5,
+                "trim_tail": 2.5,
+                "split_oversized": False,
+            },
+        },
+    )]
+
+
+def test_jobs_endpoint_returns_every_active_job_before_failed_and_completed(client, isolated_db):
+    active_ids = []
+    for index in range(5):
+        job_id = db.create_job("prepare_url", f"active-{index}", {"url": f"https://example.com/{index}"})
+        if index % 2:
+            db.update_job(job_id, status="running")
+        active_ids.append(job_id)
+    completed_ids = []
+    for index in range(3):
+        job_id = db.create_job("prepare_url", f"done-{index}", {"url": f"https://example.com/done-{index}"})
+        db.update_job(job_id, status="done")
+        completed_ids.append(job_id)
+    failed_id = db.create_job("prepare_url", "failed", {"url": "https://example.com/failed"})
+    db.update_job(failed_id, status="failed")
+
+    response = client.get("/api/jobs?limit=8")
+
+    assert response.status_code == 200
+    assert [job["id"] for job in response.json()] == [
+        active_ids[4],
+        active_ids[3],
+        active_ids[2],
+        active_ids[1],
+        active_ids[0],
+        failed_id,
+        completed_ids[2],
+        completed_ids[1],
+    ]
 
 
 def test_retry_refuses_a_non_failed_job(client, monkeypatch):

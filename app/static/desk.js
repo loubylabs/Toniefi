@@ -4,13 +4,15 @@ import {
   announce,
   element,
   notify,
+  rememberFocus,
   replace,
+  restoreFocus,
   setBusy,
   withFocusRestored,
 } from "./shared.js";
 
 const MAX_SOURCES = 50;
-const DESK_JOB_KINDS = new Set(["prepare_url", "librivox", "forge"]);
+const DESK_JOB_KINDS = new Set(["prepare_url", "librivox", "upload_prepare", "forge"]);
 
 export const DEFAULT_FORGE_OPTIONS = Object.freeze({
   use_chapters: true,
@@ -83,15 +85,62 @@ export function buildPreparePayload(lines, options = {}) {
   };
 }
 
-export function buildForgePayload(slug, options = {}) {
-  const normalized = normalizedOptions(options);
+export function buildLibrivoxPayload(bookId, options = {}) {
+  return { book_id: String(bookId), options: normalizedOptions(options) };
+}
+
+export function forgeDefinitionValues(options = {}) {
+  const selected = normalizedOptions(options);
+  const trims = [];
+  if (selected.trim_head) trims.push(`${selected.trim_head} sec start`);
+  if (selected.trim_tail) trims.push(`${selected.trim_tail} sec end`);
   return {
-    slug,
-    normalize: normalized.normalize,
-    clean_titles: normalized.clean_titles,
-    trim_head: normalized.trim_head,
-    trim_tail: normalized.trim_tail,
-    split_oversized: normalized.split_oversized,
+    loudness: selected.normalize ? "−16 LUFS, −1.5 dBTP ceiling" : "Off",
+    titleCleanup: selected.clean_titles ? "On" : "Off",
+    chapters: selected.use_chapters ? "Preserved" : "Ignored",
+    oversized: selected.split_oversized ? "Split" : "Kept whole",
+    trimming: trims.length ? trims.join(", ") : "Off",
+  };
+}
+
+export function moveSourceEntries(entries, id, offset) {
+  const next = [...entries];
+  const index = next.findIndex((entry) => entry.id === id);
+  const target = index + offset;
+  if (index < 0 || target < 0 || target >= next.length) return next;
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
+
+export function removeSourceEntry(entries, id) {
+  const index = entries.findIndex((entry) => entry.id === id);
+  if (index < 0) return { entries: [...entries], nextFocusId: "" };
+  const next = entries.filter((entry) => entry.id !== id);
+  return {
+    entries: next,
+    nextFocusId: next[Math.min(index, next.length - 1)]?.id || "",
+  };
+}
+
+export async function submitUploadBatch({ files, title, options, request }) {
+  const form = new FormData();
+  for (const file of files) form.append("files", file, file.name);
+  form.append("title", String(title || "").trim());
+  form.append("options", JSON.stringify(normalizedOptions(options)));
+  return request("/api/uploads/prepare", { method: "POST", body: form });
+}
+
+export function deskRefreshNotice(snapshot) {
+  const stale = Array.isArray(snapshot?.stale) && snapshot.stale.some((name) => name === "jobs" || name === "collections");
+  if (!stale) return { stale: false, label: "", message: "" };
+  const messages = snapshot.stale
+    .filter((name) => name === "jobs" || name === "collections")
+    .map((name) => snapshot.errors?.[name]?.message)
+    .filter(Boolean);
+  return {
+    stale: true,
+    label: "Work cart may be out of date",
+    message: `${messages.join(" ") || "Work cart data could not refresh."} Showing the last available information.`,
   };
 }
 
@@ -101,7 +150,7 @@ function jobSlug(job) {
 
 function workPhase(job, collection) {
   if (job.status === "failed") return "failed";
-  if (collection?.stage === "forged" || job.phase === "ready") return "ready";
+  if (collection?.stage === "forged") return "ready";
   if (job.status === "queued") return "queued";
   if (job.phase === "forging" || job.kind === "forge") return "forging";
   if (job.phase === "extracting" || job.kind === "librivox" || job.kind === "prepare_url") {
@@ -119,11 +168,17 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
   const represented = new Set();
   const items = [];
 
-  for (const job of jobs) {
+  const active = jobs.filter((job) => job.status === "queued" || job.status === "running");
+  const failed = jobs.filter((job) => job.status === "failed");
+  const completed = jobs.filter((job) => job.status !== "queued" && job.status !== "running" && job.status !== "failed");
+
+  for (const job of [...active, ...failed, ...completed]) {
     if (!DESK_JOB_KINDS.has(job.kind)) continue;
+    if (job.status !== "queued" && job.status !== "running" && items.length >= limit) continue;
     const slug = jobSlug(job);
     if (slug && represented.has(slug)) continue;
     const collection = slug ? collectionBySlug.get(slug) : null;
+    if (job.status === "done" && collection?.stage !== "forged") continue;
     if (slug) represented.add(slug);
     const phase = workPhase(job, collection);
     items.push({
@@ -141,7 +196,6 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
       duration: collection?.total_duration || "",
       hasCover: Boolean(collection?.cover),
     });
-    if (items.length >= limit) return items;
   }
 
   for (const collection of collections) {
@@ -201,12 +255,18 @@ function createForgeSummary() {
     heading,
     element("span", { className: "status-stamp", "data-status": "success", text: "Safe maximum" }),
   ]);
+  const definitionNodes = {};
+  const definition = (key, label) => {
+    const value = element("dd");
+    definitionNodes[key] = value;
+    return element("div", {}, [element("dt", { text: label }), value]);
+  };
   const definitions = element("dl", { className: "forge-definition-list" }, [
-    element("div", {}, [element("dt", { text: "Loudness" }), element("dd", { text: "−16 LUFS, −1.5 dBTP ceiling" })]),
-    element("div", {}, [element("dt", { text: "Title cleanup" }), element("dd", { text: "On" })]),
-    element("div", {}, [element("dt", { text: "Chapter markers" }), element("dd", { text: "Preserved" })]),
-    element("div", {}, [element("dt", { text: "Oversized tracks" }), element("dd", { text: "Split" })]),
-    element("div", {}, [element("dt", { text: "Automatic trimming" }), element("dd", { text: "Off" })]),
+    definition("loudness", "Loudness"),
+    definition("titleCleanup", "Title cleanup"),
+    definition("chapters", "Chapter markers"),
+    definition("oversized", "Oversized tracks"),
+    definition("trimming", "Automatic trimming"),
   ]);
   const controls = element("fieldset", { className: "forge-option-controls" }, [
     element("legend", { className: "visually-hidden", text: "Edit Forge defaults" }),
@@ -227,11 +287,21 @@ function createForgeSummary() {
     element("summary", {}, [iconNode("settings"), element("span", { text: "Edit defaults" })]),
     controls,
   ]);
-  return element("section", { className: "forge-summary", "aria-labelledby": "forge-summary-title" }, [
+  const section = element("section", { className: "forge-summary", "aria-labelledby": "forge-summary-title" }, [
     headingRow,
     definitions,
     disclosure,
   ]);
+  const updateDefinitions = () => {
+    const values = forgeDefinitionValues(readForgeOptions(section));
+    Object.entries(values).forEach(([key, value]) => {
+      definitionNodes[key].textContent = value;
+    });
+  };
+  controls.addEventListener("input", updateDefinitions);
+  controls.addEventListener("change", updateDefinitions);
+  updateDefinitions();
+  return section;
 }
 
 function readForgeOptions(root) {
@@ -271,7 +341,7 @@ function workCartRow(item, { request, requestRefresh, navigate }) {
   const body = element("div", { className: "work-cart-row-body" }, [header, source]);
   if (facts.childNodes.length) body.append(facts);
   if (item.phase === "failed") {
-    body.append(element("p", { className: "work-cart-error", role: "alert", text: item.error || "Preparation stopped before this collection was ready." }));
+    body.append(element("p", { className: "work-cart-error", text: item.error || "Preparation stopped before this collection was ready." }));
   } else {
     body.append(progress);
     if (item.phase !== "ready") {
@@ -287,17 +357,23 @@ function workCartRow(item, { request, requestRefresh, navigate }) {
       className: "work-cart-link work-cart-review-link",
       href: `/review/${encodeURIComponent(item.slug)}`,
       "data-route": "review",
+      "data-focus-key": `${item.key}-primary`,
     }, [element("span", { text: "Review" }), iconNode("chevronRight")]));
   } else {
     const detailsLink = element("a", {
       className: "work-cart-link",
       href: "/activity",
       "data-route": "activity",
+      "data-focus-key": `${item.key}-primary`,
     }, [element("span", { text: "View details" }), iconNode("chevronRight")]);
     actions.append(detailsLink);
   }
   if (item.canRetry) {
-    const retry = element("button", { type: "button", className: "button button-danger work-cart-retry" }, [
+    const retry = element("button", {
+      type: "button",
+      className: "button button-danger work-cart-retry",
+      "data-focus-key": `${item.key}-retry`,
+    }, [
       iconNode("retry"),
       element("span", { text: "Retry" }),
     ]);
@@ -333,10 +409,48 @@ function createLiveWorkCart({ request, requestRefresh, navigate }) {
     heading,
     count,
   ]);
-  const host = element("aside", { className: "live-work-cart", "aria-labelledby": "work-cart-title" }, [header, empty, list]);
+  const staleLabel = element("strong", { text: "Work cart may be out of date" });
+  const staleMessage = element("span");
+  const retryRefresh = element("button", {
+    type: "button",
+    className: "button button-secondary work-cart-refresh",
+    text: "Retry refresh",
+    "data-focus-key": "work-cart-refresh",
+  });
+  retryRefresh.addEventListener("click", async () => {
+    retryRefresh.disabled = true;
+    try {
+      await requestRefresh();
+    } finally {
+      retryRefresh.disabled = false;
+    }
+  });
+  const staleNotice = element("div", { className: "work-cart-stale", hidden: true }, [
+    iconNode("alert"),
+    element("div", {}, [staleLabel, staleMessage]),
+    retryRefresh,
+  ]);
+  const liveStatus = element("p", {
+    className: "visually-hidden",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+  });
+  const host = element("aside", { className: "live-work-cart", "aria-labelledby": "work-cart-title" }, [
+    header,
+    staleNotice,
+    empty,
+    list,
+    liveStatus,
+  ]);
+  let priorPhases = null;
 
   function onRefresh(snapshot) {
     const items = buildWorkCartItems(snapshot.jobs, snapshot.collections);
+    const notice = deskRefreshNotice(snapshot);
+    staleNotice.hidden = !notice.stale;
+    staleLabel.textContent = notice.label;
+    staleMessage.textContent = notice.message;
     count.textContent = String(items.length);
     count.setAttribute("aria-label", `${items.length} ${items.length === 1 ? "collection" : "collections"} in the work cart`);
     empty.hidden = items.length > 0;
@@ -344,6 +458,14 @@ function createLiveWorkCart({ request, requestRefresh, navigate }) {
     withFocusRestored(() => {
       replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate })));
     }, { root: host });
+    const phases = new Map(items.map((item) => [item.key, item.phase]));
+    if (priorPhases) {
+      const changed = items.filter((item) => priorPhases.get(item.key) && priorPhases.get(item.key) !== item.phase);
+      if (changed.length) {
+        liveStatus.textContent = changed.map((item) => `${item.title}: ${phaseDetails(item.phase).label}.`).join(" ");
+      }
+    }
+    priorPhases = phases;
   }
 
   return { host, onRefresh };
@@ -413,7 +535,7 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
           try {
             await request("/api/librivox/import", {
               method: "POST",
-              body: JSON.stringify({ book_id: String(book.id) }),
+              body: JSON.stringify(buildLibrivoxPayload(book.id, readForgeOptions(root))),
             });
             notify(`${book.title} is in the work cart.`, { kind: "success" });
             announce(`${book.title} is queued for extraction and Forge.`);
@@ -467,25 +589,17 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
     }
     fileInput.setCustomValidity("");
     uploadButton.disabled = true;
-    let slug = "";
     try {
-      for (let index = 0; index < files.length; index += 1) {
-        uploadStatus.textContent = `Uploading file ${index + 1} of ${files.length}: ${files[index].name}`;
-        const form = new FormData();
-        form.append("file", files[index]);
-        if (slug) form.append("slug", slug);
-        else if (uploadTitle.value.trim()) form.append("title", uploadTitle.value.trim());
-        const collection = await request("/api/ingest/upload", { method: "POST", body: form });
-        slug = collection.slug;
-      }
-      uploadStatus.textContent = "Upload complete. Queuing Forge cleanup...";
-      await request("/api/forge", {
-        method: "POST",
-        body: JSON.stringify(buildForgePayload(slug, readForgeOptions(root))),
+      uploadStatus.textContent = `Uploading ${files.length} ${files.length === 1 ? "file" : "files"} as one collection...`;
+      await submitUploadBatch({
+        files,
+        title: uploadTitle.value,
+        options: readForgeOptions(root),
+        request,
       });
       fileInput.value = "";
       uploadTitle.value = "";
-      uploadStatus.textContent = `${files.length} ${files.length === 1 ? "file" : "files"} uploaded. Forge is queued.`;
+      uploadStatus.textContent = `${files.length} ${files.length === 1 ? "file is" : "files are"} in the work cart.`;
       notify("Your uploaded collection is in the work cart.", { kind: "success" });
       await requestRefresh();
     } catch (error) {
@@ -518,7 +632,8 @@ export function createDeskScreen({
   if (!refresh) throw new Error("Desk requires the application refresh coordinator.");
 
   return function renderDesk({ workspace, navigate, signal }) {
-    let values = [];
+    let entries = [];
+    let sourceId = 0;
     let submitting = false;
     const root = element("div", { className: "desk-screen" });
     const intake = element("section", { className: "desk-intake", "aria-labelledby": "desk-title" });
@@ -545,21 +660,24 @@ export function createDeskScreen({
     ]);
     const form = element("form", { className: "source-intake-form", novalidate: true });
 
-    function moveSource(index, offset) {
-      const target = index + offset;
-      if (target < 0 || target >= values.length) return;
-      [values[index], values[target]] = [values[target], values[index]];
-      renderSources({ focusKey: `source-${target}` });
+    function newSourceEntry(value) {
+      sourceId += 1;
+      return { id: `source-${sourceId}`, value };
+    }
+
+    function moveSource(id, offset) {
+      entries = moveSourceEntries(entries, id, offset);
+      renderSources({ focusKey: `${id}-input` });
     }
 
     function sourceRow(row, index, total) {
-      const inputId = `source-row-${index}`;
+      const inputId = `source-row-${row.id}`;
       const errorId = `${inputId}-error`;
       const input = element("input", {
         id: inputId,
         type: "url",
         value: row.value,
-        "data-focus-key": `source-${index}`,
+        "data-focus-key": `${row.id}-input`,
         "aria-invalid": row.error ? "true" : "false",
         "aria-describedby": row.error ? errorId : null,
         spellcheck: "false",
@@ -567,34 +685,44 @@ export function createDeskScreen({
         autocomplete: "off",
       });
       input.addEventListener("change", () => {
-        values[index] = input.value;
-        renderSources({ focusKey: `source-${index}` });
+        if (!input.value.trim()) {
+          const removed = removeSourceEntry(entries, row.id);
+          entries = removed.entries;
+          renderSources({ focusKey: removed.nextFocusId ? `${removed.nextFocusId}-input` : "" });
+          return;
+        }
+        entries[index].value = input.value;
+        renderSources({ focusKey: `${row.id}-input` });
       });
       const moveUp = element("button", {
         type: "button",
         className: "icon-button",
         "aria-label": `Move source ${index + 1} up`,
+        "data-focus-key": `${row.id}-move-up`,
         disabled: index === 0,
       });
       moveUp.innerHTML = icon("arrowUp");
-      moveUp.addEventListener("click", () => moveSource(index, -1));
+      moveUp.addEventListener("click", () => moveSource(row.id, -1));
       const moveDown = element("button", {
         type: "button",
         className: "icon-button",
         "aria-label": `Move source ${index + 1} down`,
+        "data-focus-key": `${row.id}-move-down`,
         disabled: index === total - 1,
       });
       moveDown.innerHTML = icon("arrowDown");
-      moveDown.addEventListener("click", () => moveSource(index, 1));
+      moveDown.addEventListener("click", () => moveSource(row.id, 1));
       const remove = element("button", {
         type: "button",
         className: "icon-button source-remove",
         "aria-label": `Remove source ${index + 1}`,
+        "data-focus-key": `${row.id}-remove`,
       });
       remove.innerHTML = icon("close");
       remove.addEventListener("click", () => {
-        values.splice(index, 1);
-        renderSources({ focusKey: `source-${Math.min(index, values.length - 1)}` });
+        const removed = removeSourceEntry(entries, row.id);
+        entries = removed.entries;
+        renderSources({ focusKey: removed.nextFocusId ? `${removed.nextFocusId}-input` : "" });
       });
       const controls = element("span", { className: "source-row-controls" }, [moveUp, moveDown, remove]);
       const field = element("div", { className: "source-row-field" }, [input]);
@@ -607,8 +735,8 @@ export function createDeskScreen({
     }
 
     function renderSources({ focusKey = "" } = {}) {
-      const parsed = parseSourceLines(values);
-      values = parsed.rows.map((row) => row.value);
+      const parsed = parseSourceLines(entries);
+      entries = parsed.rows.map((row, index) => ({ id: entries[index].id, value: row.value }));
       sourceCount.textContent = `${parsed.uniqueCount} / ${MAX_SOURCES}`;
       clearSources.hidden = parsed.rows.length === 0;
       const errorCount = parsed.rows.filter((row) => row.error).length;
@@ -621,12 +749,9 @@ export function createDeskScreen({
       prepareButton.disabled = !parsed.valid || submitting;
       const label = parsed.uniqueCount === 1 ? "Prepare 1 story" : `Prepare ${parsed.uniqueCount} stories`;
       prepareButton.querySelector("span:last-child").textContent = label;
-      withFocusRestored(() => {
-        replace(sourceList, ...parsed.rows.map((row, index) => sourceRow(row, index, parsed.rows.length)));
-      }, {
-        root: intake,
-        fallback: focusKey ? sourceList.querySelector(`[data-focus-key="${focusKey}"]`) : null,
-      });
+      const token = focusKey ? { key: focusKey } : rememberFocus(intake);
+      replace(sourceList, ...parsed.rows.map((row, index) => sourceRow({ ...row, id: entries[index].id }, index, parsed.rows.length)));
+      restoreFocus(token, { root: intake });
     }
 
     addSources.addEventListener("click", () => {
@@ -637,12 +762,12 @@ export function createDeskScreen({
         return;
       }
       paste.setCustomValidity("");
-      values.push(...added);
+      entries.push(...added.map((value) => newSourceEntry(value)));
       paste.value = "";
-      renderSources({ focusKey: `source-${values.length - added.length}` });
+      renderSources({ focusKey: `${entries[entries.length - added.length].id}-input` });
     });
     clearSources.addEventListener("click", () => {
-      values = [];
+      entries = [];
       renderSources();
       paste.focus();
     });
@@ -663,7 +788,7 @@ export function createDeskScreen({
       if (submitting) return;
       let payload;
       try {
-        payload = buildPreparePayload(values, readForgeOptions(root));
+        payload = buildPreparePayload(entries, readForgeOptions(root));
       } catch (error) {
         validation.dataset.kind = "failure";
         validation.textContent = error.message;
@@ -677,7 +802,7 @@ export function createDeskScreen({
         await request("/api/prepare", { method: "POST", body: JSON.stringify(payload) });
         animateSubmission(acceptedRows, root, cart.host);
         const count = payload.sources.length;
-        values = [];
+        entries = [];
         renderSources();
         notify(`${count} ${count === 1 ? "story is" : "stories are"} in the work cart.`, { kind: "success" });
         announce(`${count} ${count === 1 ? "story was" : "stories were"} accepted for preparation.`);

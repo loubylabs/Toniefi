@@ -1139,7 +1139,7 @@ textarea::placeholder {
   display: grid;
   max-height: calc(100vh - 3rem);
   padding-left: clamp(1.25rem, 2vw, 2.5rem);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   border-left: var(--rule-thin);
 }
 
@@ -1161,6 +1161,46 @@ textarea::placeholder {
   color: var(--bookcloth-ink);
   font-size: var(--type-xs);
   font-weight: 800;
+}
+
+.work-cart-stale {
+  display: grid;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  grid-template-columns: 1.25rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid rgba(154, 90, 0, 0.55);
+  border-radius: var(--radius);
+  background: rgba(255, 244, 215, 0.86);
+  color: var(--ink);
+  font-size: var(--type-xs);
+}
+
+.work-cart-stale[hidden] {
+  display: none;
+}
+
+.work-cart-stale svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--warning);
+}
+
+.work-cart-stale strong,
+.work-cart-stale span {
+  display: block;
+}
+
+.work-cart-stale span {
+  margin-top: var(--space-1);
+  color: var(--ink-muted);
+}
+
+.work-cart-refresh {
+  min-height: 2.5rem;
+  padding-inline: var(--space-3);
+  font-size: var(--type-xs);
 }
 
 .work-cart-list {
@@ -1428,29 +1468,7 @@ textarea::placeholder {
   }
 }
 
-@media (max-width: 1199.98px) {
-  .application-shell {
-    grid-template-columns: 14rem minmax(0, 1fr);
-  }
-
-  .service-index {
-    padding-inline: var(--space-3);
-  }
-
-  .wordmark {
-    margin-inline: var(--space-3);
-    font-size: 1.65rem;
-  }
-
-  .desktop-navigation a {
-    padding-inline: var(--space-3);
-    font-size: var(--type-sm);
-  }
-
-  .account-summary {
-    padding: var(--space-3);
-  }
-
+@media (max-width: 1279.98px) {
   .desk-screen {
     display: block;
   }
@@ -1473,6 +1491,30 @@ textarea::placeholder {
 
   .work-cart-row {
     margin: 0;
+  }
+}
+
+@media (max-width: 1199.98px) {
+  .application-shell {
+    grid-template-columns: 14rem minmax(0, 1fr);
+  }
+
+  .service-index {
+    padding-inline: var(--space-3);
+  }
+
+  .wordmark {
+    margin-inline: var(--space-3);
+    font-size: 1.65rem;
+  }
+
+  .desktop-navigation a {
+    padding-inline: var(--space-3);
+    font-size: var(--type-sm);
+  }
+
+  .account-summary {
+    padding: var(--space-3);
   }
 
 }

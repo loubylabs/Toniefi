@@ -127,11 +127,14 @@ curl -s -X POST http://127.0.0.1:8080/api/ingest/url \
 curl -s http://127.0.0.1:8080/api/jobs/1 | python3 -m json.tool
 ```
 
-Already have the files on disk? Skip yt-dlp entirely:
+Already have the files on disk? Submit the whole collection as one persisted preparation job:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/api/ingest/upload \
-  -F 'file=@chapter-01.mp3' -F 'title=Peter Pan'
+curl -s -X POST http://127.0.0.1:8080/api/uploads/prepare \
+  -F 'files=@chapter-01.mp3' \
+  -F 'files=@chapter-02.mp3' \
+  -F 'title=Peter Pan' \
+  -F 'options={"use_chapters":true,"normalize":true,"clean_titles":true,"trim_head":0,"trim_tail":0,"split_oversized":true}'
 ```
 
 ### When a link will not load

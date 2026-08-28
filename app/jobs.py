@@ -2,6 +2,7 @@
 minutes, and an HTTP request should not be holding the bag while they run."""
 from __future__ import annotations
 
+import shutil
 import threading
 import traceback
 
@@ -13,6 +14,10 @@ _stop = threading.Event()
 
 def enqueue(kind: str, label: str, payload: dict) -> int:
     return db.create_job(kind, label, payload)
+
+
+def enqueue_many(entries: list[tuple[str, str, dict]]) -> list[int]:
+    return db.create_jobs(entries)
 
 
 def present(job: dict) -> dict:
@@ -29,9 +34,9 @@ def present(job: dict) -> dict:
         displayed["phase"] = "failed"
     elif separator and prefix in {"extracting", "forging"}:
         displayed["phase"] = prefix
-    elif status == "done" and kind in {"prepare_url", "librivox", "forge"}:
+    elif status == "done" and kind in {"prepare_url", "upload_prepare", "forge"}:
         displayed["phase"] = "ready"
-    elif status == "running" and kind in {"prepare_url", "librivox"}:
+    elif status == "running" and kind in {"prepare_url", "librivox", "upload_prepare"}:
         displayed["phase"] = "extracting"
     elif status == "running" and kind == "forge":
         displayed["phase"] = "forging"
@@ -80,6 +85,69 @@ def _handle(job: dict) -> dict:
             progress=progress,
             checkpoint=lambda updated_payload: db.update_job(job_id, payload=updated_payload),
         )
+
+    if kind == "upload_prepare":
+        current = dict(payload)
+        options = {**prepare.DEFAULT_OPTIONS, **current.get("options", {})}
+        stage = (config.WORK_DIR / current["stage"]).resolve()
+        work_root = config.WORK_DIR.resolve()
+        files = current.get("files", [])
+        slug = current.get("slug")
+        collection = library.get(slug) if slug else None
+        if collection and collection.get("stage") == "forged":
+            if stage.parent == work_root:
+                shutil.rmtree(stage, ignore_errors=True)
+            return collection
+        if stage.parent != work_root or not stage.is_dir():
+            raise RuntimeError("The staged upload files are missing. Upload the collection again.")
+        if slug and not collection:
+            current.pop("slug", None)
+            current.pop("owns_collection", None)
+            current["next_file"] = 0
+            slug = None
+        if not slug:
+            fallback_title = files[0]["name"] if files else "Uploaded collection"
+            slug = library.create(current.get("title") or fallback_title, source="upload")
+            current["slug"] = slug
+            current["next_file"] = 0
+            current["owns_collection"] = True
+            db.update_job(job_id, payload=current)
+
+        start = int(current.get("next_file") or 0)
+        try:
+            for index in range(start, len(files)):
+                item = files[index]
+                progress(f"extracting: Importing file {index + 1} of {len(files)}: {item['name']}")
+                ingest.import_upload(
+                    item["name"],
+                    (stage / item["stored"]).read_bytes(),
+                    slug,
+                )
+                current["next_file"] = index + 1
+                db.update_job(job_id, payload=current)
+        except Exception:
+            if current.get("owns_collection"):
+                try:
+                    library.delete(slug)
+                except (FileNotFoundError, ValueError):
+                    pass
+                current.pop("slug", None)
+                current.pop("owns_collection", None)
+                current["next_file"] = 0
+                db.update_job(job_id, payload=current)
+            raise
+
+        result = forge.run(
+            slug,
+            normalize=options["normalize"],
+            clean_titles=options["clean_titles"],
+            trim_head=options["trim_head"],
+            trim_tail=options["trim_tail"],
+            split_oversized=options["split_oversized"],
+            progress=lambda message: progress(f"forging: {message}"),
+        )
+        shutil.rmtree(stage)
+        return result
 
     if kind == "forge":
         return forge.run(

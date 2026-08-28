@@ -1,15 +1,18 @@
 """Toniefi: the FastAPI application, serving the JSON API and the single-page front end."""
 from __future__ import annotations
 
+import json
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from . import audio, config, db, ingest, jobs, library, push, tonies
 
@@ -61,6 +64,7 @@ class PrepareBatch(BaseModel):
 
 class LibrivoxImport(BaseModel):
     book_id: str
+    options: PrepareOptions = Field(default_factory=PrepareOptions)
 
 
 class ForgeRequest(BaseModel):
@@ -143,7 +147,15 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
     sources = [source.url.strip() for source in body.sources]
     if not sources:
         raise fail(400, "At least one source URL is required.")
-    if any(urlparse(url).scheme not in {"http", "https"} for url in sources):
+    try:
+        parsed_sources = [urlparse(url) for url in sources]
+        valid_urls = all(
+            parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+            for parsed in parsed_sources
+        )
+    except ValueError:
+        valid_urls = False
+    if not valid_urls:
         raise fail(400, "Sources must use HTTP or HTTPS.")
     if len(set(sources)) != len(sources):
         raise fail(400, "Duplicate source URLs are not allowed.")
@@ -151,10 +163,12 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
         raise fail(400, "A batch can contain at most 50 sources.")
 
     options = body.options.model_dump()
-    created = []
-    for url in sources:
-        job_id = jobs.enqueue("prepare_url", url, {"url": url, "options": options})
-        created.append({"id": job_id, "url": url})
+    entries = [
+        ("prepare_url", url, {"url": url, "options": options})
+        for url in sources
+    ]
+    ids = jobs.enqueue_many(entries)
+    created = [{"id": job_id, "url": url} for job_id, url in zip(ids, sources, strict=True)]
     return {"jobs": created}
 
 
@@ -169,21 +183,52 @@ def librivox_search(q: str, limit: int = 20) -> list[dict[str, Any]]:
 @app.post("/api/librivox/import")
 def librivox_import(body: LibrivoxImport) -> dict[str, Any]:
     job_id = jobs.enqueue("librivox", f"LibriVox import {body.book_id}",
-                          {"book_id": body.book_id})
+                          {"book_id": body.book_id, "options": body.options.model_dump()})
     return {"job_id": job_id}
 
 
-@app.post("/api/ingest/upload")
-async def ingest_upload(
-    file: UploadFile = File(...),
-    slug: str | None = Form(None),
-    title: str | None = Form(None),
+@app.post("/api/uploads/prepare")
+async def prepare_uploads(
+    files: list[UploadFile] = File(...),
+    title: str = Form(""),
+    options: str = Form("{}"),
 ) -> dict[str, Any]:
-    data = await file.read()
     try:
-        return ingest.import_upload(file.filename or "upload.mp3", data, slug, title)
-    except RuntimeError as exc:
-        raise fail(400, str(exc)) from exc
+        forge_options = PrepareOptions.model_validate(json.loads(options)).model_dump()
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise fail(400, "Upload options are invalid.") from exc
+    if not files:
+        raise fail(400, "Choose at least one audio file.")
+
+    described = []
+    for index, upload in enumerate(files):
+        name = upload.filename or f"upload-{index + 1}.mp3"
+        suffix = Path(name).suffix.lower()
+        if suffix not in audio.AUDIO_EXTENSIONS:
+            raise fail(400, f"{suffix or 'That file'} is not a supported audio format.")
+        described.append({"name": name, "stored": f"{index:03d}{suffix}"})
+
+    stage_name = f"upload-{uuid4().hex}"
+    stage = config.WORK_DIR / stage_name
+    stage.mkdir(parents=True)
+    try:
+        for upload, item in zip(files, described, strict=True):
+            destination = stage / item["stored"]
+            with destination.open("wb") as output:
+                while chunk := await upload.read(1024 * 1024):
+                    output.write(chunk)
+        payload = {
+            "title": title.strip(),
+            "stage": stage_name,
+            "files": described,
+            "options": forge_options,
+        }
+        label = title.strip() or described[0]["name"]
+        job_id = jobs.enqueue("upload_prepare", f"Upload {label}", payload)
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return {"job_id": job_id}
 
 
 # --------------------------------------------------------------- 3. forge
@@ -314,7 +359,7 @@ def put_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> d
 
 @app.get("/api/jobs")
 def list_jobs(limit: int = 40) -> list[dict[str, Any]]:
-    return [jobs.present(job) for job in db.recent_jobs(limit)]
+    return [jobs.present(job) for job in db.jobs_for_refresh(limit)]
 
 
 @app.get("/api/jobs/{job_id}")
