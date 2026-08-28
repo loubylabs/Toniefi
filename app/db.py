@@ -70,6 +70,13 @@ def set_setting(key: str, value: str) -> None:
         conn.commit()
 
 
+def delete_setting(key: str) -> None:
+    conn = connect()
+    with _lock:
+        conn.execute("DELETE FROM settings WHERE key=?", (key,))
+        conn.commit()
+
+
 # -------------------------------------------------------------------- jobs
 
 def create_job(kind: str, label: str, payload: dict[str, Any]) -> int:

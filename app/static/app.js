@@ -1,10 +1,13 @@
 import { api } from "./api.js";
+import { createActivityScreen } from "./activity.js";
 import { createDeskScreen } from "./desk.js";
 import { icon } from "./icons.js";
 import { createLibraryScreen } from "./library.js";
 import { createReviewScreen } from "./review.js";
 import { createRouter } from "./router.js";
+import { createSettingsScreen } from "./settings.js";
 import { createPersistentAudioPlayer, element, notify, replace } from "./shared.js";
+import { createToniesScreen } from "./tonies.js";
 
 const ACTIVE_REFRESH_MS = 2500;
 const RESTING_REFRESH_MS = 30000;
@@ -19,45 +22,10 @@ const routeDefinitions = [
   { name: "settings", path: "/settings" },
 ];
 
-const placeholders = {
-  tonies: {
-    title: "Creative Tonies",
-    copy: "Review connected Tonies and their contents before making a cloud change.",
-    icon: "tonie",
-  },
-  activity: {
-    title: "Activity",
-    copy: "Preparation and transfer history will remain visible here.",
-    icon: "activity",
-  },
-  settings: {
-    title: "Settings",
-    copy: "Manage account credentials, tool readiness, and local system details.",
-    icon: "settings",
-  },
-};
-
 function injectIcons() {
   document.querySelectorAll("[data-icon]").forEach((host) => {
     host.innerHTML = icon(host.dataset.icon);
   });
-}
-
-function placeholderRenderer(name) {
-  return ({ workspace }) => {
-    const details = placeholders[name];
-    const mark = element("span", { className: "route-placeholder-mark", "aria-hidden": "true" });
-    mark.innerHTML = icon(details.icon);
-    const heading = element("h1", { text: details.title });
-    const copy = element("p", { text: details.copy });
-    const rule = element("span", { className: "route-placeholder-rule", "aria-hidden": "true" });
-    const section = element("section", {
-      className: "route-placeholder",
-      "aria-labelledby": `${name}-placeholder-title`,
-    }, [mark, heading, copy, rule]);
-    heading.id = `${name}-placeholder-title`;
-    replace(workspace, section);
-  };
 }
 
 function hasActiveJobs(jobs) {
@@ -267,10 +235,12 @@ export const router = createRouter(routeDefinitions, {
   },
 });
 
-Object.keys(placeholders).forEach((name) => router.register(name, placeholderRenderer(name)));
 router.register("desk", createDeskScreen({ request: api, refresh }));
 router.register("review", createReviewScreen({ request: api, refresh, player }));
 router.register("library", createLibraryScreen({ request: api, refresh }));
+router.register("tonies", createToniesScreen({ request: api }));
+router.register("activity", createActivityScreen({ request: api, refresh }));
+router.register("settings", createSettingsScreen({ request: api, refresh }));
 injectIcons();
 initializeMobileMore();
 refresh.subscribe(updateShell);

@@ -124,21 +124,25 @@ class Credentials(BaseModel):
 
 # ------------------------------------------------------------------ status
 
-@app.get("/api/status")
-def status() -> dict[str, Any]:
+def credential_status() -> dict[str, Any]:
     from_env = bool(config.TONIES_USERNAME and config.TONIES_PASSWORD)
     from_db = bool(db.get_setting("tonies_username") and db.get_setting("tonies_password"))
+    return {
+        "configured": from_env or from_db,
+        "source": "environment" if from_env else ("saved" if from_db else "none"),
+        "username": config.TONIES_USERNAME or db.get_setting("tonies_username"),
+    }
+
+
+@app.get("/api/status")
+def status() -> dict[str, Any]:
     return {
         "library_dir": str(config.LIBRARY_DIR),
         "tonie_limit_seconds": config.TONIE_LIMIT_SECONDS,
         "usable_limit_seconds": config.usable_limit(),
         "tonie_limit_human": audio.human_duration(config.TONIE_LIMIT_SECONDS),
         "tools": audio.have_tools(),
-        "credentials": {
-            "configured": from_env or from_db,
-            "source": "environment" if from_env else ("saved" if from_db else "none"),
-            "username": config.TONIES_USERNAME or db.get_setting("tonies_username"),
-        },
+        "credentials": credential_status(),
     }
 
 
@@ -147,6 +151,13 @@ def save_credentials(body: Credentials) -> dict[str, Any]:
     db.set_setting("tonies_username", body.username.strip())
     db.set_setting("tonies_password", body.password)
     return {"ok": True}
+
+
+@app.delete("/api/settings/credentials")
+def delete_credentials() -> dict[str, Any]:
+    db.delete_setting("tonies_username")
+    db.delete_setting("tonies_password")
+    return credential_status()
 
 
 @app.post("/api/settings/test")
