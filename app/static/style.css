@@ -344,6 +344,10 @@ svg {
     var(--paper);
 }
 
+body.audio-player-visible #workspace {
+  padding-bottom: 13rem;
+}
+
 #workspace:focus {
   outline: none;
 }
@@ -2215,6 +2219,10 @@ textarea::placeholder {
   #workspace {
     min-height: 100vh;
     padding: var(--space-5) var(--space-4) calc(6.25rem + env(safe-area-inset-bottom));
+  }
+
+  body.audio-player-visible #workspace {
+    padding-bottom: calc(18rem + env(safe-area-inset-bottom));
   }
 
   .route-pending,

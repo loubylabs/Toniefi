@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -89,18 +90,24 @@ class ForgeRequest(BaseModel):
     split_oversized: bool = True
 
 
-class PushRequest(BaseModel):
-    slug: str
-    household_id: str
-    tonie_id: str
-    names: list[str] | None = None
-    group_index: int | None = None
-    replace: bool = True
-
-
 class ChapterRef(BaseModel):
     id: str
     title: str = ""
+
+
+class PushAssignment(BaseModel):
+    household_id: str
+    tonie_id: str
+    files: list[str] = Field(min_length=1)
+    replace: bool
+    remote_chapters: list[ChapterRef]
+
+
+class PushBatch(BaseModel):
+    operation_key: str = Field(min_length=1, max_length=128)
+    slug: str
+    manifest_fingerprint: str = Field(min_length=64, max_length=64)
+    assignments: list[PushAssignment] = Field(min_length=1, max_length=100)
 
 
 class ChaptersPut(BaseModel):
@@ -273,6 +280,7 @@ def get_collection(slug: str, refresh: bool = False) -> dict[str, Any]:
     if not manifest:
         raise fail(404, f"No collection named {slug}.")
     manifest["plan"] = library.plan(slug)
+    manifest["manifest_fingerprint"] = library.manifest_fingerprint(manifest)
     return manifest
 
 
@@ -351,10 +359,35 @@ def list_tonies() -> list[dict[str, Any]]:
     return [push.describe_tonie(tonie) for tonie in result]
 
 
-@app.post("/api/push")
-def push_to_tonie(body: PushRequest) -> dict[str, Any]:
-    job_id = jobs.enqueue("push", f"Send {body.slug} to a Tonie", body.model_dump())
-    return {"job_id": job_id}
+@app.post("/api/push/batch")
+def push_batch(body: PushBatch) -> dict[str, Any]:
+    assignments = [assignment.model_dump() for assignment in body.assignments]
+    targets = [(item["household_id"], item["tonie_id"]) for item in assignments]
+    if len(targets) != len(set(targets)):
+        raise fail(400, "Each capacity group needs a different Creative Tonie.")
+    try:
+        canonical = body.model_dump(exclude={"operation_key"})
+        digest = hashlib.sha256(
+            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        existing = db.existing_idempotent_jobs(body.operation_key, digest)
+        if existing is not None:
+            return {"operation_key": body.operation_key, "job_ids": existing}
+        push.validate_confirmed_groups(body.slug, body.manifest_fingerprint, assignments)
+        entries = [
+            ("push", f"Send {body.slug} to a Tonie", {
+                **assignment,
+                "slug": body.slug,
+                "manifest_fingerprint": body.manifest_fingerprint,
+            })
+            for assignment in assignments
+        ]
+        job_ids, _ = db.create_idempotent_jobs(body.operation_key, digest, entries)
+    except (push.StalePush, ValueError) as exc:
+        raise fail(409, str(exc)) from exc
+    except db.OperationConflict as exc:
+        raise fail(409, str(exc)) from exc
+    return {"operation_key": body.operation_key, "job_ids": job_ids}
 
 
 @app.put("/api/tonies/{household_id}/{tonie_id}/chapters")

@@ -3,12 +3,13 @@ import test from "node:test";
 
 import { filterCollectionsByTitle } from "../../app/static/library.js";
 import {
-  buildPushPayload,
+  buildPushBatchPayload,
+  confirmPushBatch,
   forgedCollectionsNewestFirst,
   moveControlFocusKey,
   tonieCapacity,
 } from "../../app/static/review.js";
-import { moveItem } from "../../app/static/shared.js";
+import { createMutationController, moveItem, snapshotRefreshOutcome } from "../../app/static/shared.js";
 
 test("moveItem moves an item one position toward the start", () => {
   assert.deepEqual(moveItem(["chapter-a", "chapter-b", "chapter-c"], 1, -1), [
@@ -67,16 +68,86 @@ test("tonieCapacity distinguishes replace capacity from append capacity", () => 
   });
 });
 
-test("buildPushPayload sends one reviewed capacity group to its selected target", () => {
-  assert.deepEqual(buildPushPayload("wind-in-the-willows", 2, {
+test("buildPushBatchPayload carries exact reviewed files, remote state, and one operation key", () => {
+  const collection = {
+    slug: "wind-in-the-willows",
+    manifest_fingerprint: "fingerprint-1",
+  };
+  const group = { tracks: [{ name: "001.mp3" }, { name: "002.mp3" }] };
+  const tonie = {
     householdId: "household-1",
     id: "tonie-3",
-  }, false), {
+    chapters: [{ id: "remote-1", title: "Existing" }],
+  };
+
+  assert.deepEqual(buildPushBatchPayload(collection, [{ group, tonie, replaceExisting: false }], "operation-1"), {
+    operation_key: "operation-1",
     slug: "wind-in-the-willows",
-    household_id: "household-1",
-    tonie_id: "tonie-3",
-    group_index: 2,
-    replace: false,
+    manifest_fingerprint: "fingerprint-1",
+    assignments: [{
+      household_id: "household-1",
+      tonie_id: "tonie-3",
+      files: ["001.mp3", "002.mp3"],
+      replace: false,
+      remote_chapters: [{ id: "remote-1", title: "Existing" }],
+    }],
+  });
+});
+
+test("confirmPushBatch never enqueues before final confirmation and posts one exact batch", async () => {
+  const payload = { operation_key: "operation-1", assignments: [{ files: ["one.mp3"] }] };
+  const calls = [];
+  assert.equal(await confirmPushBatch({ confirm: async () => false, request: async (...args) => calls.push(args), payload }), null);
+  assert.deepEqual(calls, []);
+
+  const receipt = await confirmPushBatch({
+    confirm: async () => true,
+    request: async (...args) => {
+      calls.push(args);
+      return { job_ids: [7] };
+    },
+    payload,
+  });
+  assert.deepEqual(receipt, { job_ids: [7] });
+  assert.deepEqual(calls, [["/api/push/batch", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }]]);
+});
+
+test("mutation controller serializes controls and reloads truth after failure", async () => {
+  const controls = [{ disabled: false }, { disabled: false }];
+  const root = { querySelectorAll: () => controls, setAttribute() {}, removeAttribute() {} };
+  let release;
+  let reloads = 0;
+  const controller = createMutationController({ root, reload: async () => { reloads += 1; } });
+  const first = controller.run(async () => new Promise((_, reject) => { release = reject; }));
+  assert.deepEqual(controls.map((control) => control.disabled), [true, true]);
+  assert.equal(await controller.run(async () => "competing"), false);
+  release(new Error("save failed"));
+  await assert.rejects(first, /save failed/);
+  assert.equal(reloads, 1);
+  assert.deepEqual(controls.map((control) => control.disabled), [false, false]);
+});
+
+test("mutation controller marks stale when mutation and reload both fail", async () => {
+  const root = { querySelectorAll: () => [], setAttribute() {}, removeAttribute() {} };
+  let staleError = null;
+  const controller = createMutationController({
+    root,
+    reload: async () => { throw new Error("reload failed"); },
+    onStale: (error) => { staleError = error; },
+  });
+  await assert.rejects(controller.run(async () => { throw new Error("save failed"); }), /save failed/);
+  assert.match(staleError.message, /reload failed/);
+});
+
+test("snapshot refresh outcome reports partial collection failure instead of success", () => {
+  assert.deepEqual(snapshotRefreshOutcome({ stale: [] }, "collections"), { stale: false, error: null });
+  const error = new Error("disk unavailable");
+  assert.deepEqual(snapshotRefreshOutcome({ stale: ["collections"], errors: { collections: error } }, "collections"), {
+    stale: true,
+    error,
   });
 });
 

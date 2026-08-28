@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { icon } from "./icons.js";
 import {
   announce,
+  createMutationController,
   element,
   moveItem,
   notify,
@@ -10,6 +11,7 @@ import {
   restoreFocus,
   setBusy,
   showConfirmDialog,
+  snapshotRefreshOutcome,
 } from "./shared.js";
 
 export function forgedCollectionsNewestFirst(collections) {
@@ -31,14 +33,29 @@ export function tonieCapacity(tonie, groupSeconds, replaceExisting, limitSeconds
   };
 }
 
-export function buildPushPayload(slug, groupIndex, tonie, replaceExisting) {
+export function buildPushBatchPayload(collection, selections, operationKey) {
   return {
-    slug,
-    household_id: tonie.householdId,
-    tonie_id: tonie.id,
-    group_index: groupIndex,
-    replace: replaceExisting,
+    operation_key: operationKey,
+    slug: collection.slug,
+    manifest_fingerprint: collection.manifest_fingerprint,
+    assignments: selections.map(({ group, tonie, replaceExisting }) => ({
+      household_id: tonie.householdId,
+      tonie_id: tonie.id,
+      files: group.tracks.map((track) => track.name),
+      replace: replaceExisting,
+      remote_chapters: (tonie.chapters || []).map(({ id, title }) => ({ id, title: title || "" })),
+    })),
   };
+}
+
+export async function confirmPushBatch({ confirm, request, payload, signal }) {
+  if (!await confirm()) return null;
+  if (signal?.aborted) return null;
+  return request("/api/push/batch", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    ...(signal ? { signal } : {}),
+  });
 }
 
 export function moveControlFocusKey(trackName, targetIndex, total, offset) {
@@ -136,7 +153,8 @@ function reviewShelfRow(collection) {
   ]);
 }
 
-function createReviewShelf({ workspace, refresh }) {
+function createReviewShelf({ workspace, refresh, signal }) {
+  let active = true;
   const root = element("section", { className: "review-shelf-screen", "aria-labelledby": "review-shelf-title" });
   const heading = element("div", { className: "screen-heading" }, [
     element("div", {}, [
@@ -152,12 +170,21 @@ function createReviewShelf({ workspace, refresh }) {
   const refreshButton = heading.querySelector("button");
 
   function render(snapshot) {
+    if (!active || signal?.aborted) return;
     const token = rememberFocus(root);
     const collections = forgedCollectionsNewestFirst(snapshot.collections || []);
     stale.hidden = !snapshot.stale?.includes("collections");
-    stale.textContent = stale.hidden
-      ? ""
-      : "The shelf may be out of date. The last available collections remain visible.";
+    if (stale.hidden) {
+      replace(stale);
+    } else {
+      const retry = element("button", { type: "button", className: "button button-secondary", text: "Retry refresh" });
+      retry.addEventListener("click", () => refreshButton.click());
+      replace(stale,
+        element("strong", { text: "The shelf may be out of date" }),
+        element("p", { text: "The last available collections remain visible." }),
+        retry,
+      );
+    }
     if (!collections.length) {
       replace(list, element("li", { className: "empty-state review-shelf-empty" }, [
         iconNode("review"),
@@ -176,13 +203,21 @@ function createReviewShelf({ workspace, refresh }) {
   refreshButton.addEventListener("click", async () => {
     refreshButton.disabled = true;
     try {
-      await refresh.request();
-      notify("Review Shelf refreshed.", { kind: "success" });
+      const snapshot = await refresh.request();
+      if (!active || signal?.aborted) return;
+      const outcome = snapshotRefreshOutcome(snapshot, "collections");
+      if (outcome.stale) {
+        notify("The Review Shelf could not fully refresh. Existing stories remain visible. Try again.", { kind: "failure", timeout: 0 });
+      } else {
+        notify("Review Shelf refreshed.", { kind: "success" });
+      }
     } catch (error) {
-      notify(error.message, { kind: "failure", timeout: 0 });
+      if (active && !signal?.aborted) notify(error.message, { kind: "failure", timeout: 0 });
     } finally {
-      refreshButton.disabled = false;
-      refreshButton.focus({ preventScroll: true });
+      if (active && !signal?.aborted) {
+        refreshButton.disabled = false;
+        refreshButton.focus({ preventScroll: true });
+      }
     }
   });
 
@@ -191,7 +226,10 @@ function createReviewShelf({ workspace, refresh }) {
   render(refresh.snapshot);
   const unsubscribe = refresh.subscribe(render);
   refresh.request();
-  return () => unsubscribe();
+  return () => {
+    active = false;
+    unsubscribe();
+  };
 }
 
 function detailFacts(collection) {
@@ -356,7 +394,8 @@ function createAssignmentPanel({ collection, tonies, limitSeconds, onSubmit }) {
   return element("div", {}, [intro, form]);
 }
 
-function createFocusedReview({ workspace, slug, request, refresh, player, signal }) {
+export function createFocusedReview({ workspace, slug, request, refresh, player, signal }) {
+  let active = true;
   let collection = null;
   let status = refresh.snapshot.status;
   let toniesStale = false;
@@ -369,12 +408,52 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
       request(`/api/collections/${encodeURIComponent(slug)}${query}`, { signal }),
       status ? Promise.resolve(status) : request("/api/status", { signal }),
     ]);
+    if (!active || signal.aborted) return null;
     collection = nextCollection;
     status = nextStatus;
     return collection;
   }
 
+  function renderRouteFailure(error) {
+    if (!active || signal.aborted) return;
+    const retry = element("button", { type: "button", className: "button button-primary", text: "Retry" });
+    retry.addEventListener("click", hydrate);
+    replace(workspace, element("section", { className: "route-pending", role: "alert" }, [
+      iconNode("alert", "route-pending-mark"),
+      element("h1", { text: "Collection review could not open" }),
+      element("p", { text: error.message }),
+      retry,
+    ]));
+  }
+
+  function renderMutationStale(error) {
+    if (!active || signal.aborted) return;
+    const retry = element("button", { type: "button", className: "button button-secondary", text: "Retry current collection" });
+    retry.addEventListener("click", async () => {
+      try {
+        await loadCollection();
+        if (active && !signal.aborted) renderDetail({ focusKey: "collection-title" });
+      } catch (reloadError) {
+        notify(reloadError.message, { kind: "failure", timeout: 0 });
+      }
+    });
+    root.prepend(element("div", { className: "stale-notice", "data-kind": "failure", role: "alert" }, [
+      element("strong", { text: "Collection state may be stale" }),
+      element("p", { text: `${error.message} The current review remains visible.` }),
+      retry,
+    ]));
+  }
+
+  const mutation = createMutationController({
+    root,
+    reload: () => loadCollection(),
+    onReloaded: () => renderDetail(),
+    onStale: renderMutationStale,
+    signal,
+  });
+
   function renderDetail({ focusKey = "", fallback = null } = {}) {
+    if (!active || signal.aborted || !collection) return;
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
     const titleInput = element("input", {
       id: "review-collection-title",
@@ -383,8 +462,9 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
       "data-focus-key": "collection-title",
       maxlength: "240",
       required: true,
+      "data-collection-mutation": "",
     });
-    const renameButton = element("button", { type: "submit", className: "button button-secondary" }, [
+    const renameButton = element("button", { type: "submit", className: "button button-secondary", "data-collection-mutation": "" }, [
       iconNode("check"), element("span", { text: "Save title" }),
     ]);
     const titleForm = element("form", { className: "review-title-form" }, [
@@ -403,15 +483,21 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
       titleInput.setCustomValidity("");
       renameButton.disabled = true;
       try {
-        await request(`/api/collections/${encodeURIComponent(slug)}`, {
-          method: "PATCH",
-          body: JSON.stringify({ title }),
+        const saved = await mutation.run(async () => {
+          await request(`/api/collections/${encodeURIComponent(slug)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ title }),
+            signal,
+          });
+          await loadCollection();
+          renderDetail({ focusKey: "collection-title" });
+          return true;
         });
-        await loadCollection();
-        renderDetail({ focusKey: "collection-title" });
+        if (!saved || !active || signal.aborted) return;
         notify("Collection title saved.", { kind: "success" });
         await refresh.request();
       } catch (error) {
+        if (!active || signal.aborted) return;
         renameButton.disabled = false;
         notify(error.message, { kind: "failure", timeout: 0 });
         titleInput.focus({ preventScroll: true });
@@ -445,16 +531,22 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
     async function persistOrder(nextTracks, key) {
       setBusy(chapterList, true, "Saving chapter order");
       try {
-        await request(`/api/collections/${encodeURIComponent(slug)}/reorder`, {
-          method: "POST",
-          body: JSON.stringify({ names: nextTracks.map((track) => track.name) }),
+        const saved = await mutation.run(async () => {
+          await request(`/api/collections/${encodeURIComponent(slug)}/reorder`, {
+            method: "POST",
+            body: JSON.stringify({ names: nextTracks.map((track) => track.name) }),
+            signal,
+          });
+          await loadCollection();
+          renderDetail({ focusKey: key });
+          return true;
         });
-        await loadCollection();
-        renderDetail({ focusKey: key });
+        if (!saved) return;
         notify("Chapter order saved.", { kind: "success" });
         announce("Chapter order saved.");
         await refresh.request();
       } catch (error) {
+        if (!active || signal.aborted) return;
         setBusy(chapterList, false);
         notify(error.message, { kind: "failure", timeout: 0 });
       }
@@ -472,6 +564,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         value: track.title || "",
         "data-focus-key": `chapter-${track.name}-title`,
         maxlength: "240",
+        "data-collection-mutation": "",
         "aria-label": `Chapter ${index + 1} title`,
       });
       titleInput.addEventListener("change", async () => {
@@ -484,14 +577,20 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         titleInput.setCustomValidity("");
         titleInput.disabled = true;
         try {
-          await request(`/api/collections/${encodeURIComponent(slug)}/tracks/${encodeURIComponent(track.name)}`, {
-            method: "PATCH",
-            body: JSON.stringify({ title }),
+          const saved = await mutation.run(async () => {
+            await request(`/api/collections/${encodeURIComponent(slug)}/tracks/${encodeURIComponent(track.name)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ title }),
+              signal,
+            });
+            await loadCollection();
+            renderDetail({ focusKey: `chapter-${track.name}-title` });
+            return true;
           });
-          await loadCollection();
-          renderDetail({ focusKey: `chapter-${track.name}-title` });
+          if (!saved || !active || signal.aborted) return;
           notify("Chapter title saved.", { kind: "success" });
         } catch (error) {
+          if (!active || signal.aborted) return;
           titleInput.disabled = false;
           notify(error.message, { kind: "failure", timeout: 0 });
           titleInput.focus({ preventScroll: true });
@@ -502,6 +601,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         className: "button button-secondary chapter-play",
         "data-focus-key": `chapter-${track.name}-play`,
         "aria-label": `Play ${track.title}`,
+        "data-collection-mutation": "",
       }, [iconNode("play"), element("span", { text: "Play" })]);
       play.addEventListener("click", () => player.play({
         src: `/api/collections/${encodeURIComponent(slug)}/tracks/${encodeURIComponent(track.name)}/audio`,
@@ -513,6 +613,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         "data-focus-key": `chapter-${track.name}-up`,
         "aria-label": `Move ${track.title} up`,
         disabled: index === 0,
+        "data-collection-mutation": "",
       });
       moveUp.innerHTML = icon("arrowUp");
       moveUp.addEventListener("click", () => persistOrder(
@@ -525,6 +626,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         "data-focus-key": `chapter-${track.name}-down`,
         "aria-label": `Move ${track.title} down`,
         disabled: index === collection.tracks.length - 1,
+        "data-collection-mutation": "",
       });
       moveDown.innerHTML = icon("arrowDown");
       moveDown.addEventListener("click", () => persistOrder(
@@ -536,6 +638,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         className: "icon-button chapter-remove",
         "data-focus-key": `chapter-${track.name}-remove`,
         "aria-label": `Remove ${track.title}`,
+        "data-collection-mutation": "",
       });
       removeButton.innerHTML = icon("trash");
       removeButton.addEventListener("click", async () => {
@@ -550,14 +653,19 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         removeButton.disabled = true;
         const fallbackTrack = collection.tracks[index + 1] || collection.tracks[index - 1];
         try {
-          await request(`/api/collections/${encodeURIComponent(slug)}/tracks/${encodeURIComponent(track.name)}`, { method: "DELETE" });
-          await loadCollection();
-          renderDetail({
-            focusKey: fallbackTrack ? `chapter-${fallbackTrack.name}-remove` : "collection-title",
+          const removed = await mutation.run(async () => {
+            await request(`/api/collections/${encodeURIComponent(slug)}/tracks/${encodeURIComponent(track.name)}`, { method: "DELETE", signal });
+            await loadCollection();
+            renderDetail({
+              focusKey: fallbackTrack ? `chapter-${fallbackTrack.name}-remove` : "collection-title",
+            });
+            return true;
           });
+          if (!removed || !active || signal.aborted) return;
           notify(`${track.title} and its local audio file were removed.`, { kind: "success" });
           await refresh.request();
         } catch (error) {
+          if (!active || signal.aborted) return;
           removeButton.disabled = false;
           notify(error.message, { kind: "failure", timeout: 0 });
           removeButton.focus({ preventScroll: true });
@@ -571,6 +679,10 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         controls,
       );
       row.addEventListener("dragstart", (event) => {
+        if (mutation.pending || signal.aborted) {
+          event.preventDefault();
+          return;
+        }
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", track.name);
         row.classList.add("dragging");
@@ -582,6 +694,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
       });
       row.addEventListener("drop", (event) => {
         event.preventDefault();
+        if (mutation.pending || signal.aborted) return;
         const draggedName = event.dataTransfer.getData("text/plain");
         const from = collection.tracks.findIndex((item) => item.name === draggedName);
         if (from < 0 || from === index) return;
@@ -620,6 +733,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
       replace(assignmentHost, element("h2", { id: "assignment-title", text: "Creative Tonie assignment" }), element("p", { text: "Refreshing targets and available space from myTonies." }));
       try {
         const tonies = await request("/api/tonies", { signal });
+        if (!active || signal.aborted) return;
         toniesStale = false;
         if (!tonies.length) {
           replace(assignmentHost,
@@ -647,24 +761,21 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
             const summary = selected.map(({ group, tonie, replaceExisting }) => (
               `Group ${group.index} (${group.duration}) will ${replaceExisting ? "replace" : "append to"} ${tonie.name || "Creative Tonie"}`
             )).join(". ");
-            const confirmed = await showConfirmDialog({
-              title: "Send these groups?",
-              message: `${summary}. Replacing clears the target's current chapters. Tonie Cloud changes have no undo.`,
-              confirmLabel: `Confirm ${selected.length} ${selected.length === 1 ? "send" : "sends"}`,
-              destructive: true,
-            });
-            submit.focus({ preventScroll: true });
-            if (!confirmed) return;
-            form.querySelectorAll("input, select, button").forEach((control) => { control.disabled = true; });
-            let queued = 0;
+            const operationKey = globalThis.crypto?.randomUUID?.() || `push-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            const payload = buildPushBatchPayload(collection, selected, operationKey);
+            const confirm = () => showConfirmDialog({
+                title: "Send these groups?",
+                message: `${summary}. Replacing clears the target's current chapters. Tonie Cloud changes have no undo.`,
+                confirmLabel: `Confirm ${selected.length} ${selected.length === 1 ? "send" : "sends"}`,
+                destructive: true,
+              });
             try {
-              for (const selection of selected) {
-                await request("/api/push", {
-                  method: "POST",
-                  body: JSON.stringify(buildPushPayload(slug, selection.group.index, selection.tonie, selection.replaceExisting)),
-                });
-                queued += 1;
-              }
+              const receipt = await confirmPushBatch({ confirm, request, payload, signal });
+              if (!active || signal.aborted) return;
+              submit.focus({ preventScroll: true });
+              if (!receipt) return;
+              form.querySelectorAll("input, select, button").forEach((control) => { control.disabled = true; });
+              const queued = receipt.job_ids.length;
               toniesStale = true;
               replace(assignmentHost,
                 heading,
@@ -677,13 +788,24 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
               notify("Creative Tonie sends were queued after confirmation.", { kind: "success" });
               await refresh.request();
             } catch (error) {
+              if (!active || signal.aborted) return;
               toniesStale = true;
               replace(assignmentHost,
                 heading,
                 element("div", { className: "stale-notice", "data-kind": "failure", role: "alert" }, [
                   element("strong", { text: "The send could not be completed." }),
-                  element("p", { text: `${error.message} Remote figures are stale. ${queued ? "Some sends may already be queued." : "No additional send was queued after the failure."}` }),
-                  element("button", { type: "button", className: "button button-secondary", text: "Refresh targets", onclick: showTargets }),
+                  element("p", { text: `${error.message} Remote figures are stale. Retry the confirmed batch safely, or refresh targets to review again.` }),
+                  element("div", { className: "dialog-actions" }, [
+                    element("button", { type: "button", className: "button button-primary", text: "Retry confirmed batch", onclick: async () => {
+                      try {
+                        await request("/api/push/batch", { method: "POST", body: JSON.stringify(payload), signal });
+                        if (active && !signal.aborted) await refresh.request();
+                      } catch (retryError) {
+                        if (active && !signal.aborted) notify(retryError.message, { kind: "failure", timeout: 0 });
+                      }
+                    } }),
+                    element("button", { type: "button", className: "button button-secondary", text: "Refresh targets", onclick: showTargets }),
+                  ]),
                 ]),
               );
               notify(error.message, { kind: "failure", timeout: 0 });
@@ -694,6 +816,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         replace(assignmentHost, heading, panel);
         assignmentHost.querySelector("select")?.focus({ preventScroll: true });
       } catch (error) {
+        if (!active || signal.aborted) return;
         toniesStale = true;
         setBusy(assignmentHost, false);
         replace(assignmentHost,
@@ -706,7 +829,7 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
         );
         notify(error.message, { kind: "failure", timeout: 0 });
       } finally {
-        chooseButton.disabled = false;
+        if (active && !signal.aborted) chooseButton.disabled = false;
       }
     }
 
@@ -727,14 +850,23 @@ function createFocusedReview({ workspace, slug, request, refresh, player, signal
     restoreFocus(token, { root, fallback: fallbackTarget });
   }
 
-  return loadCollection().then(() => {
-    if (signal.aborted) return null;
-    replace(workspace, root);
-    renderDetail();
-    return () => {
-      if (toniesStale) announce("Creative Tonie capacity figures remain stale.");
-    };
-  });
+  async function hydrate() {
+    replace(workspace, loadingState("Opening collection review", "Reading the collection manifest and capacity plan."));
+    try {
+      await loadCollection();
+      if (!active || signal.aborted) return;
+      replace(workspace, root);
+      renderDetail();
+    } catch (error) {
+      renderRouteFailure(error);
+    }
+  }
+
+  hydrate();
+  return () => {
+    active = false;
+    if (toniesStale) announce("Creative Tonie capacity figures remain stale.");
+  };
 }
 
 export function createReviewScreen({
@@ -756,6 +888,6 @@ export function createReviewScreen({
         signal,
       });
     }
-    return createReviewShelf({ workspace, refresh });
+    return createReviewShelf({ workspace, refresh, signal });
   };
 }

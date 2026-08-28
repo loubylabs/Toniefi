@@ -36,6 +36,10 @@ class StaleChapters(RuntimeError):
     """The Tonie's chapters changed since the browser last looked at them."""
 
 
+class StalePush(RuntimeError):
+    """A confirmed local or remote send precondition no longer holds."""
+
+
 def _identity(chapter: dict) -> tuple[str, str]:
     """The (id, title) pair the precondition compares.
 
@@ -234,41 +238,44 @@ def _noop(_: str) -> None:
     return None
 
 
-def resolve_tracks(slug: str, names: list[str] | None, group_index: int | None) -> list[dict[str, Any]]:
+def confirmed_tracks(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    slug = payload["slug"]
     manifest = library.get(slug)
     if not manifest:
-        raise RuntimeError(f"No collection named {slug}.")
-    tracks = manifest["tracks"]
-
-    if names:
-        by_name = {t["name"]: t for t in tracks}
-        missing = [n for n in names if n not in by_name]
-        if missing:
-            raise RuntimeError(f"Not in this collection: {', '.join(missing)}")
-        return [by_name[n] for n in names]
-
-    if group_index:
-        groups = library.plan_groups(tracks)
-        if group_index < 1 or group_index > len(groups):
-            raise RuntimeError(f"This collection only has {len(groups)} group(s).")
-        by_name = {t["name"]: t for t in tracks}
-        # Match on filename only: two chapters can share a title.
-        return [by_name[str(t.path)] for t in groups[group_index - 1].tracks
-                if str(t.path) in by_name]
-
-    return tracks
+        raise StalePush(f"The collection changed because {slug} no longer exists.")
+    if library.manifest_fingerprint(manifest) != payload["manifest_fingerprint"]:
+        raise StalePush("The local collection changed after confirmation. Review it again.")
+    names = payload.get("files") or []
+    by_name = {track["name"]: track for track in manifest["tracks"]}
+    if len(names) != len(set(names)) or any(name not in by_name for name in names):
+        raise StalePush("The confirmed audio files no longer match this collection.")
+    tracks = [by_name[name] for name in names]
+    for track in tracks:
+        try:
+            library.track_path(slug, track["name"])
+        except ValueError as exc:
+            raise StalePush("A confirmed audio file is no longer available.") from exc
+    return manifest, tracks
 
 
-def push(
-    slug: str,
-    household_id: str,
-    tonie_id: str,
-    names: list[str] | None = None,
-    group_index: int | None = None,
-    replace: bool = True,
-    progress: Progress = _noop,
-) -> dict[str, Any]:
-    tracks = resolve_tracks(slug, names, group_index)
+def validate_confirmed_groups(slug: str, fingerprint: str, assignments: list[dict[str, Any]]) -> None:
+    manifest = library.get(slug)
+    if not manifest or library.manifest_fingerprint(manifest) != fingerprint:
+        raise StalePush("The local collection changed after review. Review it again.")
+    planned = [[track["name"] for track in group.as_dict()["tracks"]]
+               for group in library.plan_groups(manifest["tracks"])]
+    received = [assignment.get("files") or [] for assignment in assignments]
+    if received != planned:
+        raise StalePush("The confirmed files do not match the reviewed capacity plan.")
+
+
+def _remote_identity(chapters: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    return [(chapter.get("id"), chapter.get("title") or "") for chapter in chapters]
+
+
+def push_confirmed(payload: dict[str, Any], progress: Progress = _noop) -> dict[str, Any]:
+    slug = payload["slug"]
+    _, tracks = confirmed_tracks(payload)
     if not tracks:
         raise RuntimeError("Nothing selected to push.")
 
@@ -286,9 +293,19 @@ def push(
         progress("Signing in to myTonies")
         client.check_login()
 
+        state = client.get_tonie(payload["household_id"], payload["tonie_id"])
+        current_chapters = state.get("chapters") or []
+        if _remote_identity(current_chapters) != _remote_identity(payload.get("remote_chapters") or []):
+            raise StalePush("The Creative Tonie changed after confirmation. Refresh targets and review again.")
+        replace = payload["replace"]
+        if not replace:
+            present = float(state.get("secondsPresent") or 0)
+            if total > max(0, limit - present):
+                raise StalePush("The Creative Tonie no longer has enough free space for this append.")
+
         if replace:
             progress("Clearing the Tonie")
-            client.clear_tonie(household_id, tonie_id)
+            client.clear_tonie(payload["household_id"], payload["tonie_id"])
 
         uploaded = []
         for position, track in enumerate(tracks, start=1):
@@ -296,13 +313,13 @@ def push(
             label = track.get("title") or Path(track["name"]).stem
             progress(f"Uploading {position}/{len(tracks)}: {label}")
             file_id = client.upload_file(path)
-            client.add_chapter(household_id, tonie_id, label, file_id)
+            client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
             uploaded.append({"title": label, "file": file_id})
 
         progress("Confirming")
-        state = client.get_tonie(household_id, tonie_id)
+        state = client.get_tonie(payload["household_id"], payload["tonie_id"])
         return {
-            "tonie": state.get("name", tonie_id),
+            "tonie": state.get("name", payload["tonie_id"]),
             "chapters": len(state.get("chapters", [])),
             "uploaded": uploaded,
             "seconds": round(total, 1),

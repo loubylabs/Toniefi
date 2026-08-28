@@ -17,7 +17,9 @@ about get appended at the end, in filename order.
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,7 @@ from . import audio, config
 
 MANIFEST = "collection.json"
 COVER_NAMES = ("cover.jpg", "cover.png", "cover.webp")
+_manifest_lock = threading.RLock()
 
 
 def _dir_for(slug: str) -> Path:
@@ -47,22 +50,23 @@ def unique_slug(title: str) -> str:
 
 
 def create(title: str, source: str = "", extra: dict[str, Any] | None = None) -> str:
-    config.ensure_dirs()
-    slug = unique_slug(title)
-    path = config.LIBRARY_DIR / slug
-    path.mkdir(parents=True)
-    manifest: dict[str, Any] = {
-        "slug": slug,
-        "title": title,
-        "source": source,
-        "stage": "extracted",
-        "created_at": time.time(),
-        "tracks": [],
-    }
-    if extra:
-        manifest.update(extra)
-    _write_manifest(path, manifest)
-    return slug
+    with _manifest_lock:
+        config.ensure_dirs()
+        slug = unique_slug(title)
+        path = config.LIBRARY_DIR / slug
+        path.mkdir(parents=True)
+        manifest: dict[str, Any] = {
+            "slug": slug,
+            "title": title,
+            "source": source,
+            "stage": "extracted",
+            "created_at": time.time(),
+            "tracks": [],
+        }
+        if extra:
+            manifest.update(extra)
+        _write_manifest(path, manifest)
+        return slug
 
 
 # ------------------------------------------------------------- manifest i/o
@@ -101,58 +105,78 @@ def rescan(slug: str) -> dict[str, Any]:
     up here -- Toniefi never assumes it is the only thing writing to the
     library.
     """
-    path = _dir_for(slug)
-    manifest = _read_manifest(path)
-    manifest.setdefault("slug", slug)
-    manifest.setdefault("title", slug.replace("-", " ").title())
-    manifest.setdefault("created_at", time.time())
-    manifest.setdefault("stage", "extracted")
+    with _manifest_lock:
+        path = _dir_for(slug)
+        manifest = _read_manifest(path)
+        manifest.setdefault("slug", slug)
+        manifest.setdefault("title", slug.replace("-", " ").title())
+        manifest.setdefault("created_at", time.time())
+        manifest.setdefault("stage", "extracted")
 
-    on_disk = {p.name: p for p in audio_files(path)}
-    cached = {t.get("name"): t for t in manifest.get("tracks", [])}
+        on_disk = {p.name: p for p in audio_files(path)}
+        cached = {t.get("name"): t for t in manifest.get("tracks", [])}
 
     # Manifest order first (dropping files that vanished), then anything new.
-    ordered_names = [n for n in cached if n in on_disk]
-    ordered_names += sorted(n for n in on_disk if n not in cached)
+        ordered_names = [n for n in cached if n in on_disk]
+        ordered_names += sorted(n for n in on_disk if n not in cached)
 
-    tracks: list[dict[str, Any]] = []
-    for name in ordered_names:
-        file = on_disk[name]
-        stat = file.stat()
-        prior = cached.get(name)
+        tracks: list[dict[str, Any]] = []
+        for name in ordered_names:
+            file = on_disk[name]
+            stat = file.stat()
+            prior = cached.get(name)
         # Trust the cached duration only while size and mtime are unchanged;
         # probing every file on every page load makes a big library crawl.
-        if prior and prior.get("size") == stat.st_size and prior.get("mtime") == int(stat.st_mtime):
-            tracks.append(prior)
-            continue
-        try:
-            seconds = audio.duration_seconds(file)
-        except audio.AudioError:
-            seconds = 0.0
-        tracks.append({
-            "name": name,
-            "title": (prior or {}).get("title") or file.stem,
-            "seconds": round(seconds, 1),
-            "size": stat.st_size,
-            "mtime": int(stat.st_mtime),
-        })
+            if prior and prior.get("size") == stat.st_size and prior.get("mtime") == int(stat.st_mtime):
+                tracks.append(prior)
+                continue
+            try:
+                seconds = audio.duration_seconds(file)
+            except audio.AudioError:
+                seconds = 0.0
+            tracks.append({
+                "name": name,
+                "title": (prior or {}).get("title") or file.stem,
+                "seconds": round(seconds, 1),
+                "size": stat.st_size,
+                "mtime": int(stat.st_mtime),
+            })
 
-    manifest["tracks"] = tracks
-    cover = find_cover(path)
-    if cover:
-        manifest["cover"] = cover
-    _write_manifest(path, manifest)
-    return manifest
+        manifest["tracks"] = tracks
+        cover = find_cover(path)
+        if cover:
+            manifest["cover"] = cover
+        _write_manifest(path, manifest)
+        return manifest
 
 
 # -------------------------------------------------------------------- reads
 
 def get(slug: str, refresh: bool = False) -> dict[str, Any] | None:
-    path = _dir_for(slug)
-    if not path.is_dir():
-        return None
-    manifest = rescan(slug) if refresh or not (path / MANIFEST).exists() else _read_manifest(path)
-    return _decorate(slug, path, manifest)
+    with _manifest_lock:
+        path = _dir_for(slug)
+        if not path.is_dir():
+            return None
+        manifest = rescan(slug) if refresh or not (path / MANIFEST).exists() else _read_manifest(path)
+        return _decorate(slug, path, manifest)
+
+
+def manifest_fingerprint(manifest: dict[str, Any]) -> str:
+    """Identify the exact reviewed order and metadata used for a send."""
+    relevant = {
+        "slug": manifest.get("slug"),
+        "title": manifest.get("title"),
+        "stage": manifest.get("stage"),
+        "source": manifest.get("source"),
+        "uploader": manifest.get("uploader"),
+        "forge": manifest.get("forge"),
+        "tracks": [
+            {key: track.get(key) for key in ("name", "title", "seconds", "size", "mtime")}
+            for track in manifest.get("tracks", [])
+        ],
+    }
+    encoded = json.dumps(relevant, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _decorate(slug: str, path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
@@ -179,15 +203,16 @@ def _decorate(slug: str, path: Path, manifest: dict[str, Any]) -> dict[str, Any]
 
 
 def list_all() -> list[dict[str, Any]]:
-    config.ensure_dirs()
-    out = []
-    for path in sorted(config.LIBRARY_DIR.iterdir()):
-        if not path.is_dir():
-            continue
-        manifest = _read_manifest(path) or rescan(path.name)
-        out.append(_decorate(path.name, path, manifest))
-    out.sort(key=lambda m: m.get("created_at", 0), reverse=True)
-    return out
+    with _manifest_lock:
+        config.ensure_dirs()
+        out = []
+        for path in sorted(config.LIBRARY_DIR.iterdir()):
+            if not path.is_dir():
+                continue
+            manifest = _read_manifest(path) or rescan(path.name)
+            out.append(_decorate(path.name, path, manifest))
+        out.sort(key=lambda m: m.get("created_at", 0), reverse=True)
+        return out
 
 
 # ------------------------------------------------------------------ packing
@@ -215,11 +240,12 @@ def plan(slug: str, limit: int | None = None) -> list[dict[str, Any]]:
 # ------------------------------------------------------------------ mutation
 
 def _mutate(slug: str, fn) -> dict[str, Any]:
-    path = _dir_for(slug)
-    manifest = _read_manifest(path)
-    fn(manifest)
-    _write_manifest(path, manifest)
-    return get(slug)
+    with _manifest_lock:
+        path = _dir_for(slug)
+        manifest = _read_manifest(path)
+        fn(manifest)
+        _write_manifest(path, manifest)
+        return get(slug)
 
 
 def set_title(slug: str, title: str) -> dict[str, Any]:
@@ -273,20 +299,22 @@ def replace_track(slug: str, name: str, new_names: list[str]) -> dict[str, Any]:
 
 
 def delete_track(slug: str, name: str) -> dict[str, Any]:
-    path = _dir_for(slug)
-    target = path / name
-    if target.parent != path:
-        raise ValueError("Refusing to delete outside the collection.")
-    if target.is_file():
-        target.unlink()
+    with _manifest_lock:
+        path = _dir_for(slug)
+        target = path / name
+        if target.parent != path:
+            raise ValueError("Refusing to delete outside the collection.")
+        if target.is_file():
+            target.unlink()
 
-    def apply(m: dict[str, Any]) -> None:
-        m["tracks"] = [t for t in m.get("tracks", []) if t.get("name") != name]
-    return _mutate(slug, apply)
+        def apply(m: dict[str, Any]) -> None:
+            m["tracks"] = [t for t in m.get("tracks", []) if t.get("name") != name]
+        return _mutate(slug, apply)
 
 
 def delete(slug: str) -> None:
-    shutil.rmtree(_dir_for(slug))
+    with _manifest_lock:
+        shutil.rmtree(_dir_for(slug))
 
 
 # ------------------------------------------------------------------- paths

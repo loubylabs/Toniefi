@@ -138,6 +138,122 @@ export function setBusy(host, busy, label = "Working") {
   else host.removeAttribute("aria-label");
 }
 
+export function snapshotRefreshOutcome(snapshot, resource) {
+  const stale = Boolean(snapshot?.stale?.includes(resource));
+  return { stale, error: stale ? snapshot?.errors?.[resource] || null : null };
+}
+
+export function createMutationController({
+  root,
+  reload,
+  onReloaded = () => {},
+  onStale = () => {},
+  signal = null,
+}) {
+  let pending = false;
+
+  function controlsDisabled(disabled) {
+    root.querySelectorAll("[data-collection-mutation]").forEach((control) => {
+      if (control.tagName === "A") {
+        control.setAttribute("aria-disabled", String(disabled));
+        control.tabIndex = disabled ? -1 : 0;
+      } else {
+        control.disabled = disabled;
+      }
+    });
+    root.querySelectorAll("[data-track-name]").forEach((row) => {
+      row.draggable = !disabled;
+    });
+    setBusy(root, disabled, "Saving collection changes");
+  }
+
+  async function run(operation) {
+    if (pending || signal?.aborted) return false;
+    pending = true;
+    controlsDisabled(true);
+    try {
+      const result = await operation();
+      if (signal?.aborted) return false;
+      return result;
+    } catch (error) {
+      if (signal?.aborted) return false;
+      try {
+        const truth = await reload();
+        if (!signal?.aborted) onReloaded(truth);
+      } catch (reloadError) {
+        if (!signal?.aborted) onStale(reloadError);
+      }
+      throw error;
+    } finally {
+      pending = false;
+      if (!signal?.aborted) controlsDisabled(false);
+    }
+  }
+
+  return {
+    run,
+    get pending() { return pending; },
+  };
+}
+
+export function createPersistentAudioPlayer({
+  host,
+  notifyFailure = (message) => notify(message, { kind: "failure", timeout: 0 }),
+} = {}) {
+  if (!host) throw new Error("The persistent audio player host is missing.");
+  const label = element("strong", { id: "audioTrackLabel", text: "No chapter selected" });
+  const dismiss = element("button", {
+    type: "button",
+    className: "button button-secondary audio-dismiss",
+    "aria-label": "Dismiss chapter player",
+  }, [element("span", { text: "Dismiss" })]);
+  const heading = element("div", { className: "audio-player-heading" }, [
+    element("div", {}, [element("span", { className: "audio-player-caption", text: "Now previewing" }), label]),
+    dismiss,
+  ]);
+  const audio = element("audio", {
+    id: "persistentAudioPlayer",
+    controls: true,
+    preload: "metadata",
+    "aria-labelledby": "audioTrackLabel",
+  });
+
+  function reserveWorkspace(visible) {
+    document.body?.classList.toggle("audio-player-visible", visible);
+  }
+
+  function dismissPlayer() {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.removeAttribute("src");
+    audio.load();
+    label.textContent = "No chapter selected";
+    host.removeAttribute("aria-label");
+    host.hidden = true;
+    reserveWorkspace(false);
+  }
+
+  dismiss.addEventListener("click", dismissPlayer);
+  replace(host, heading, audio);
+
+  return {
+    play({ src, label: trackLabel }) {
+      host.hidden = false;
+      reserveWorkspace(true);
+      label.textContent = trackLabel;
+      host.setAttribute("aria-label", `Audio player: ${trackLabel}`);
+      audio.setAttribute("aria-label", `Chapter preview: ${trackLabel}`);
+      audio.src = src;
+      audio.setAttribute("src", src);
+      const started = audio.play();
+      if (started?.catch) {
+        started.catch(() => notifyFailure("Playback could not start automatically. Use the audio player controls to try again."));
+      }
+    },
+    dismiss: dismissPlayer,
+  };
+}
+
 export function showConfirmDialog({
   title,
   message,

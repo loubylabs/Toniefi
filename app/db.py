@@ -99,6 +99,77 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
     return created
 
 
+class OperationConflict(RuntimeError):
+    """An idempotency key was reused for a different confirmed operation."""
+
+
+def _existing_operation(
+    conn: sqlite3.Connection,
+    operation_key: str,
+    operation_digest: str,
+) -> list[int] | None:
+    rows = conn.execute("SELECT id,payload FROM jobs WHERE kind='push' ORDER BY id").fetchall()
+    existing = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if payload.get("operation_key") == operation_key:
+            existing.append((int(row["id"]), payload))
+    if not existing:
+        return None
+    if any(payload.get("operation_digest") != operation_digest for _, payload in existing):
+        raise OperationConflict("This operation key belongs to a different push batch.")
+    return [job_id for job_id, _ in existing]
+
+
+def existing_idempotent_jobs(operation_key: str, operation_digest: str) -> list[int] | None:
+    with _lock:
+        return _existing_operation(connect(), operation_key, operation_digest)
+
+
+def create_idempotent_jobs(
+    operation_key: str,
+    operation_digest: str,
+    entries: list[tuple[str, str, dict[str, Any]]],
+) -> tuple[list[int], bool]:
+    """Atomically return an existing batch or create the entire batch."""
+    if not entries:
+        raise ValueError("A push batch needs at least one assignment.")
+    now = time.time()
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = _existing_operation(conn, operation_key, operation_digest)
+            if existing is not None:
+                conn.commit()
+                return existing, False
+
+            created = []
+            total = len(entries)
+            for position, (kind, label, payload) in enumerate(entries, start=1):
+                stored = {
+                    **payload,
+                    "operation_key": operation_key,
+                    "operation_digest": operation_digest,
+                    "batch_position": position,
+                    "batch_size": total,
+                }
+                cursor = conn.execute(
+                    "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+                    "VALUES(?,'queued',?,?,?,?)",
+                    (kind, label, json.dumps(stored), now, now),
+                )
+                created.append(int(cursor.lastrowid))
+            conn.commit()
+            return created, True
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def clone_failed_job(job_id: int) -> int:
     """Clone a failed job into a new queued job, preserving the original."""
     now = time.time()

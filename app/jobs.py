@@ -292,15 +292,7 @@ def _handle(job: dict) -> dict:
         )
 
     if kind == "push":
-        return push.push(
-            payload["slug"],
-            payload["household_id"],
-            payload["tonie_id"],
-            names=payload.get("names"),
-            group_index=payload.get("group_index"),
-            replace=payload.get("replace", True),
-            progress=progress,
-        )
+        return push.push_confirmed(payload, progress=progress)
 
     raise RuntimeError(f"Unknown job kind: {kind}")
 

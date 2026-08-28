@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { icon } from "./icons.js";
 import {
   announce,
+  createMutationController,
   element,
   notify,
   rememberFocus,
@@ -9,6 +10,7 @@ import {
   restoreFocus,
   setBusy,
   showConfirmDialog,
+  snapshotRefreshOutcome,
 } from "./shared.js";
 
 export function filterCollectionsByTitle(collections, query) {
@@ -54,7 +56,8 @@ export function createLibraryScreen({
 } = {}) {
   if (!refresh) throw new Error("Library requires the application refresh coordinator.");
 
-  return function renderLibrary({ workspace }) {
+  return function renderLibrary({ workspace, signal }) {
+    let active = true;
     let collections = refresh.snapshot.collections || [];
     let query = "";
     const root = element("section", { className: "library-screen", "aria-labelledby": "library-title" });
@@ -66,6 +69,7 @@ export function createLibraryScreen({
       type: "button",
       className: "button button-secondary library-rescan",
       "data-focus-key": "library-rescan",
+      "data-collection-mutation": "",
     }, [iconNode("refresh"), element("span", { text: "Rescan" })]);
     const header = element("div", { className: "screen-heading" }, [titleGroup, rescan]);
     const searchLabel = element("label", { for: "library-search", text: "Search collection titles" });
@@ -84,6 +88,35 @@ export function createLibraryScreen({
     const summary = element("p", { className: "library-summary", role: "status", "aria-live": "polite" });
     const list = element("ul", { className: "library-list" });
 
+    function showStale(message) {
+      if (!active || signal?.aborted) return;
+      const retry = element("button", { type: "button", className: "button button-secondary", text: "Retry" });
+      retry.addEventListener("click", async () => {
+        try {
+          const snapshot = await refresh.request();
+          if (!snapshotRefreshOutcome(snapshot, "collections").stale) onRefresh(snapshot);
+          else showStale("Library information is still stale. The last available index remains visible.");
+        } catch (error) {
+          showStale(error.message);
+        }
+      });
+      stale.hidden = false;
+      replace(stale, element("strong", { text: "Library state may be stale" }), element("p", { text: message }), retry);
+    }
+
+    const mutation = createMutationController({
+      root,
+      signal,
+      reload: async () => {
+        const snapshot = await refresh.request();
+        const outcome = snapshotRefreshOutcome(snapshot, "collections");
+        if (outcome.stale) throw outcome.error || new Error("Library refresh failed.");
+        return snapshot;
+      },
+      onReloaded: (snapshot) => onRefresh(snapshot),
+      onStale: (error) => showStale(`${error.message} The current index remains visible.`),
+    });
+
     function collectionRow(collection, index, shown) {
       const titleId = `library-collection-${collection.slug}`;
       const open = element("a", {
@@ -91,11 +124,16 @@ export function createLibraryScreen({
         href: `/review/${encodeURIComponent(collection.slug)}`,
         "data-route": "review",
         "data-focus-key": `library-${collection.slug}-open`,
+        "data-collection-mutation": "",
       }, [iconNode("review"), element("span", { text: "Open for review" })]);
+      open.addEventListener("click", (event) => {
+        if (mutation.pending) event.preventDefault();
+      });
       const removeButton = element("button", {
         type: "button",
         className: "button button-secondary library-delete",
         "data-focus-key": `library-${collection.slug}-delete`,
+        "data-collection-mutation": "",
       }, [iconNode("trash"), element("span", { text: "Delete" })]);
       removeButton.addEventListener("click", async () => {
         const confirmed = await showConfirmDialog({
@@ -109,13 +147,15 @@ export function createLibraryScreen({
         removeButton.disabled = true;
         const fallback = shown[index + 1] || shown[index - 1];
         try {
-          await request(`/api/collections/${encodeURIComponent(collection.slug)}`, { method: "DELETE" });
+          const removed = await mutation.run(() => request(`/api/collections/${encodeURIComponent(collection.slug)}`, { method: "DELETE", signal }));
+          if (!removed || !active || signal?.aborted) return;
           collections = collections.filter((item) => item.slug !== collection.slug);
           render({ focusKey: fallback ? `library-${fallback.slug}-open` : "library-search" });
           notify(`${collection.title || "The collection"} and its local audio files were deleted.`, { kind: "success" });
           announce(`${collection.title || "Collection"} deleted from the local library.`);
           await refresh.request();
         } catch (error) {
+          if (!active || signal?.aborted) return;
           removeButton.disabled = false;
           notify(error.message, { kind: "failure", timeout: 0 });
           removeButton.focus({ preventScroll: true });
@@ -144,6 +184,7 @@ export function createLibraryScreen({
     }
 
     function render({ focusKey = "" } = {}) {
+      if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
       const shown = filterCollectionsByTitle(collections, query);
       if (!collections.length) {
@@ -181,11 +222,11 @@ export function createLibraryScreen({
     }
 
     function onRefresh(snapshot) {
+      if (!active || signal?.aborted) return;
       const failed = snapshot.stale?.includes("collections");
       stale.hidden = !failed;
-      stale.textContent = failed
-        ? "Library information could not refresh. Showing the last available local collection index."
-        : "";
+      if (failed) showStale("Library information could not refresh. Showing the last available local collection index.");
+      else replace(stale);
       if (!failed) collections = snapshot.collections || [];
       render();
     }
@@ -200,18 +241,24 @@ export function createLibraryScreen({
       setBusy(root, true, "Rescanning local collection folders");
       const current = collections.slice();
       const outcomes = await Promise.allSettled(current.map((collection) => (
-        request(`/api/collections/${encodeURIComponent(collection.slug)}?refresh=true`)
+        request(`/api/collections/${encodeURIComponent(collection.slug)}?refresh=true`, { signal })
       )));
       const failures = outcomes.filter((outcome) => outcome.status === "rejected");
       try {
-        await refresh.request();
+        const snapshot = await refresh.request();
+        if (snapshotRefreshOutcome(snapshot, "collections").stale) {
+          failures.push({ status: "rejected", reason: snapshot.errors?.collections });
+        }
       } finally {
-        setBusy(root, false);
-        rescan.disabled = false;
-        rescan.focus({ preventScroll: true });
+        if (active && !signal?.aborted) {
+          setBusy(root, false);
+          rescan.disabled = false;
+          rescan.focus({ preventScroll: true });
+        }
       }
+      if (!active || signal?.aborted) return;
       if (failures.length) {
-        notify(`${failures.length} ${failures.length === 1 ? "folder" : "folders"} could not be rescanned. The last available details remain visible.`, {
+        notify(`${failures.length} ${failures.length === 1 ? "refresh step" : "refresh steps"} could not complete. The last available details remain visible. Retry when the library is available.`, {
           kind: "failure",
           timeout: 0,
         });
@@ -226,6 +273,9 @@ export function createLibraryScreen({
     render();
     const unsubscribe = refresh.subscribe(onRefresh);
     refresh.request();
-    return () => unsubscribe();
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   };
 }
