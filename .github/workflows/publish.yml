@@ -18,9 +18,14 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer commit on the same ref makes an in-flight build pointless, and the
-  # arm64 leg is slow enough that overlapping runs actually collide.
-  group: publish-${{ github.ref }}
+  # Pull requests on the same ref share one group, so a newer push cancels a
+  # superseded build in flight: that is where the waste is. Every other run
+  # (a push to main, a tag, a manual dispatch) gets its own group keyed on
+  # the commit, because GitHub allows only one pending run per group and
+  # would otherwise cancel a queued main-branch publish out from under a
+  # later push, silently dropping that commit's sha-<short> tag with a
+  # cancelled run, not a failed one, to show for it.
+  group: publish-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   # Only cancel on pull requests, where a superseded build is pure waste. A
   # push to main must always finish: cancelling it would leave the commit
   # with no sha-<short> tag and a cancelled run, not a failed one, so nobody
@@ -101,8 +106,12 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Keyed on the run and the attempt, not the commit: a hand-dispatched
+          # run of an unchanged commit must still bust the cache and resolve
+          # yt-dlp fresh, and a re-run keeps the same run id, so the attempt
+          # number is what tells that retry apart from the run it retries.
           build-args: |
-            YTDLP_REFRESH=${{ github.sha }}
+            YTDLP_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           # Without a cache every run reinstalls ffmpeg and every wheel twice,
           # once per architecture.
           cache-from: type=gha

@@ -5,5 +5,7 @@ python-multipart==0.0.20
 # Deliberately unpinned. yt-dlp ships fixes within days of a site changing its
 # player, so a pin here is a time bomb: an old release fails every YouTube URL
 # with "The page needs to be reloaded" and nothing else in the app can tell you
-# why. Rebuild the image to pick up a newer one.
+# why. To pick up a newer one, publish a fresh image (push to main, or
+# dispatch the publish workflow by hand) and docker compose pull, or run
+# ./run-local.sh, which upgrades yt-dlp on every start.
 yt-dlp>=2026.8.19
