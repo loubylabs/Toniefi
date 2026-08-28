@@ -144,6 +144,28 @@ def run(
     split_oversized: bool = True,
     progress: Progress = _noop,
 ) -> dict[str, Any]:
+    with library.collection_lease():
+        return _run_locked(
+            slug,
+            normalize=normalize,
+            clean_titles=clean_titles,
+            trim_head=trim_head,
+            trim_tail=trim_tail,
+            split_oversized=split_oversized,
+            progress=progress,
+        )
+
+
+def _run_locked(
+    slug: str,
+    *,
+    normalize: bool,
+    clean_titles: bool,
+    trim_head: float,
+    trim_tail: float,
+    split_oversized: bool,
+    progress: Progress,
+) -> dict[str, Any]:
     manifest = library.get(slug, refresh=True)
     if not manifest:
         raise RuntimeError(f"No collection named {slug}.")

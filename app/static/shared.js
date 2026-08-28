@@ -192,6 +192,7 @@ export function createMutationController({
 
   return {
     run,
+    sync: () => controlsDisabled(pending),
     get pending() { return pending; },
   };
 }

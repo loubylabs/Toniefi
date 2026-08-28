@@ -232,6 +232,7 @@ export function createLibraryScreen({
         summary.textContent = `${shown.length} of ${collections.length} ${collections.length === 1 ? "collection" : "collections"}`;
         replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown)));
       }
+      mutation.sync();
       restoreFocus(token, { root, fallback: search });
     }
 
@@ -259,7 +260,6 @@ export function createLibraryScreen({
             refresh,
             signal,
           });
-          if (active && !signal?.aborted) onRefresh(outcome.snapshot);
           return outcome;
         });
         if (!result || !active || signal?.aborted) return;

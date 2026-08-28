@@ -2,11 +2,41 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import nullcontext
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import config, db, jobs, library, main, push
+
+
+class ObservableRLock:
+    def __init__(self, contended: threading.Event):
+        self._condition = threading.Condition()
+        self._owner = None
+        self._depth = 0
+        self._contended = contended
+
+    def __enter__(self):
+        ident = threading.get_ident()
+        with self._condition:
+            if self._owner == ident:
+                self._depth += 1
+                return self
+            if self._owner is not None:
+                self._contended.set()
+            while self._owner is not None:
+                self._condition.wait()
+            self._owner = ident
+            self._depth = 1
+        return self
+
+    def __exit__(self, *_):
+        with self._condition:
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+                self._condition.notify_all()
 
 
 @pytest.fixture
@@ -259,23 +289,35 @@ def test_manifest_mutations_share_one_read_modify_write_lock(isolated, monkeypat
 
 def test_two_push_workers_serialize_one_tonie_from_read_through_upload(isolated, monkeypatch):
     body = batch_body(isolated)
-    entered_first_read = threading.Event()
-    release_first_read = threading.Event()
-    second_worker_read = threading.Event()
-    worker_two_started = threading.Event()
+    entered_final_read = threading.Event()
+    release_final_read = threading.Event()
+    second_contended = threading.Event()
+    events = []
     thread_errors = []
 
     class SharedCloud(StubCloud):
+        def __init__(self):
+            super().__init__()
+            self.reads = {}
+
         def get_tonie(self, household_id, tonie_id):
-            if threading.current_thread().name == "push-worker-one" and not entered_first_read.is_set():
-                entered_first_read.set()
-                assert release_first_read.wait(5)
-            elif threading.current_thread().name == "push-worker-two":
-                second_worker_read.set()
+            name = threading.current_thread().name
+            self.reads[name] = self.reads.get(name, 0) + 1
+            if name == "push-worker-one" and self.reads[name] == 2:
+                events.append("first-final-read-enter")
+                entered_final_read.set()
+                assert release_final_read.wait(5)
+                events.append("first-final-read-return")
+            elif name == "push-worker-two":
+                events.append("second-read")
             return super().get_tonie(household_id, tonie_id)
 
     cloud = SharedCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
+    monkeypatch.setattr(library, "collection_lease", nullcontext)
+    monkeypatch.setattr(push, "_target_locks", {
+        ("house-1", "tonie-1"): ObservableRLock(second_contended),
+    })
     payload = {
         **body["assignments"][0],
         "slug": isolated,
@@ -283,31 +325,108 @@ def test_two_push_workers_serialize_one_tonie_from_read_through_upload(isolated,
         "replace": True,
     }
 
-    def run_push(started=None):
-        if started:
-            started.set()
+    def run_push():
         try:
             push.push_confirmed(payload)
         except BaseException as exc:
             thread_errors.append(exc)
 
     first = threading.Thread(name="push-worker-one", target=run_push)
-    second = threading.Thread(name="push-worker-two", target=run_push, args=(worker_two_started,))
+    second = threading.Thread(name="push-worker-two", target=run_push)
     first.start()
-    assert entered_first_read.wait(5)
+    assert entered_final_read.wait(5)
     second.start()
-    assert worker_two_started.wait(5)
-    serialized = not second_worker_read.wait(0.15)
-    release_first_read.set()
+    assert second_contended.wait(5)
+    release_final_read.set()
     first.join(5)
     second.join(5)
 
-    assert serialized
     assert not first.is_alive() and not second.is_alive()
+    assert events.index("first-final-read-return") < events.index("second-read")
     assert len(thread_errors) == 1
     assert isinstance(thread_errors[0], push.StalePush)
     assert cloud.calls.count("clear") == 1
     assert len([call for call in cloud.calls if call.startswith("upload:")]) == 2
+
+
+def test_chapter_write_waits_for_confirmed_push_final_read(
+    isolated,
+    monkeypatch,
+):
+    body = batch_body(isolated)
+    entered_final_read = threading.Event()
+    release_final_read = threading.Event()
+    chapter_contended = threading.Event()
+    events = []
+    thread_errors = []
+
+    class PausedCloud(StubCloud):
+        def __init__(self):
+            super().__init__()
+            self.push_reads = 0
+
+        def get_tonie(self, household_id, tonie_id):
+            if threading.current_thread().name == "confirmed-push":
+                self.push_reads += 1
+                if self.push_reads == 2:
+                    events.append("push-final-read-enter")
+                    entered_final_read.set()
+                    assert release_final_read.wait(5)
+                    events.append("push-final-read-return")
+            else:
+                events.append("chapter-read")
+            return super().get_tonie(household_id, tonie_id)
+
+        def set_chapters(self, household_id, tonie_id, chapters):
+            events.append("chapter-mutation")
+            self.chapters = list(chapters)
+
+        def households(self):
+            return [{"id": "house-1", "name": "Home"}]
+
+    cloud = PausedCloud()
+    monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
+    monkeypatch.setattr(push, "_target_locks", {
+        ("house-1", "tonie-1"): ObservableRLock(chapter_contended),
+    })
+    payload = {
+        **body["assignments"][0],
+        "slug": isolated,
+        "manifest_fingerprint": body["manifest_fingerprint"],
+        "replace": True,
+    }
+
+    def run(target):
+        try:
+            target()
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    push_thread = threading.Thread(name="confirmed-push", target=run, args=(lambda: push.push_confirmed(payload),))
+    chapter_thread = threading.Thread(name="chapter-writer", target=run, args=(lambda: push.set_tonie_chapters(
+        "house-1",
+        "tonie-1",
+        [
+            {"id": "file-one.mp3", "title": "One"},
+            {"id": "file-two.mp3", "title": "Two"},
+        ],
+        [
+            {"id": "file-one.mp3", "title": "One"},
+            {"id": "file-two.mp3", "title": "Two"},
+        ],
+    ),))
+    push_thread.start()
+    assert entered_final_read.wait(5)
+    chapter_thread.start()
+    assert chapter_contended.wait(5)
+    release_final_read.set()
+    push_thread.join(5)
+    chapter_thread.join(5)
+
+    assert not push_thread.is_alive() and not chapter_thread.is_alive()
+    assert thread_errors == []
+    assert events.index("push-final-read-return") < events.index("chapter-read")
+    assert events.index("chapter-read") < events.index("chapter-mutation")
 
 
 def test_collection_lease_blocks_local_mutation_from_remote_read_through_upload(
@@ -317,18 +436,26 @@ def test_collection_lease_blocks_local_mutation_from_remote_read_through_upload(
     body = batch_body(isolated)
     entered_remote_read = threading.Event()
     release_remote_read = threading.Event()
-    mutation_done = threading.Event()
+    mutation_contended = threading.Event()
+    events = []
     thread_errors = []
 
     class PausedCloud(StubCloud):
+        def __init__(self):
+            super().__init__()
+            self.read_count = 0
+
         def get_tonie(self, household_id, tonie_id):
-            if not entered_remote_read.is_set():
+            self.read_count += 1
+            events.append(f"remote-read-{self.read_count}")
+            if self.read_count == 1:
                 entered_remote_read.set()
                 assert release_remote_read.wait(5)
             return super().get_tonie(household_id, tonie_id)
 
     cloud = PausedCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
+    monkeypatch.setattr(library, "_manifest_lock", ObservableRLock(mutation_contended))
     payload = {
         **body["assignments"][0],
         "slug": isolated,
@@ -345,25 +472,23 @@ def test_collection_lease_blocks_local_mutation_from_remote_read_through_upload(
     def remove_confirmed_file():
         try:
             library.delete_track(isolated, "one.mp3")
+            events.append("mutation-done")
         except BaseException as exc:
             thread_errors.append(exc)
-        finally:
-            mutation_done.set()
 
     worker = threading.Thread(name="leased-push", target=run_push)
     mutation = threading.Thread(name="local-mutation", target=remove_confirmed_file)
     worker.start()
     assert entered_remote_read.wait(5)
     mutation.start()
-    blocked = not mutation_done.wait(0.15)
+    assert mutation_contended.wait(5)
     release_remote_read.set()
     worker.join(5)
     mutation.join(5)
 
-    assert blocked
     assert not worker.is_alive() and not mutation.is_alive()
     assert thread_errors == []
-    assert cloud.calls.index("clear") < cloud.calls.index("upload:one.mp3")
+    assert events.index("remote-read-2") < events.index("mutation-done")
     assert not (config.LIBRARY_DIR / isolated / "one.mp3").exists()
 
 
@@ -382,6 +507,14 @@ def test_failed_push_job_cannot_be_cloned_by_generic_retry(isolated):
     assert db.jobs_for_refresh()[0]["id"] == job_id
     assert db.get_job(job_id)["payload"] == original["payload"]
     assert jobs.present(db.get_job(job_id))["retryable"] is False
+
+
+def test_storage_clone_refuses_failed_push_without_jobs_service(isolated):
+    job_id = db.create_job("push", "Confirmed send", {"operation_key": "one"})
+    db.update_job(job_id, status="failed", error="remote stale")
+
+    assert db.clone_failed_job(job_id) == 0
+    assert [job["id"] for job in db.jobs_for_refresh()] == [job_id]
 
 
 def test_failed_prepare_job_remains_explicitly_retryable(isolated):

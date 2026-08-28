@@ -93,32 +93,33 @@ def librivox_sections(book_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
 
 def import_librivox(book_id: str, progress: Progress = _noop) -> dict[str, Any]:
     book, sections = librivox_sections(book_id)
-    title = book.get("title", f"LibriVox {book_id}")
-    slug = library.create(title, source="librivox", extra={
-        "author": _authors(book),
-        "librivox_id": book_id,
-        "url": book.get("url_librivox", ""),
-        "license": "Public domain (LibriVox)",
-    })
-    dest = config.LIBRARY_DIR / slug
+    with library.collection_lease():
+        title = book.get("title", f"LibriVox {book_id}")
+        slug = library.create(title, source="librivox", extra={
+            "author": _authors(book),
+            "librivox_id": book_id,
+            "url": book.get("url_librivox", ""),
+            "license": "Public domain (LibriVox)",
+        })
+        dest = config.LIBRARY_DIR / slug
 
-    total = len(sections)
-    with httpx.Client(timeout=300.0, follow_redirects=True,
-                      headers={"User-Agent": USER_AGENT}) as client:
+        total = len(sections)
+        with httpx.Client(timeout=300.0, follow_redirects=True,
+                          headers={"User-Agent": USER_AGENT}) as client:
+            for position, section in enumerate(sections, start=1):
+                label = section.get("title") or f"Section {position}"
+                progress(f"Downloading {position}/{total}: {label}")
+                filename = f"{position:03d}-{audio.slugify(label)}.mp3"
+                _stream_download(client, section["listen_url"], dest / filename)
+
+        # LibriVox section titles are already clean; keep them as the track titles.
+        library.rescan(slug)
         for position, section in enumerate(sections, start=1):
             label = section.get("title") or f"Section {position}"
-            progress(f"Downloading {position}/{total}: {label}")
-            filename = f"{position:03d}-{audio.slugify(label)}.mp3"
-            _stream_download(client, section["listen_url"], dest / filename)
+            library.rename_track(slug, f"{position:03d}-{audio.slugify(label)}.mp3", label)
 
-    # LibriVox section titles are already clean; keep them as the track titles.
-    library.rescan(slug)
-    for position, section in enumerate(sections, start=1):
-        label = section.get("title") or f"Section {position}"
-        library.rename_track(slug, f"{position:03d}-{audio.slugify(label)}.mp3", label)
-
-    progress("Probing durations")
-    return library.get(slug, refresh=True)
+        progress("Probing durations")
+        return library.get(slug, refresh=True)
 
 
 def _stream_download(client: httpx.Client, url: str, dest: Path) -> None:
@@ -241,44 +242,45 @@ def import_url(
         uploader = info.get("uploader") or info.get("channel") or ""
         book_title = title or forge.clean_title(info.get("title") or produced[0].stem)
 
-        if slug:
-            target_slug = slug
-            dest = config.LIBRARY_DIR / target_slug
-            if not dest.is_dir():
-                raise RuntimeError(f"No collection named {slug}.")
-            start = library.next_index(dest)
-        else:
-            target_slug = library.create(book_title, source="url", extra={
-                "url": info.get("webpage_url") or url,
-                "uploader": uploader,
-                "raw_title": info.get("title") or "",
-                "from_chapters": bool(chaptered),
-            })
-            dest = config.LIBRARY_DIR / target_slug
-            start = 1
+        with library.collection_lease():
+            if slug:
+                target_slug = slug
+                dest = config.LIBRARY_DIR / target_slug
+                if not dest.is_dir():
+                    raise RuntimeError(f"No collection named {slug}.")
+                start = library.next_index(dest)
+            else:
+                target_slug = library.create(book_title, source="url", extra={
+                    "url": info.get("webpage_url") or url,
+                    "uploader": uploader,
+                    "raw_title": info.get("title") or "",
+                    "from_chapters": bool(chaptered),
+                })
+                dest = config.LIBRARY_DIR / target_slug
+                start = 1
 
-        stored: list[tuple[str, str]] = []
-        for offset, src in enumerate(produced):
-            index = start + offset
-            # Name the file from the cleaned title, not the raw stem. A chapter
-            # file arrives as "001-Intro", so slugifying the stem would stutter
-            # the index back out as "001-001-intro.mp3".
-            track_title = _track_title(src.stem, chaptered, offset, book_title)
-            name = f"{index:03d}-{audio.slugify(track_title)}.mp3"
-            progress(f"Storing {index}/{len(produced)}")
-            shutil.move(str(src), dest / name)
-            stored.append((name, track_title))
+            stored: list[tuple[str, str]] = []
+            for offset, src in enumerate(produced):
+                index = start + offset
+                # Name the file from the cleaned title, not the raw stem. A chapter
+                # file arrives as "001-Intro", so slugifying the stem would stutter
+                # the index back out as "001-001-intro.mp3".
+                track_title = _track_title(src.stem, chaptered, offset, book_title)
+                name = f"{index:03d}-{audio.slugify(track_title)}.mp3"
+                progress(f"Storing {index}/{len(produced)}")
+                shutil.move(str(src), dest / name)
+                stored.append((name, track_title))
 
-        cover = _pick_thumbnail(tmp)
-        if cover:
-            shutil.move(str(cover), dest / "cover.jpg")
+            cover = _pick_thumbnail(tmp)
+            if cover:
+                shutil.move(str(cover), dest / "cover.jpg")
 
-    library.rescan(target_slug)
-    for name, track_title in stored:
-        library.rename_track(target_slug, name, track_title)
+            library.rescan(target_slug)
+            for name, track_title in stored:
+                library.rename_track(target_slug, name, track_title)
 
-    progress("Probing durations")
-    return library.get(target_slug, refresh=True)
+            progress("Probing durations")
+            return library.get(target_slug, refresh=True)
 
 
 def _read_info_json(tmp: Path) -> dict[str, Any]:
@@ -330,23 +332,24 @@ def import_upload(
     source = Path(source)
     if not source.is_file():
         raise RuntimeError("The staged upload file is missing. Submit the collection again.")
-    dest = config.LIBRARY_DIR / slug
-    if not dest.is_dir():
-        raise RuntimeError(f"No collection named {slug}.")
-    target = dest / target_name
-    if target.parent != dest or target.suffix.lower() != suffix:
-        raise RuntimeError("The upload target is invalid.")
+    with library.collection_lease():
+        dest = config.LIBRARY_DIR / slug
+        if not dest.is_dir():
+            raise RuntimeError(f"No collection named {slug}.")
+        target = dest / target_name
+        if target.parent != dest or target.suffix.lower() != suffix:
+            raise RuntimeError("The upload target is invalid.")
 
-    if not target.is_file():
-        partial = dest / f".{target.name}.part"
-        with source.open("rb") as staged, partial.open("wb") as output:
-            shutil.copyfileobj(staged, output, length=1024 * 1024)
-        partial.replace(target)
+        if not target.is_file():
+            partial = dest / f".{target.name}.part"
+            with source.open("rb") as staged, partial.open("wb") as output:
+                shutil.copyfileobj(staged, output, length=1024 * 1024)
+            partial.replace(target)
 
-    library.rescan(slug)
-    library.rename_track(
-        slug,
-        target.name,
-        forge.clean_title(Path(filename).stem, drop_leading_index=True),
-    )
-    return library.get(slug, refresh=True)
+        library.rescan(slug)
+        library.rename_track(
+            slug,
+            target.name,
+            forge.clean_title(Path(filename).stem, drop_leading_index=True),
+        )
+        return library.get(slug, refresh=True)
