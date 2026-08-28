@@ -10,6 +10,7 @@ Four passes, each independently optional:
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -145,19 +146,64 @@ def run(
     progress: Progress = _noop,
 ) -> dict[str, Any]:
     with library.collection_lease():
-        return _run_locked(
-            slug,
-            normalize=normalize,
-            clean_titles=clean_titles,
-            trim_head=trim_head,
-            trim_tail=trim_tail,
-            split_oversized=split_oversized,
-            progress=progress,
-        )
+        library.recover_collection_publications()
+        identity = f"manual-{slug}"
+        stage = library.create_replacement_stage(slug, identity)
+        try:
+            _run_at_path(
+                stage,
+                normalize=normalize,
+                clean_titles=clean_titles,
+                trim_head=trim_head,
+                trim_tail=trim_tail,
+                split_oversized=split_oversized,
+                progress=progress,
+            )
+            return library.publish_replacement(slug, stage, identity)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
 
 
-def _run_locked(
-    slug: str,
+def run_collection_stage(
+    stage_identity: str,
+    *,
+    normalize: bool = True,
+    clean_titles: bool = True,
+    trim_head: float = 0,
+    trim_tail: float = 0,
+    split_oversized: bool = True,
+    progress: Progress = _noop,
+) -> dict[str, Any]:
+    """Forge immutable extracted staging and publish only complete output."""
+    with library.collection_lease():
+        published = library.find_published_stage(stage_identity)
+        if published:
+            return published
+        forge_identity = f"prepare-{stage_identity}"
+        stage = library.create_forge_stage_from_collection_stage(stage_identity, forge_identity)
+        try:
+            _run_at_path(
+                stage,
+                normalize=normalize,
+                clean_titles=clean_titles,
+                trim_head=trim_head,
+                trim_tail=trim_tail,
+                split_oversized=split_oversized,
+                progress=progress,
+            )
+            return library.publish_forged_collection_stage(
+                stage_identity,
+                stage,
+                forge_identity,
+            )
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
+
+
+def _run_at_path(
+    path: Path,
     *,
     normalize: bool,
     clean_titles: bool,
@@ -166,11 +212,10 @@ def _run_locked(
     split_oversized: bool,
     progress: Progress,
 ) -> dict[str, Any]:
-    manifest = library.get(slug, refresh=True)
+    manifest = library.get_at_path(path, refresh=True)
     if not manifest:
-        raise RuntimeError(f"No collection named {slug}.")
+        raise RuntimeError("The Forge input collection is missing.")
 
-    path = config.LIBRARY_DIR / slug
     tracks = manifest["tracks"]
     total = len(tracks)
 
@@ -190,9 +235,9 @@ def _run_locked(
         for track in tracks:
             cleaned = clean_title(track.get("title") or Path(track["name"]).stem)
             cleaned = strip_channel_prefix(cleaned, uploader)
-            library.rename_track(slug, track["name"], cleaned)
+            library.rename_track_at_path(path, track["name"], cleaned)
 
-    manifest = library.get(slug, refresh=True)
+    manifest = library.get_at_path(path, refresh=True)
 
     if split_oversized:
         limit = config.usable_limit()
@@ -203,15 +248,14 @@ def _run_locked(
             parts = audio.split(src, path, limit, stem=Path(track["name"]).stem)
             if parts and parts[0] != src:
                 src.unlink()
-                library.replace_track(slug, track["name"], [p.name for p in parts])
+                library.replace_track_at_path(path, track["name"], [p.name for p in parts])
 
     progress("Re-probing")
-    result = library.get(slug, refresh=True)
-    library.set_forge_state(slug, {
+    library.get_at_path(path, refresh=True)
+    return library.set_forge_state_at_path(path, {
         "normalized": normalize,
         "titles_cleaned": clean_titles,
         "trim_head": trim_head,
         "trim_tail": trim_tail,
         "split": split_oversized,
     })
-    return result

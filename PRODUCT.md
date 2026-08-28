@@ -24,6 +24,7 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 - Each source becomes its own independent collection. A batch of five audiobook links produces five collections.
 - URL imports run through extraction and the default Forge cleanup automatically, then stop in a review queue before any Creative Tonie is changed.
 - Long-running extraction, Forge, and transfer work runs in background jobs and can survive the browser closing.
+- URL, LibriVox, upload, and Forge output stays hidden until one complete collection can be published atomically.
 - Review includes cover art, chapter titles, order, playback, duration, and the planned split across one or more Creative Tonies.
 - The myTonies account is configured once for the household and is only needed for listing, editing, and sending to Creative Tonies.
 
@@ -36,6 +37,8 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 - Nothing is sent to a Creative Tonie without explicit user review and selection.
 - myTonies uses a private, unsupported API. Two-factor accounts are not supported by the current login method.
 - Credentials may come from environment variables or the local SQLite settings store. Credentials saved through the UI are stored as plain text and must be described honestly.
+- A complete credential pair is Configured. Connected is reserved for a successful connection test in the current browser session.
+- Legacy extracted collections use the persisted Forge job as their only migration path to Review Shelf.
 - Tonie chapter changes have no undo in the Tonie Cloud. Destructive actions require confirmation and concurrent external changes must never be overwritten silently.
 - The app remains single-household for this redesign. Multi-user and multi-household management are outside scope.
 

@@ -32,8 +32,7 @@ def client(isolated_settings) -> TestClient:
 
 
 def test_delete_credentials_removes_both_saved_values_and_reports_none(client):
-    db.set_setting("tonies_username", "saved@example.com")
-    db.set_setting("tonies_password", "secret")
+    db.replace_credentials("saved@example.com", "secret")
 
     response = client.delete("/api/settings/credentials")
 
@@ -43,8 +42,7 @@ def test_delete_credentials_removes_both_saved_values_and_reports_none(client):
         "source": "none",
         "username": "",
     }
-    assert db.get_setting("tonies_username") == ""
-    assert db.get_setting("tonies_password") == ""
+    assert db.get_credentials() == ("", "")
     assert "secret" not in response.text
     assert client.get("/api/status").json()["credentials"] == response.json()
 
@@ -59,8 +57,7 @@ def test_delete_credentials_is_idempotent(client):
 
 
 def test_delete_credentials_leaves_environment_credentials_active(client, monkeypatch):
-    db.set_setting("tonies_username", "saved@example.com")
-    db.set_setting("tonies_password", "saved-secret")
+    db.replace_credentials("saved@example.com", "saved-secret")
     monkeypatch.setattr(config, "TONIES_USERNAME", "environment@example.com")
     monkeypatch.setattr(config, "TONIES_PASSWORD", "environment-secret")
 
@@ -72,8 +69,7 @@ def test_delete_credentials_leaves_environment_credentials_active(client, monkey
         "source": "environment",
         "username": "environment@example.com",
     }
-    assert db.get_setting("tonies_username") == ""
-    assert db.get_setting("tonies_password") == ""
+    assert db.get_credentials() == ("", "")
     assert "environment-secret" not in response.text
 
 
@@ -109,10 +105,7 @@ def test_credential_pair_selection_never_mixes_sources(
     saved_username, saved_password = saved
     monkeypatch.setattr(config, "TONIES_USERNAME", environment_username)
     monkeypatch.setattr(config, "TONIES_PASSWORD", environment_password)
-    if saved_username:
-        db.set_setting("tonies_username", saved_username)
-    if saved_password:
-        db.set_setting("tonies_password", saved_password)
+    db.replace_credentials(saved_username, saved_password)
 
     selected = push.select_credentials()
 
@@ -126,8 +119,7 @@ def test_credential_pair_selection_never_mixes_sources(
 
 
 def test_partial_environment_credentials_block_saved_fallback(client, monkeypatch):
-    db.set_setting("tonies_username", "saved@example.com")
-    db.set_setting("tonies_password", "saved-password")
+    db.replace_credentials("saved@example.com", "saved-password")
     monkeypatch.setattr(config, "TONIES_USERNAME", "environment@example.com")
     monkeypatch.setattr(config, "TONIES_PASSWORD", "")
 
@@ -144,8 +136,7 @@ def test_partial_environment_credentials_block_saved_fallback(client, monkeypatc
 
 
 def test_status_and_removal_never_return_passwords(client, monkeypatch):
-    db.set_setting("tonies_username", "saved@example.com")
-    db.set_setting("tonies_password", "saved-password")
+    db.replace_credentials("saved@example.com", "saved-password")
     monkeypatch.setattr(config, "TONIES_USERNAME", "")
     monkeypatch.setattr(config, "TONIES_PASSWORD", "environment-password")
 

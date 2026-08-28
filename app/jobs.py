@@ -26,7 +26,7 @@ _now = time.time
 
 def _owned_upload_stage(stage: Path) -> bool:
     return (
-        stage.parent == config.WORK_DIR.resolve()
+        stage.parent == config.upload_stage_dir().resolve()
         and stage.name.startswith("upload-")
         and not stage.is_symlink()
         and (stage / UPLOAD_STAGE_MARKER).is_file()
@@ -74,7 +74,7 @@ def _sweep_upload_stage(stage: Path) -> None:
 def sweep_upload_staging() -> None:
     """Remove expired TonieFi upload stages and leave all other work intact."""
     config.ensure_dirs()
-    for stage in config.WORK_DIR.iterdir():
+    for stage in config.upload_stage_dir().iterdir():
         if stage.name.startswith("upload-"):
             _sweep_upload_stage(stage)
 
@@ -82,7 +82,7 @@ def sweep_upload_staging() -> None:
 def create_upload_stage() -> tuple[str, Path]:
     config.ensure_dirs()
     stage_name = f"upload-{uuid4().hex}"
-    stage = config.WORK_DIR / stage_name
+    stage = config.upload_stage_dir() / stage_name
     with _upload_stage_lock:
         _upload_stage_leases.add(stage.resolve())
         try:
@@ -194,21 +194,26 @@ def _handle(job: dict) -> dict:
     if kind == "librivox":
         current = dict(payload)
         options = {**prepare.DEFAULT_OPTIONS, **current.get("options", {})}
-        slug = current.get("slug")
-        collection = library.get(slug) if slug else None
-        if collection and collection.get("stage") == "forged":
-            return collection
-        if not collection:
-            extracted = ingest.import_librivox(
-                current["book_id"],
-                lambda message: progress(f"extracting: {message}"),
-            )
-            slug = extracted["slug"]
-            current["slug"] = slug
+        stage_id = current.get("stage_id")
+        if not stage_id:
+            stage_id = f"librivox-{uuid4().hex}"
+            current["stage_id"] = stage_id
             current["options"] = options
             db.update_job(job_id, payload=current)
-        return forge.run(
-            slug,
+        published = library.find_published_stage(stage_id)
+        if published:
+            return published
+        extracted = library.collection_stage(stage_id)
+        if not extracted or not library.collection_stage_ready(stage_id):
+            extracted = ingest.import_librivox(
+                current["book_id"],
+                stage_id=stage_id,
+                progress=lambda message: progress(f"extracting: {message}"),
+            )
+            current["slug"] = extracted["slug"]
+            db.update_job(job_id, payload=current)
+        return forge.run_collection_stage(
+            stage_id,
             normalize=options["normalize"],
             clean_titles=options["clean_titles"],
             trim_head=options["trim_head"],
@@ -227,31 +232,36 @@ def _handle(job: dict) -> dict:
     if kind == "upload_prepare":
         current = dict(payload)
         options = {**prepare.DEFAULT_OPTIONS, **current.get("options", {})}
-        stage = (config.WORK_DIR / current["stage"]).resolve()
-        work_root = config.WORK_DIR.resolve()
+        stage = (config.upload_stage_dir() / current["stage"]).resolve()
+        stage_root = config.upload_stage_dir().resolve()
         files = current.get("files", [])
-        slug = current.get("slug")
-        collection = library.get(slug) if slug else None
-        if collection and collection.get("stage") == "forged":
-            if stage.parent == work_root:
+        collection_stage_id = current.get("collection_stage_id")
+        if not collection_stage_id:
+            collection_stage_id = current["stage"]
+            current["collection_stage_id"] = collection_stage_id
+            current["options"] = options
+            db.update_job(job_id, payload=current)
+        published = library.find_published_stage(collection_stage_id)
+        if published:
+            if stage.parent == stage_root:
                 shutil.rmtree(stage, ignore_errors=True)
-            return collection
-        if stage.parent != work_root or not stage.is_dir():
+            return published
+        if stage.parent != stage_root or not stage.is_dir():
+            library.discard_collection_stage(collection_stage_id)
             raise RuntimeError(
                 "Upload staging expired after 24 hours. "
                 "Select the files and submit the collection again."
             )
-        if slug and not collection:
-            current.pop("slug", None)
-            current.pop("owns_collection", None)
+        collection = library.collection_stage(collection_stage_id)
+        if not collection:
             current["next_file"] = 0
-            slug = None
-        if not slug:
             fallback_title = files[0]["name"] if files else "Uploaded collection"
-            slug = library.create(current.get("title") or fallback_title, source="upload")
-            current["slug"] = slug
-            current["next_file"] = 0
-            current["owns_collection"] = True
+            collection = library.begin_collection_stage(
+                collection_stage_id,
+                title=current.get("title") or fallback_title,
+                source="upload",
+            )
+            current["slug"] = collection.slug
             db.update_job(job_id, payload=current)
 
         start = int(current.get("next_file") or 0)
@@ -265,29 +275,20 @@ def _handle(job: dict) -> dict:
                 ingest.import_upload(
                     stage / item["stored"],
                     filename=item["name"],
-                    slug=slug,
+                    stage_id=collection_stage_id,
                     target_name=target,
                 )
                 current["next_file"] = index + 1
                 current.pop("pending_file", None)
                 db.update_job(job_id, payload=current)
+            library.complete_collection_stage(collection_stage_id)
         except Exception:
             mark_upload_stage(stage)
-            if current.get("owns_collection"):
-                try:
-                    library.delete(slug)
-                except (FileNotFoundError, ValueError):
-                    pass
-                current.pop("slug", None)
-                current.pop("owns_collection", None)
-                current.pop("pending_file", None)
-                current["next_file"] = 0
-                db.update_job(job_id, payload=current)
             raise
 
         try:
-            result = forge.run(
-                slug,
+            result = forge.run_collection_stage(
+                collection_stage_id,
                 normalize=options["normalize"],
                 clean_titles=options["clean_titles"],
                 trim_head=options["trim_head"],
@@ -336,13 +337,15 @@ def _worker() -> None:
 
 def start() -> None:
     db.init()
+    library.recover_collection_publications()
     interrupted = db.fail_stale_running()
     for job in interrupted:
         if job.get("kind") != "upload_prepare":
             continue
         stage_name = job.get("payload", {}).get("stage")
         if isinstance(stage_name, str):
-            mark_upload_stage(config.WORK_DIR / stage_name)
+            mark_upload_stage(config.upload_stage_dir() / stage_name)
+    library.sweep_collection_stages(db.referenced_collection_stage_ids())
     sweep_upload_staging()
     for _ in range(config.WORKER_THREADS):
         thread = threading.Thread(target=_worker, daemon=True)

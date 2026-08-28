@@ -50,13 +50,14 @@ else
   .venv/bin/python -m pip install --quiet --upgrade -r requirements.txt
 fi
 
-mkdir -p library data work
+mkdir -p library data work data/upload-staging
 
 # .venv/bin on PATH is what lets the app find yt-dlp, which it shells out to.
 export PATH="$PWD/.venv/bin:$PATH"
 export LIBRARY_DIR="${LIBRARY_DIR:-$PWD/library}"
 export DATA_DIR="${DATA_DIR:-$PWD/data}"
 export WORK_DIR="${WORK_DIR:-$PWD/work}"
+export UPLOAD_STAGE_DIR="${UPLOAD_STAGE_DIR:-$DATA_DIR/upload-staging}"
 
 echo "Toniefi on http://$HOST:$PORT   (library: $LIBRARY_DIR)"
 exec .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT"

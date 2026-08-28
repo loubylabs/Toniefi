@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from copy import deepcopy
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,13 +35,23 @@ def isolated_db(monkeypatch, tmp_path):
 
 def test_prepare_extracts_checkpoints_then_forges(monkeypatch):
     calls = []
-    monkeypatch.setattr(prepare.ingest, "import_url", lambda url, **kw: {"slug": "alice"})
+    monkeypatch.setattr(
+        prepare.ingest,
+        "import_url",
+        lambda url, **kw: kw["progress"]("Fetching audio") or {"slug": "alice"},
+    )
     monkeypatch.setattr(
         prepare.forge,
-        "run",
-        lambda slug, **kw: calls.append(("forge", slug)) or {"slug": slug, "stage": "forged"},
+        "run_collection_stage",
+        lambda stage_id, **kw: (
+            kw["progress"]("Levelling 1/1: Alice")
+            or calls.append(("forge", stage_id))
+            or {"slug": "alice", "stage": "forged"}
+        ),
     )
-    monkeypatch.setattr(prepare.library, "get", lambda slug: None)
+    monkeypatch.setattr(prepare.library, "find_published_stage", lambda stage_id: None)
+    monkeypatch.setattr(prepare.library, "collection_stage", lambda stage_id: None)
+    monkeypatch.setattr(prepare, "uuid4", lambda: type("Id", (), {"hex": "stage41"})())
     checkpoints = []
 
     result = prepare.run(
@@ -49,43 +60,55 @@ def test_prepare_extracts_checkpoints_then_forges(monkeypatch):
         checkpoint=lambda payload: checkpoints.append(dict(payload)),
     )
 
+    assert checkpoints[0]["stage_id"] == "url-stage41"
+    assert "slug" not in checkpoints[0]
     assert checkpoints[-1]["slug"] == "alice"
     assert checkpoints[-1]["options"] == prepare.DEFAULT_OPTIONS
-    assert calls[-1] == ("forge", "alice")
+    assert calls == [
+        ("progress", "extracting: Fetching audio"),
+        ("progress", "forging: Levelling 1/1: Alice"),
+        ("forge", "url-stage41"),
+    ]
     assert result["stage"] == "forged"
 
 
-def test_prepare_resumes_forge_from_an_extracted_slug(monkeypatch):
+def test_prepare_resumes_forge_from_an_extracted_stage(monkeypatch):
     imported = []
     forged = []
     monkeypatch.setattr(prepare.ingest, "import_url", lambda *args, **kwargs: imported.append(args))
-    monkeypatch.setattr(prepare.library, "get", lambda slug: {"slug": slug, "stage": "extracted"})
+    monkeypatch.setattr(prepare.library, "find_published_stage", lambda stage_id: None)
+    monkeypatch.setattr(
+        prepare.library,
+        "collection_stage",
+        lambda stage_id: {"slug": "alice", "stage": "extracted"},
+    )
+    monkeypatch.setattr(prepare.library, "collection_stage_ready", lambda stage_id: True)
     monkeypatch.setattr(
         prepare.forge,
-        "run",
-        lambda slug, **kwargs: forged.append((slug, kwargs)) or {"slug": slug, "stage": "forged"},
+        "run_collection_stage",
+        lambda stage_id, **kwargs: forged.append((stage_id, kwargs)) or {"slug": "alice", "stage": "forged"},
     )
 
     result = prepare.run(
-        {"url": "https://example.com/alice", "slug": "alice", "options": {"trim_head": 3}},
+        {"url": "https://example.com/alice", "stage_id": "url-stage41", "slug": "alice", "options": {"trim_head": 3}},
         progress=lambda message: None,
         checkpoint=lambda payload: None,
     )
 
     assert imported == []
-    assert forged[0][0] == "alice"
+    assert forged[0][0] == "url-stage41"
     assert forged[0][1]["trim_head"] == 3
     assert result["stage"] == "forged"
 
 
 def test_prepare_returns_an_already_forged_collection(monkeypatch):
     forged = {"slug": "alice", "stage": "forged"}
-    monkeypatch.setattr(prepare.library, "get", lambda slug: forged)
+    monkeypatch.setattr(prepare.library, "find_published_stage", lambda stage_id: forged)
     monkeypatch.setattr(prepare.ingest, "import_url", lambda *args, **kwargs: AssertionError("extract"))
-    monkeypatch.setattr(prepare.forge, "run", lambda *args, **kwargs: AssertionError("forge"))
+    monkeypatch.setattr(prepare.forge, "run_collection_stage", lambda *args, **kwargs: AssertionError("forge"))
 
     assert prepare.run(
-        {"url": "https://example.com/alice", "slug": "alice", "options": {}},
+        {"url": "https://example.com/alice", "stage_id": "url-stage41", "slug": "alice", "options": {}},
         progress=lambda message: None,
         checkpoint=lambda payload: None,
     ) == forged
@@ -95,13 +118,13 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
     calls = []
     updates = []
 
-    def import_book(book_id, progress):
+    def import_book(book_id, *, stage_id, progress):
         calls.append(("import", book_id))
         progress("Downloading 1/2: Chapter one")
         return {"slug": "wind-in-the-willows", "stage": "extracted"}
 
-    def run_forge(slug, **kwargs):
-        calls.append(("forge", slug, {
+    def run_forge(stage_id, **kwargs):
+        calls.append(("forge", stage_id, {
             "normalize": kwargs["normalize"],
             "clean_titles": kwargs["clean_titles"],
             "trim_head": kwargs["trim_head"],
@@ -109,12 +132,14 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
             "split_oversized": kwargs["split_oversized"],
         }))
         kwargs["progress"]("Levelling 1/2: Chapter one")
-        return {"slug": slug, "stage": "forged"}
+        return {"slug": "wind-in-the-willows", "stage": "forged"}
 
     monkeypatch.setattr(jobs.ingest, "import_librivox", import_book)
-    monkeypatch.setattr(jobs.library, "get", lambda slug: None)
-    monkeypatch.setattr(jobs.forge, "run", run_forge)
-    monkeypatch.setattr(jobs.db, "update_job", lambda job_id, **fields: updates.append((job_id, fields)))
+    monkeypatch.setattr(jobs.library, "find_published_stage", lambda stage_id: None)
+    monkeypatch.setattr(jobs.library, "collection_stage", lambda stage_id: None)
+    monkeypatch.setattr(jobs.forge, "run_collection_stage", run_forge)
+    monkeypatch.setattr(jobs, "uuid4", lambda: type("Id", (), {"hex": "stage42"})())
+    monkeypatch.setattr(jobs.db, "update_job", lambda job_id, **fields: updates.append((job_id, deepcopy(fields))))
 
     result = jobs._handle({
         "id": 41,
@@ -125,7 +150,7 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
     assert result == {"slug": "wind-in-the-willows", "stage": "forged"}
     assert calls == [
         ("import", "180"),
-        ("forge", "wind-in-the-willows", {
+        ("forge", "librivox-stage42", {
             "normalize": True,
             "clean_titles": True,
             "trim_head": 0,
@@ -134,9 +159,15 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
         }),
     ]
     assert updates == [
+        (41, {"payload": {
+            "book_id": "180",
+            "stage_id": "librivox-stage42",
+            "options": prepare.DEFAULT_OPTIONS,
+        }}),
         (41, {"progress": "extracting: Downloading 1/2: Chapter one"}),
         (41, {"payload": {
             "book_id": "180",
+            "stage_id": "librivox-stage42",
             "slug": "wind-in-the-willows",
             "options": {
                 "use_chapters": True,
@@ -160,13 +191,15 @@ def test_librivox_retry_resumes_forge_without_importing_or_enqueuing_another_job
     )
     monkeypatch.setattr(
         jobs.library,
-        "get",
-        lambda slug: {"slug": slug, "stage": "extracted"},
+        "collection_stage",
+        lambda stage_id: {"slug": "wind-in-the-willows", "stage": "extracted"},
     )
+    monkeypatch.setattr(jobs.library, "collection_stage_ready", lambda stage_id: True)
+    monkeypatch.setattr(jobs.library, "find_published_stage", lambda stage_id: None)
     monkeypatch.setattr(
         jobs.forge,
-        "run",
-        lambda slug, **kwargs: forge_calls.append(slug) or {"slug": slug, "stage": "forged"},
+        "run_collection_stage",
+        lambda stage_id, **kwargs: forge_calls.append(stage_id) or {"slug": "wind-in-the-willows", "stage": "forged"},
     )
     monkeypatch.setattr(
         jobs,
@@ -180,6 +213,7 @@ def test_librivox_retry_resumes_forge_without_importing_or_enqueuing_another_job
         "kind": "librivox",
         "payload": {
             "book_id": "180",
+            "stage_id": "librivox-stage42",
             "slug": "wind-in-the-willows",
             "options": {
                 "use_chapters": True,
@@ -192,7 +226,7 @@ def test_librivox_retry_resumes_forge_without_importing_or_enqueuing_another_job
         },
     })
 
-    assert forge_calls == ["wind-in-the-willows"]
+    assert forge_calls == ["librivox-stage42"]
     assert result == {"slug": "wind-in-the-willows", "stage": "forged"}
 
 
@@ -248,20 +282,22 @@ def test_completed_legacy_librivox_import_is_not_presented_as_ready(monkeypatch)
 
 def test_prepare_restarts_extraction_when_checkpoint_is_missing(monkeypatch):
     checkpoints = []
-    monkeypatch.setattr(prepare.library, "get", lambda slug: None)
+    monkeypatch.setattr(prepare.library, "find_published_stage", lambda stage_id: None)
+    monkeypatch.setattr(prepare.library, "collection_stage", lambda stage_id: None)
     monkeypatch.setattr(prepare.ingest, "import_url", lambda *args, **kwargs: {"slug": "new-alice"})
     monkeypatch.setattr(
-        prepare.forge, "run", lambda slug, **kwargs: {"slug": slug, "stage": "forged"}
+        prepare.forge, "run_collection_stage", lambda stage_id, **kwargs: {"slug": "new-alice", "stage": "forged"}
     )
 
     result = prepare.run(
-        {"url": "https://example.com/alice", "slug": "missing-alice", "options": {}},
+        {"url": "https://example.com/alice", "stage_id": "url-missing", "slug": "missing-alice", "options": {}},
         progress=lambda message: None,
         checkpoint=lambda payload: checkpoints.append(dict(payload)),
     )
 
     assert checkpoints == [{
         "url": "https://example.com/alice",
+        "stage_id": "url-missing",
         "slug": "new-alice",
         "options": prepare.DEFAULT_OPTIONS,
     }]

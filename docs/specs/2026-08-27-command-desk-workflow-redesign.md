@@ -1,9 +1,9 @@
 # TonieFi Command Desk Workflow Redesign
 
-**Date:** 2026-08-27  
-**Status:** Approved for implementation  
-**Product record:** `PRODUCT.md`  
-**Approved direction:** Circulation Desk  
+**Date:** 2026-08-27
+**Status:** Approved for implementation
+**Product record:** `PRODUCT.md`
+**Approved direction:** Circulation Desk
 **Approved composition:** `.impeccable/mocks/command-desk.png`
 
 ## Summary
@@ -61,7 +61,7 @@ Desktop uses the persistent left service index from the approved comp. Mobile us
 
 The main intake accepts pasted text with one URL per line. The interface trims whitespace, removes exact duplicates, rejects non-HTTP schemes, preserves entry order, and shows each source as an editable row. The server repeats validation and enforces a maximum of 50 unique sources.
 
-Shared defaults appear beneath the source list:
+Shared defaults appear beneath the source list. On mobile, the count-aware Prepare action comes first so it remains in the initial viewport, followed by a compact defaults summary.
 
 - Loudness: −16 LUFS with −1.5 dBTP ceiling.
 - Clean source noise from titles.
@@ -87,7 +87,9 @@ Visible phases are:
 
 The jobs table remains unchanged. Phase is encoded into the existing `progress` field as a stable prefix and exposed by the API as a derived `phase` property. This avoids a SQLite migration. Existing jobs without a phase prefix continue to render using their kind and status.
 
-A failed preparation exposes its real error and a Retry action. Retrying creates a new job and preserves the failed attempt in Activity. If extraction completed before Forge failed, the failed job payload retains the collection slug so retry resumes Forge without downloading the source again.
+A cart progress meter is determinate only when the server supplies a real percentage. Other active phases use an explicitly indeterminate treatment and a truthful text message. Reduced-motion mode keeps the phase visible without looping movement.
+
+A failed preparation exposes its real error and a Retry action. Retrying creates a new job and preserves the failed attempt in Activity. Every intake persists a deterministic hidden stage identity before collection side effects. Retry resumes completed staged files or safely restarts from immutable input, then publishes exactly one complete final collection.
 
 ## Preparation API and worker
 
@@ -129,10 +131,14 @@ The endpoint returns `400` when there are no valid sources, more than 50 unique 
 
 The worker job kind is `prepare_url`. It performs these steps:
 
-1. Import the source through `ingest.import_url`.
-2. Save the returned collection slug into the job payload as a checkpoint.
-3. Run `forge.run` with the submitted options.
-4. Return the decorated forged collection as the job result.
+1. Persist a deterministic hidden collection stage identity in the job payload.
+2. Import the source through `ingest.import_url` into that hidden stage.
+3. Checkpoint extracted stage progress and durable extraction completion without exposing a visible collection.
+4. Run Forge against a disposable copy of the immutable extracted stage.
+5. Atomically publish the complete forged folder on the library filesystem.
+6. Return the decorated forged collection as the job result.
+
+URL, LibriVox, and upload preparation share this hidden staged-collection publication contract. Upload source staging defaults under `DATA_DIR`, outside the bounded `WORK_DIR` tmpfs, and retains its owned marker, active lease, heartbeat, 500-file limit, 20 GiB limit, and 24-hour retry window. Startup recovers ready publication stages and removes abandoned stages that no resumable job owns.
 
 Progress callbacks write `extracting: <message>` and `forging: <message>`. The API hydrates these into `phase` and human-readable `progress` fields without changing stored job history.
 
@@ -142,7 +148,7 @@ The former `url` job kind and `POST /api/ingest/url` route are deleted with thei
 
 `POST /api/jobs/{job_id}/retry`
 
-Only a failed job can be retried. The new job clones the original kind, label, and current payload. A preparation payload with a valid extracted slug resumes at Forge. Any missing or deleted checkpoint causes the source to extract again. The response contains the new job.
+Only a failed job can be retried. The new job clones the original kind, label, and current payload. A valid hidden stage resumes without repeating completed file intake. A missing stage safely restarts from immutable source input. Publication identity prevents duplicate visible collections. The response contains the new job.
 
 ## Review Shelf and focused review
 
@@ -159,11 +165,13 @@ Focused review provides:
 - Sequential capacity plan with exact chapter groups and usable minutes.
 - A clear `Choose Creative Tonies` action after the plan.
 
+An extracted collection is never labeled ready and never exposes Creative Tonie assignment. Focused Review and Library show one `Finish preparation` action that enqueues the existing persisted Forge job. Queued and failed Forge states remain visible. The collection joins Review Shelf only after its manifest reaches `forged`.
+
 Assignment reuses the existing safe push behavior. It refreshes Tonie data before showing available targets, distinguishes replace from append, and never sends until the user confirms the target and effect.
 
 ## Library
 
-Library is the durable local collection view. It provides search by title, Rescan, open for review, and delete. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
+Library is the durable local collection view. It provides search by title, Rescan, Finish preparation for legacy extracted collections, open for review when forged, and delete. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
 
 The current collection list behavior moves into this screen. There is no second library implementation hidden inside Desk or Review Shelf.
 
@@ -183,13 +191,13 @@ The presentation becomes a compact Tonie list with an expanded detail counter. K
 
 Activity shows the 40 most recent jobs with kind, phase, status, progress, timestamp, source label, result link, error, and retry eligibility. Failed jobs remain historical records after retry. Selecting a successful preparation opens its collection review.
 
-One application-level refresh loop updates jobs, collections, and review counts while any job is queued or running. It replaces the current single `pollTimer`, which can observe only one job. Polling slows when no job is active and stops when the page is hidden.
+One application-level refresh loop updates jobs, history, collections, status, and review counts while any job is queued or running. Each resource publishes to subscribers as soon as it settles, so jobs and history continue updating while a collection lease delays collection refresh. Fulfilled slices remain cached, stale and error state stays resource-specific, polling slows when no job is active, and polling stops while the page is hidden.
 
 ## Settings and account management
 
 Settings presents one account status surface:
 
-- Connected, unconfigured, or connection failed.
+- Configured, Connected, unconfigured, or connection failed.
 - Credential source: environment, locally saved, or none.
 - Configured username when available.
 - Honest warning that locally saved credentials are plain text in SQLite.
@@ -200,17 +208,19 @@ Settings presents one account status surface:
 
 When environment credentials are active, local credential fields are disabled because saved values cannot override the environment. The UI explains where the active credentials come from. `DELETE /api/settings/credentials` removes only database values. It cannot remove environment variables.
 
+Configured means a complete saved or environment credential pair is available. Connected is shown only after a successful connection test in the current browser session. The tested timestamp and an explicit failed-test state remain visible for that session. Credential reads, replacements, and deletions treat username and password as one atomic SQLite pair.
+
 Settings also reports the 90-minute Tonie limit, usable headroom, library path, and required tool availability. Product affiliation and private-API disclosures remain visible.
 
 ## Visual system
 
 ### Direction contract
 
-**THESIS:** TonieFi is a working circulation desk for stories. It refuses the generic dark dashboard and the linear setup wizard.  
-**OWN-WORLD:** Deep bottle-green bookcloth, cool utility paper, chartreuse action ink, periwinkle information ink, square status stamps, thin rules, full-color cover jackets, and compact service labels.  
-**STORY:** Add several sources, watch each move independently through preparation, review the ready jackets, and choose their Creative Tonies.  
-**FIRST VIEWPORT:** The service index occupies the left, batch intake owns the center, and the live work cart remains visible at right. The count-aware preparation action closes the intake tray.  
-**FORM:** Command Desk, selected from three Circulation Desk compositions. Seed key `17e3c753`.  
+**THESIS:** TonieFi is a working circulation desk for stories. It refuses the generic dark dashboard and the linear setup wizard.
+**OWN-WORLD:** Deep bottle-green bookcloth, cool utility paper, chartreuse action ink, periwinkle information ink, square status stamps, thin rules, full-color cover jackets, and compact service labels.
+**STORY:** Add several sources, watch each move independently through preparation, review the ready jackets, and choose their Creative Tonies.
+**FIRST VIEWPORT:** The service index occupies the left, batch intake owns the center, and the live work cart remains visible at right. The count-aware preparation action closes the intake tray.
+**FORM:** Command Desk, selected from three Circulation Desk compositions. Seed key `17e3c753`.
 **FINISH:** unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 
 ### Approved comp inventory
@@ -284,9 +294,9 @@ Static and browser verification will cover:
 
 ## Retirement and migration
 
-This change deletes the current five-step wizard, its stepper, the manual Extract and Forge progression, the `url` worker kind, the `/api/ingest/url` route, the `/api/probe` route, and the single watched-job timer. Their callers, tests, copy, and documentation are migrated in the same branch.
+This change deletes the current five-step wizard, its stepper, the wizard's manual Extract and Forge progression, the `url` worker kind, the `/api/ingest/url` route, the `/api/probe` route, and the single watched-job timer. Their callers, tests, copy, and documentation are migrated in the same branch. The existing persisted `/api/forge` route remains the single supported migration path for legacy extracted collections.
 
-The SQLite schema does not change. Existing job rows and collection manifests remain readable. Existing extracted collections continue to appear in Library, and existing forged collections appear on Review Shelf.
+The SQLite schema does not change. Existing job rows and collection manifests remain readable. Existing extracted collections continue to appear in Library with Finish preparation, and existing forged collections appear on Review Shelf.
 
 ## Acceptance criteria
 

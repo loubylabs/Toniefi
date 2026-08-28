@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from uuid import uuid4
 
 from . import forge, ingest, library
 
@@ -21,22 +22,27 @@ Checkpoint = Callable[[dict[str, Any]], None]
 def run(payload: dict[str, Any], *, progress: Progress, checkpoint: Checkpoint) -> dict[str, Any]:
     current = dict(payload)
     options = {**DEFAULT_OPTIONS, **current.get("options", {})}
-    slug = current.get("slug")
-    collection = library.get(slug) if slug else None
-    if collection and collection.get("stage") == "forged":
-        return collection
-    if not collection:
+    current["options"] = options
+    stage_id = current.get("stage_id")
+    if not stage_id:
+        stage_id = f"url-{uuid4().hex}"
+        current["stage_id"] = stage_id
+        checkpoint(current)
+    published = library.find_published_stage(stage_id)
+    if published:
+        return published
+    extracted = library.collection_stage(stage_id)
+    if not extracted or not library.collection_stage_ready(stage_id):
         extracted = ingest.import_url(
             current["url"],
+            stage_id=stage_id,
             use_chapters=options["use_chapters"],
             progress=lambda message: progress(f"extracting: {message}"),
         )
-        slug = extracted["slug"]
-        current["slug"] = slug
-        current["options"] = options
+        current["slug"] = extracted["slug"]
         checkpoint(current)
-    return forge.run(
-        slug,
+    return forge.run_collection_stage(
+        stage_id,
         normalize=options["normalize"],
         clean_titles=options["clean_titles"],
         trim_head=options["trim_head"],

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -13,6 +14,8 @@ import {
   removeSourceEntry,
   submitUploadBatch,
   staleRefreshAnnouncement,
+  truthfulWorkProgress,
+  uploadPolicyText,
 } from "../../app/static/desk.js";
 
 test("parseSourceLines trims source URLs and preserves their entered order", () => {
@@ -349,4 +352,26 @@ test("buildWorkCartItems does not mark a legacy import-only LibriVox job ready",
   }], [{ slug: "old-import", title: "Old Import", stage: "extracted" }]);
 
   assert.deepEqual(items, []);
+});
+
+test("Desk upload help is derived from server status", () => {
+  assert.equal(uploadPolicyText(null), "Upload limits are loading from TonieFi.");
+  assert.equal(uploadPolicyText({
+    upload_max_files: 500,
+    upload_max_human: "20 GiB",
+    upload_stage_retention_seconds: 86400,
+  }), "Up to 500 files and 20 GiB total become one collection. Failed uploads remain available for retry for 24 hours.");
+});
+
+test("work cart progress is determinate only when the server supplies a real value", () => {
+  assert.deepEqual(truthfulWorkProgress({ progress_percent: 42.5 }), {
+    mode: "determinate",
+    percent: 42.5,
+  });
+  assert.deepEqual(truthfulWorkProgress({ progress: "Levelling chapter 2" }), {
+    mode: "indeterminate",
+    percent: null,
+  });
+  const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
+  assert.doesNotMatch(css, /work-cart-progress-fill[^}]*width:\s*(?:38|72)%/s);
 });

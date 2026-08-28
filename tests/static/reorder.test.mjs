@@ -54,17 +54,17 @@ test("forgedCollectionsNewestFirst excludes unfinished collections and uses crea
   assert.deepEqual(collections.map((item) => item.slug), ["older", "unfinished", "newer"]);
 });
 
-test("tonieCapacity distinguishes replace capacity from append capacity", () => {
+test("tonieCapacity uses browser usable headroom for replace and append", () => {
   const tonie = { seconds_present: 4200, seconds_free: 1200 };
 
-  assert.deepEqual(tonieCapacity(tonie, 1500, true, 5400), {
-    availableSeconds: 5400,
-    projectedSeconds: 1500,
+  assert.deepEqual(tonieCapacity(tonie, 1180, true, 5370), {
+    availableSeconds: 5370,
+    projectedSeconds: 1180,
     fits: true,
   });
-  assert.deepEqual(tonieCapacity(tonie, 1500, false, 5400), {
-    availableSeconds: 1200,
-    projectedSeconds: 5700,
+  assert.deepEqual(tonieCapacity(tonie, 1180, false, 5370), {
+    availableSeconds: 1170,
+    projectedSeconds: 5380,
     fits: false,
   });
 });

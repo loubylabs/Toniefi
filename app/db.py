@@ -54,27 +54,52 @@ def init() -> None:
 
 # ---------------------------------------------------------------- settings
 
-def get_setting(key: str, default: str = "") -> str:
-    row = connect().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-    return row["value"] if row else default
+def get_credentials() -> tuple[str, str]:
+    """Read the saved username and password from one locked snapshot."""
+    with _lock:
+        rows = connect().execute(
+            "SELECT key,value FROM settings WHERE key IN (?,?)",
+            ("tonies_username", "tonies_password"),
+        ).fetchall()
+    values = {row["key"]: row["value"] for row in rows}
+    return values.get("tonies_username", ""), values.get("tonies_password", "")
 
 
-def set_setting(key: str, value: str) -> None:
+def replace_credentials(username: str, password: str) -> None:
+    """Replace both saved credential fields in one SQLite transaction."""
     conn = connect()
     with _lock:
-        conn.execute(
-            "INSERT INTO settings(key,value) VALUES(?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-        conn.commit()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for key, value in (
+                ("tonies_username", username),
+                ("tonies_password", password),
+            ):
+                conn.execute(
+                    "INSERT INTO settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value),
+                )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
 
-def delete_setting(key: str) -> None:
+def delete_credentials() -> None:
+    """Delete both saved credential fields as one indivisible operation."""
     conn = connect()
     with _lock:
-        conn.execute("DELETE FROM settings WHERE key=?", (key,))
-        conn.commit()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "DELETE FROM settings WHERE key IN (?,?)",
+                ("tonies_username", "tonies_password"),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
 
 # -------------------------------------------------------------------- jobs
@@ -104,6 +129,40 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
             conn.rollback()
             raise
     return created
+
+
+def create_forge_job_once(label: str, payload: dict[str, Any]) -> int:
+    """Return the active Forge job for a slug or enqueue exactly one."""
+    slug = payload.get("slug")
+    if not slug:
+        raise ValueError("A Forge job needs a collection slug.")
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT id,payload FROM jobs WHERE kind='forge' "
+                "AND status IN ('queued','running') ORDER BY id",
+            ).fetchall()
+            for row in rows:
+                try:
+                    existing = json.loads(row["payload"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if existing.get("slug") == slug:
+                    conn.commit()
+                    return int(row["id"])
+            now = time.time()
+            cursor = conn.execute(
+                "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+                "VALUES('forge','queued',?,?,?,?)",
+                (label, json.dumps(payload), now, now),
+            )
+            conn.commit()
+            return int(cursor.lastrowid)
+        except BaseException:
+            conn.rollback()
+            raise
 
 
 class OperationConflict(RuntimeError):
@@ -277,6 +336,24 @@ def active_upload_stages() -> set[str]:
         if isinstance(stage, str):
             stages.add(stage)
     return stages
+
+
+def referenced_collection_stage_ids() -> set[str]:
+    """Return hidden collection stages that an unfinished job may resume."""
+    rows = connect().execute(
+        "SELECT payload FROM jobs WHERE status IN ('queued','running','failed') "
+        "AND kind IN ('prepare_url','librivox','upload_prepare')"
+    ).fetchall()
+    identities = set()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (AttributeError, json.JSONDecodeError, TypeError):
+            continue
+        identity = payload.get("collection_stage_id") or payload.get("stage_id")
+        if isinstance(identity, str) and identity:
+            identities.add(identity)
+    return identities
 
 
 def fail_stale_running() -> list[dict[str, Any]]:

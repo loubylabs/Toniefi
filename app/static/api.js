@@ -61,3 +61,8 @@ export async function api(path, options = {}) {
   }
   return body;
 }
+
+export function scopeRequest(request, signal) {
+  if (!signal) return request;
+  return (path, options = {}) => request(path, { ...options, signal });
+}

@@ -91,35 +91,50 @@ def librivox_sections(book_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
     return book, sections
 
 
-def import_librivox(book_id: str, progress: Progress = _noop) -> dict[str, Any]:
+def import_librivox(
+    book_id: str,
+    *,
+    stage_id: str,
+    progress: Progress = _noop,
+) -> dict[str, Any]:
+    published = library.find_published_stage(stage_id)
+    if published:
+        return published
     book, sections = librivox_sections(book_id)
     with library.collection_lease():
         title = book.get("title", f"LibriVox {book_id}")
-        slug = library.create(title, source="librivox", extra={
+        stage = library.begin_collection_stage(stage_id, title=title, source="librivox", extra={
             "author": _authors(book),
             "librivox_id": book_id,
             "url": book.get("url_librivox", ""),
             "license": "Public domain (LibriVox)",
         })
-        dest = config.LIBRARY_DIR / slug
+        dest = stage.path
 
         total = len(sections)
         with httpx.Client(timeout=300.0, follow_redirects=True,
                           headers={"User-Agent": USER_AGENT}) as client:
             for position, section in enumerate(sections, start=1):
                 label = section.get("title") or f"Section {position}"
-                progress(f"Downloading {position}/{total}: {label}")
                 filename = f"{position:03d}-{audio.slugify(label)}.mp3"
-                _stream_download(client, section["listen_url"], dest / filename)
+                target = dest / filename
+                if not target.is_file():
+                    progress(f"Downloading {position}/{total}: {label}")
+                    _stream_download(client, section["listen_url"], target)
 
         # LibriVox section titles are already clean; keep them as the track titles.
-        library.rescan(slug)
+        library.rescan_collection_stage(stage_id)
         for position, section in enumerate(sections, start=1):
             label = section.get("title") or f"Section {position}"
-            library.rename_track(slug, f"{position:03d}-{audio.slugify(label)}.mp3", label)
+            library.rename_track_at_path(
+                dest,
+                f"{position:03d}-{audio.slugify(label)}.mp3",
+                label,
+            )
 
         progress("Probing durations")
-        return library.get(slug, refresh=True)
+        library.collection_stage(stage_id, refresh=True)
+        return library.complete_collection_stage(stage_id)
 
 
 def _stream_download(client: httpx.Client, url: str, dest: Path) -> None:
@@ -146,49 +161,10 @@ def _player_client_args() -> list[str]:
             f"youtube:player_client={config.YTDLP_PLAYER_CLIENTS}"]
 
 
-def probe_url(url: str) -> dict[str, Any]:
-    """Look at a URL without downloading it, so Review can show what's coming."""
-    if not shutil.which("yt-dlp"):
-        raise RuntimeError("yt-dlp is not installed in this container.")
-    proc = subprocess.run(
-        ["yt-dlp", "--dump-single-json", "--flat-playlist", "--no-warnings",
-         *_player_client_args(), url],
-        capture_output=True, text=True, timeout=180,
-    )
-    if proc.returncode != 0:
-        tail = (proc.stderr or "").strip().splitlines()[-3:]
-        raise RuntimeError(f"Could not read that URL: {' / '.join(tail) or 'unknown error'}")
-    info = json.loads(proc.stdout)
-
-    entries = info.get("entries") or []
-    chapters = info.get("chapters") or []
-    duration = float(info.get("duration") or 0)
-    if entries:
-        duration = sum(float(e.get("duration") or 0) for e in entries)
-
-    return {
-        "title": forge.clean_title(info.get("title") or "Untitled"),
-        "raw_title": info.get("title") or "",
-        "uploader": info.get("uploader") or info.get("channel") or "",
-        "is_playlist": bool(entries),
-        "item_count": len(entries) or 1,
-        "chapter_count": len(chapters),
-        "chapters": [
-            {"title": c.get("title", ""), "start": c.get("start_time"), "end": c.get("end_time")}
-            for c in chapters[:200]
-        ],
-        "duration_seconds": duration,
-        "duration": audio.human_duration(duration),
-        "tonies_needed": max(1, -(-int(duration) // config.usable_limit())) if duration else 0,
-        "thumbnail": info.get("thumbnail") or "",
-        "webpage_url": info.get("webpage_url") or url,
-    }
-
-
 def import_url(
     url: str,
-    title: str | None = None,
-    slug: str | None = None,
+    *,
+    stage_id: str,
     use_chapters: bool = True,
     progress: Progress = _noop,
 ) -> dict[str, Any]:
@@ -199,6 +175,9 @@ def import_url(
     uploads on video sites are unlicensed rips of commercial recordings, and
     the LibriVox path above is the clean route to the classics.
     """
+    published = library.find_published_stage(stage_id)
+    if published:
+        return published
     if not shutil.which("yt-dlp"):
         raise RuntimeError("yt-dlp is not installed in this container.")
 
@@ -240,24 +219,23 @@ def import_url(
             raise RuntimeError("yt-dlp produced no audio files.")
 
         uploader = info.get("uploader") or info.get("channel") or ""
-        book_title = title or forge.clean_title(info.get("title") or produced[0].stem)
+        book_title = forge.clean_title(info.get("title") or produced[0].stem)
 
         with library.collection_lease():
-            if slug:
-                target_slug = slug
-                dest = config.LIBRARY_DIR / target_slug
-                if not dest.is_dir():
-                    raise RuntimeError(f"No collection named {slug}.")
-                start = library.next_index(dest)
-            else:
-                target_slug = library.create(book_title, source="url", extra={
+            stage = library.begin_collection_stage(
+                stage_id,
+                title=book_title,
+                source="url",
+                extra={
                     "url": info.get("webpage_url") or url,
                     "uploader": uploader,
                     "raw_title": info.get("title") or "",
                     "from_chapters": bool(chaptered),
-                })
-                dest = config.LIBRARY_DIR / target_slug
-                start = 1
+                },
+                restart=True,
+            )
+            dest = stage.path
+            start = 1
 
             stored: list[tuple[str, str]] = []
             for offset, src in enumerate(produced):
@@ -275,12 +253,13 @@ def import_url(
             if cover:
                 shutil.move(str(cover), dest / "cover.jpg")
 
-            library.rescan(target_slug)
+            library.rescan_collection_stage(stage_id)
             for name, track_title in stored:
-                library.rename_track(target_slug, name, track_title)
+                library.rename_track_at_path(dest, name, track_title)
 
             progress("Probing durations")
-            return library.get(target_slug, refresh=True)
+            library.collection_stage(stage_id, refresh=True)
+            return library.complete_collection_stage(stage_id)
 
 
 def _read_info_json(tmp: Path) -> dict[str, Any]:
@@ -322,7 +301,7 @@ def import_upload(
     source: Path,
     *,
     filename: str,
-    slug: str,
+    stage_id: str,
     target_name: str,
 ) -> dict[str, Any]:
     """Stream one staged file into its deterministic collection target."""
@@ -333,9 +312,10 @@ def import_upload(
     if not source.is_file():
         raise RuntimeError("The staged upload file is missing. Submit the collection again.")
     with library.collection_lease():
-        dest = config.LIBRARY_DIR / slug
-        if not dest.is_dir():
-            raise RuntimeError(f"No collection named {slug}.")
+        staged = library.collection_stage(stage_id)
+        if not staged:
+            raise RuntimeError("The upload collection stage is missing.")
+        dest = Path(staged["path"])
         target = dest / target_name
         if target.parent != dest or target.suffix.lower() != suffix:
             raise RuntimeError("The upload target is invalid.")
@@ -346,10 +326,10 @@ def import_upload(
                 shutil.copyfileobj(staged, output, length=1024 * 1024)
             partial.replace(target)
 
-        library.rescan(slug)
-        library.rename_track(
-            slug,
+        library.rescan_collection_stage(stage_id)
+        library.rename_track_at_path(
+            dest,
             target.name,
             forge.clean_title(Path(filename).stem, drop_leading_index=True),
         )
-        return library.get(slug, refresh=True)
+        return library.collection_stage(stage_id, refresh=True)

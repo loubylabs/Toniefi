@@ -131,8 +131,6 @@ export function createRouter(routes, {
       document.dispatchEvent(new CustomEvent("toniefi:routechange", { detail: route }));
     } catch (error) {
       if (!controller.signal.aborted && renderSequence === sequence) onError(error, route);
-    } finally {
-      if (activeController === controller) activeController = null;
     }
   }
 

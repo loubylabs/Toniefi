@@ -24,12 +24,22 @@ function formatSeconds(value) {
 }
 
 
-export function credentialView(credentials = {}) {
+export function credentialView(credentials = {}, connectionResult = null) {
   const source = credentials.source || "none";
   const configured = Boolean(credentials.configured);
+  const state = connectionResult?.state === "connected"
+    ? "connected"
+    : connectionResult?.state === "failed"
+      ? "failed"
+      : configured ? "configured" : "unconfigured";
+  const label = state === "connected"
+    ? "Connected"
+    : state === "failed"
+      ? "Connection failed"
+      : configured ? "Configured" : "Unconfigured";
   return {
-    state: configured ? "connected" : "unconfigured",
-    label: configured ? "Connected" : "Unconfigured",
+    state,
+    label,
     sourceLabel: source === "environment"
       ? "Environment variables"
       : source === "saved"
@@ -179,6 +189,7 @@ export function createSettingsScreen({ request = api, refresh } = {}) {
           body: JSON.stringify({ username: user, password: secret }),
           ...(signal ? { signal } : {}),
         });
+        connectionResult = null;
         password.value = "";
         await refreshStatus();
         formResult.dataset.state = "success";
@@ -262,14 +273,14 @@ export function createSettingsScreen({ request = api, refresh } = {}) {
     });
 
     function renderAccount() {
-      const view = credentialView(status?.credentials);
-      const testState = connectionResult?.state === "failed" ? "failed" : view.state;
+      const view = credentialView(status?.credentials, connectionResult);
+      const testState = view.state;
       const tested = connectionResult?.testedAt
         ? ` Tested ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(connectionResult.testedAt)}.`
         : "";
       const statusCopy = connectionResult?.message
         ? `${connectionResult.message}${tested}`
-        : view.state === "connected"
+        : view.state === "configured"
           ? `Configured as ${view.username || "the current account"}. Test the connection to verify access in this browser session.`
           : "No complete myTonies credential pair is configured.";
       const statusBlock = element("div", { className: "account-connection-status", "data-state": testState }, [

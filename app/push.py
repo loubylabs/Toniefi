@@ -31,8 +31,7 @@ def select_credentials() -> SelectedCredentials:
         username = config.TONIES_USERNAME
         password = config.TONIES_PASSWORD
     else:
-        username = db.get_setting("tonies_username")
-        password = db.get_setting("tonies_password")
+        username, password = db.get_credentials()
         source = "saved" if username or password else "none"
     return {
         "source": source,
@@ -311,6 +310,8 @@ def confirmed_tracks(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict
     manifest = library.get(slug)
     if not manifest:
         raise StalePush(f"The collection changed because {slug} no longer exists.")
+    if manifest.get("stage") != "forged":
+        raise StalePush("Forge is incomplete for this collection. Finish preparation before sending it.")
     if library.manifest_fingerprint(manifest) != payload["manifest_fingerprint"]:
         raise StalePush("The local collection changed after confirmation. Review it again.")
     names = payload.get("files") or []
@@ -328,6 +329,8 @@ def confirmed_tracks(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict
 
 def validate_confirmed_groups(slug: str, fingerprint: str, assignments: list[dict[str, Any]]) -> None:
     manifest = library.get(slug)
+    if manifest and manifest.get("stage") != "forged":
+        raise StalePush("Forge is incomplete for this collection. Finish preparation before assignment.")
     if not manifest or library.manifest_fingerprint(manifest) != fingerprint:
         raise StalePush("The local collection changed after review. Review it again.")
     planned = [[track["name"] for track in group.as_dict()["tracks"]]
@@ -357,11 +360,11 @@ def _push_confirmed_tracks(
         raise RuntimeError("Nothing selected to push.")
 
     total = sum(t.get("seconds", 0) for t in tracks)
-    limit = config.TONIE_LIMIT_SECONDS
+    limit = config.usable_limit()
     if total > limit:
         raise RuntimeError(
             f"That selection is {audio.human_duration(total)}, over the "
-            f"{audio.human_duration(limit)} a Creative Tonie holds. "
+            f"{audio.human_duration(limit)} usable audio limit. "
             f"Split it or push one group at a time."
         )
 

@@ -242,7 +242,11 @@ def test_librivox_download_does_not_overlap_confirmed_push(isolated_writer, monk
     monkeypatch.setattr(ingest, "librivox_sections", lambda book_id: (book, sections))
     monkeypatch.setattr(ingest.httpx, "Client", Client)
     monkeypatch.setattr(ingest.audio, "duration_seconds", lambda path: 10)
-    writer = lambda: ingest.import_librivox("7", progress=progress)
+    writer = lambda: ingest.import_librivox(
+        "7",
+        stage_id="librivox-writer-test",
+        progress=progress,
+    )
     assert_writer_does_not_overlap_confirmed_push(
         monkeypatch, isolated_writer, writer, writer_ready, allow_writer, writer_write, events,
     )
@@ -253,7 +257,6 @@ def test_url_audio_move_does_not_overlap_confirmed_push(isolated_writer, monkeyp
     allow_writer = threading.Event()
     writer_write = threading.Event()
     events = []
-    target_slug = library.create("URL Target")
     real_move = shutil.move
 
     def run_download(command, **kwargs):
@@ -277,7 +280,7 @@ def test_url_audio_move_does_not_overlap_confirmed_push(isolated_writer, monkeyp
     monkeypatch.setattr(ingest.audio, "duration_seconds", lambda path: 10)
     writer = lambda: ingest.import_url(
         "https://example.test/story",
-        slug=target_slug,
+        stage_id="url-writer-test",
         use_chapters=False,
         progress=progress,
     )
@@ -291,7 +294,11 @@ def test_staged_upload_placement_does_not_overlap_confirmed_push(isolated_writer
     allow_writer = threading.Event()
     writer_write = threading.Event()
     events = []
-    target_slug = library.create("Upload Target")
+    collection_stage = library.begin_collection_stage(
+        "upload-writer-test",
+        title="Upload Target",
+        source="upload",
+    )
     source = tmp_path / "staged.mp3"
     source.write_bytes(b"staged-audio")
     real_copy = shutil.copyfileobj
@@ -309,7 +316,7 @@ def test_staged_upload_placement_does_not_overlap_confirmed_push(isolated_writer
     writer = lambda: ingest.import_upload(
         source,
         filename="Story.mp3",
-        slug=target_slug,
+        stage_id=collection_stage.identity,
         target_name="001-story.mp3",
     )
     assert_writer_does_not_overlap_confirmed_push(

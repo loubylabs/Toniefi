@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createLibraryScreen } from "../../app/static/library.js";
+import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
 import { createFocusedReview } from "../../app/static/review.js";
 
 function textOf(node) {
@@ -281,6 +281,7 @@ test("focused Review owns assignment pending, failure, and recovered receipt DOM
   const refresh = {
     snapshot: { status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 } },
     request: async () => ({ collections: [collection], stale: [], errors: {} }),
+    subscribe: () => () => {},
   };
 
   try {
@@ -391,6 +392,140 @@ test("Library rerenders every mutation control disabled while Rescan is pending"
     assert.equal(pendingSnapshots[0].every((control) => control.tag === "A" ? control.ariaDisabled === "true" : control.disabled), true);
     assert.equal(root.querySelectorAll("[data-collection-mutation]").every((control) => control.tagName === "A" ? control.getAttribute("aria-disabled") === "false" : !control.disabled), true);
     cleanup();
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Forge preparation state keeps extracted collections out of review and reports job truth", () => {
+  const collection = { slug: "legacy-story", stage: "extracted" };
+  assert.deepEqual(forgePreparationState(collection, []), { state: "incomplete", error: "" });
+  assert.deepEqual(forgePreparationState(collection, [{
+    id: 4,
+    kind: "forge",
+    status: "queued",
+    payload: { slug: "legacy-story" },
+  }]), { state: "pending", error: "" });
+  assert.deepEqual(forgePreparationState(collection, [{
+    id: 5,
+    kind: "forge",
+    status: "failed",
+    error: "ffmpeg stopped",
+    payload: { slug: "legacy-story" },
+  }]), { state: "failed", error: "ffmpeg stopped" });
+  assert.deepEqual(forgePreparationState({ ...collection, stage: "forged" }, []), { state: "ready", error: "" });
+});
+
+test("Library gives extracted collections one Finish preparation action and no review action", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "legacy-story",
+    title: "Legacy Story",
+    stage: "extracted",
+    track_count: 2,
+    total_duration: "20m",
+    tonies_needed: 1,
+  };
+  const calls = [];
+  const listeners = new Set();
+  let snapshot = { collections: [collection], jobs: [], stale: [], errors: {} };
+  const refresh = {
+    get snapshot() { return snapshot; },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async request() {
+      listeners.forEach((listener) => listener(snapshot));
+      return snapshot;
+    },
+  };
+  const request = async (url, options) => {
+    calls.push([url, options]);
+    snapshot = {
+      ...snapshot,
+      jobs: [{ id: 71, kind: "forge", status: "queued", payload: { slug: collection.slug } }],
+    };
+    return { id: 71, status: "queued" };
+  };
+
+  try {
+    createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    assert.equal(buttonWithText(dom.workspace, "Open for review"), undefined);
+    const finish = buttonWithText(dom.workspace, "Finish preparation");
+    assert.ok(finish);
+    await finish.click();
+    await flush();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], "/api/forge");
+    assert.match(dom.workspace.textContent, /Forge queued/);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("focused Review stage-gates assignment and offers the same Finish preparation route", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "legacy-story",
+    title: "Legacy Story",
+    stage: "extracted",
+    track_count: 1,
+    total_duration: "10m",
+    tonies_needed: 1,
+    tracks: [{ name: "one.mp3", title: "One", seconds: 600, duration: "10m" }],
+    plan: [{ index: 1, seconds: 600, duration: "10m", tracks: [] }],
+  };
+  const calls = [];
+  const listeners = new Set();
+  let snapshot = {
+    status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 },
+    collections: [collection],
+    jobs: [],
+    stale: [],
+    errors: {},
+  };
+  const refresh = {
+    get snapshot() { return snapshot; },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async request() {
+      listeners.forEach((listener) => listener(snapshot));
+      return snapshot;
+    },
+  };
+  const request = async (url, options = {}) => {
+    calls.push([url, options]);
+    if (url === "/api/collections/legacy-story") return collection;
+    if (url === "/api/forge") {
+      snapshot = {
+        ...snapshot,
+        jobs: [{ id: 91, kind: "forge", status: "queued", payload: { slug: collection.slug } }],
+      };
+      return { id: 91, status: "queued" };
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    createFocusedReview({
+      workspace: dom.workspace,
+      slug: collection.slug,
+      request,
+      refresh,
+      player: { play() {} },
+      signal: controller.signal,
+    });
+    await flush();
+    assert.match(dom.workspace.textContent, /Forge incomplete/);
+    assert.equal(buttonWithText(dom.workspace, "Choose Creative Tonies"), undefined);
+    const finish = buttonWithText(dom.workspace, "Finish preparation");
+    assert.ok(finish);
+    await finish.click();
+    await flush();
+    assert.equal(calls.filter(([url]) => url === "/api/forge").length, 1);
+    assert.match(dom.workspace.textContent, /Forge queued/);
   } finally {
     controller.abort();
     dom.restore();

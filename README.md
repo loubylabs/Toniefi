@@ -12,7 +12,7 @@ The application has six destinations:
 
 - **Desk** accepts up to 50 HTTP or HTTPS source URLs at once. LibriVox search and multi-file upload are available as secondary intake modes.
 - **Review Shelf** holds every collection that completed Forge and is ready for a deliberate Creative Tonie choice.
-- **Library** shows every local collection, including extracted work that is not ready to send. Search, rescan, open, and local deletion live here.
+- **Library** shows every local collection, including extracted work that is not ready to send. Search, rescan, Finish preparation, open, and local deletion live here.
 - **Creative Tonies** reads current remote contents before writes. It supports chapter rename, pointer and keyboard reorder, remove, and clear.
 - **Activity** keeps the 40 most recent jobs with progress, timestamps, errors, result links, and eligible retries.
 - **Settings** manages the myTonies credential source, connection tests, local credential removal, capacity, paths, and tool status.
@@ -45,9 +45,9 @@ If a send fails, return to Review and confirm the assignment again. Activity doe
 
 Background jobs persist in SQLite and continue when the browser closes. Desk shows active and recent preparation work. Activity retains failed attempts after a retry, so recovery never erases the original error.
 
-Eligible preparation retries create a new job. A URL, LibriVox, or upload preparation that already extracted a valid collection resumes at Forge. If its checkpoint is missing or the local collection was deleted, TonieFi starts extraction again. Failed upload staging remains available for retry for 24 hours.
+Eligible preparation retries create a new job. URL, LibriVox, and upload inputs keep a hidden deterministic collection stage until Forge and final publication succeed. A durable extraction-complete checkpoint prevents Forge from consuming partial staged files. Retry resumes safe staged work or restarts from immutable input without exposing a partial collection. Failed upload staging remains available for retry for 24 hours.
 
-The interface refreshes jobs, collections, and status through one application coordinator. It polls faster while work is active, slows when idle, and stops while the page is hidden.
+The interface refreshes jobs, history, collections, and status through one application coordinator. Each resource publishes independently, so job progress stays current while a collection lease delays the collection index. The coordinator polls faster while work is active, slows when idle, and stops while the page is hidden.
 
 ### Creative Tonie chapter management
 
@@ -151,11 +151,23 @@ curl -s -X POST http://127.0.0.1:8080/api/uploads/prepare \
   -F 'options={"use_chapters":true,"normalize":true,"clean_titles":true,"trim_head":0,"trim_tail":0,"split_oversized":true}'
 ```
 
-One upload collection can contain up to 500 files and 20 GiB of staged audio. TonieFi streams incoming files to its work directory. Expired owned upload stages are cleaned after 24 hours. Other files in the work directory are left alone.
+One upload collection can contain up to 500 files and 20 GiB of staged audio. TonieFi streams incoming files to `UPLOAD_STAGE_DIR`, which defaults to persistent storage under `DATA_DIR`. Expired owned upload stages are cleaned after 24 hours. The default 2 GiB `/work` tmpfs is reserved for disposable downloads and transcodes.
+
+### Finish a legacy extracted collection
+
+Library and focused Review show **Finish preparation** for an older collection whose manifest stage is `extracted`. The action enqueues the supported persisted Forge job exactly once. The same migration route is available directly:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/forge \
+  -H 'content-type: application/json' \
+  -d '{"slug":"legacy-collection"}'
+```
+
+Assignment remains unavailable until the collection reaches manifest stage `forged` and appears on Review Shelf.
 
 ## Account management
 
-Settings reports one of three visible account states: connected, unconfigured, or connection failed after a test. It also shows whether active credentials come from environment variables, local SQLite, or nowhere.
+Settings labels a complete environment or saved credential pair **Configured**. It becomes **Connected** only after a successful connection test in the current browser session. The tested timestamp is retained for that session, and a failed test shows an explicit connection failure. Settings also shows whether active credentials come from environment variables, local SQLite, or nowhere.
 
 Environment credentials have precedence. When both `TONIES_USERNAME` and `TONIES_PASSWORD` are set, local form fields are disabled because saved values cannot override them. Removing saved credentials is idempotent and does not remove environment variables.
 
@@ -228,7 +240,7 @@ Start with `docker compose pull && docker compose up -d`. Open `http://<tower>:8
 | `TONIEFI_DATA` | `./data` | Host path for SQLite history and settings |
 | `TONIEFI_PORT` | `8080` | Published host port |
 | `TONIEFI_UID` / `TONIEFI_GID` | `0` | Container user and group on Linux |
-| `TONIEFI_WORK_SIZE` | `2g` | RAM-backed scratch space |
+| `TONIEFI_WORK_SIZE` | `2g` | RAM-backed download and transcode scratch space |
 
 ### Application settings
 
@@ -236,7 +248,8 @@ Start with `docker compose pull && docker compose up -d`. Open `http://<tower>:8
 |---|---|---|
 | `LIBRARY_DIR` | `/library` | Finished and in-progress local collections |
 | `DATA_DIR` | `/data` | SQLite job history and locally saved settings |
-| `WORK_DIR` | `/work` | Downloads, transcodes, and owned upload stages |
+| `WORK_DIR` | `/work` | Disposable downloads and transcodes |
+| `UPLOAD_STAGE_DIR` | `DATA_DIR/upload-staging` | Restart-safe retained upload inputs |
 | `TONIE_LIMIT_SECONDS` | `5400` | Capacity of one Creative Tonie |
 | `TONIE_HEADROOM_SECONDS` | `30` | Safety margin used by planning |
 | `TONIES_USERNAME` / `TONIES_PASSWORD` | unset | Environment myTonies credentials |
@@ -253,7 +266,7 @@ app/
   ingest.py     URL, LibriVox, and staged upload extraction
   forge.py      Trim, loudness, title cleanup, and splitting
   audio.py      ffmpeg and ffprobe wrappers plus capacity packing
-  library.py    On-disk collection manifests and writer leases
+  library.py    On-disk manifests, writer leases, and atomic staged publication
   tonies.py     Private Tonie Cloud client
   push.py       Confirmed sends and canonical chapter-list writes
   jobs.py       SQLite-backed background worker and retry rules
@@ -262,7 +275,7 @@ app/
 tests/          Python API and service tests plus Node browser behavior tests
 ```
 
-The former manual probe, single-URL import route, five-step wizard, and one-job browser watcher have been retired. Preparation now enters through `/api/prepare`, `/api/librivox/import`, or `/api/uploads/prepare` and always advances through automatic Forge before review.
+The former manual probe, single-URL import route, five-step wizard, and one-job browser watcher have been retired. New preparation enters through `/api/prepare`, `/api/librivox/import`, or `/api/uploads/prepare` and advances through automatic Forge before review. The persisted `/api/forge` route remains the single migration path for legacy extracted collections.
 
 ## Development
 
@@ -275,7 +288,7 @@ for file in app/static/*.js; do node --check "$file"; done
 node --test tests/static/*.test.mjs
 ```
 
-The suite covers preparation checkpoints, upload staging, writer leases, atomic confirmed sends, retryability, collection editing, title-aware Creative Tonie concurrency, credential removal, and browser workflow behavior. Tests use local fixtures and stub cloud clients. They do not contact a real myTonies account.
+The suite covers staged publication recovery, exact Forge retry output, upload retention, writer leases, atomic confirmed sends, retryability, collection editing, title-aware Creative Tonie concurrency, atomic credential pairs, route cancellation, and browser workflow behavior. Tests use local fixtures and stub cloud clients. They do not contact a real myTonies account.
 
 ## Tonie Cloud disclosure
 

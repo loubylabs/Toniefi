@@ -139,6 +139,24 @@ export async function submitUploadBatch({ files, title, options, request }) {
   return request("/api/uploads/prepare", { method: "POST", body: form });
 }
 
+export function uploadPolicyText(status) {
+  const files = Number(status?.upload_max_files || 0);
+  const size = status?.upload_max_human;
+  const retention = Number(status?.upload_stage_retention_seconds || 0);
+  if (!files || !size || !retention) return "Upload limits are loading from TonieFi.";
+  const hours = retention / 3600;
+  const retentionLabel = Number.isInteger(hours) ? `${hours} hours` : `${retention} seconds`;
+  return `Up to ${files} files and ${size} total become one collection. Failed uploads remain available for retry for ${retentionLabel}.`;
+}
+
+export function truthfulWorkProgress(job) {
+  const value = Number(job?.progress_percent);
+  if (Number.isFinite(value) && value >= 0 && value <= 100) {
+    return { mode: "determinate", percent: value };
+  }
+  return { mode: "indeterminate", percent: null };
+}
+
 export function deskRefreshNotice(snapshot) {
   const stale = Array.isArray(snapshot?.stale) && snapshot.stale.some((name) => name === "jobs" || name === "collections");
   if (!stale) return { stale: false, label: "", message: "" };
@@ -202,6 +220,7 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
     if (job.status === "done" && collection?.stage !== "forged") continue;
     if (slug) represented.add(slug);
     const phase = workPhase(job, collection);
+    const workProgress = truthfulWorkProgress(job);
     items.push({
       key: `job-${job.id}`,
       jobId: job.id,
@@ -216,6 +235,8 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
       trackCount: Number(collection?.track_count) || 0,
       duration: collection?.total_duration || "",
       hasCover: Boolean(collection?.cover),
+      progressMode: workProgress.mode,
+      progressPercent: workProgress.percent,
     });
   }
 
@@ -346,7 +367,7 @@ function readForgeOptions(root) {
   });
 }
 
-function workCartRow(item, { request, requestRefresh, navigate }) {
+function workCartRow(item, { request, requestRefresh, navigate, signal }) {
   const details = phaseDetails(item.phase);
   const row = element("li", { className: "work-cart-row", "data-phase": item.phase });
   const cover = item.hasCover && item.slug
@@ -375,7 +396,21 @@ function workCartRow(item, { request, requestRefresh, navigate }) {
   } else {
     body.append(progress);
     if (item.phase !== "ready") {
-      body.append(element("span", { className: "work-cart-progress-track", "aria-hidden": "true" }, [
+      const progressAttributes = item.progressMode === "determinate"
+        ? {
+          role: "progressbar",
+          "aria-label": `${item.title} preparation progress`,
+          "aria-valuemin": "0",
+          "aria-valuemax": "100",
+          "aria-valuenow": String(item.progressPercent),
+          style: `--work-progress:${item.progressPercent}%`,
+        }
+        : { "aria-label": `${details.label}, progress amount is not available` };
+      body.append(element("span", {
+        className: "work-cart-progress-track",
+        "data-mode": item.progressMode,
+        ...progressAttributes,
+      }, [
         element("span", { className: "work-cart-progress-fill" }),
       ]));
     }
@@ -411,9 +446,11 @@ function workCartRow(item, { request, requestRefresh, navigate }) {
       retry.disabled = true;
       try {
         await request(`/api/jobs/${item.jobId}/retry`, { method: "POST" });
+        if (signal?.aborted) return;
         notify(`${item.title} is queued again.`, { kind: "success" });
         await requestRefresh();
       } catch (error) {
+        if (signal?.aborted) return;
         retry.disabled = false;
         notify(error.message, { kind: "failure", timeout: 0 });
       }
@@ -425,7 +462,7 @@ function workCartRow(item, { request, requestRefresh, navigate }) {
   return row;
 }
 
-function createLiveWorkCart({ request, requestRefresh, navigate }) {
+export function createLiveWorkCart({ request, requestRefresh, navigate, signal = null }) {
   const list = element("ul", { className: "work-cart-list" });
   const empty = element("div", { className: "empty-state work-cart-empty" }, [
     iconNode("desk"),
@@ -452,7 +489,7 @@ function createLiveWorkCart({ request, requestRefresh, navigate }) {
     try {
       await requestRefresh();
     } finally {
-      retryRefresh.disabled = false;
+      if (!signal?.aborted) retryRefresh.disabled = false;
     }
   });
   const staleNotice = element("div", { className: "work-cart-stale", hidden: true }, [
@@ -477,6 +514,7 @@ function createLiveWorkCart({ request, requestRefresh, navigate }) {
   let priorStaleKey = "";
 
   function onRefresh(snapshot) {
+    if (signal?.aborted) return;
     const items = buildWorkCartItems(snapshot.jobs, snapshot.collections);
     const notice = deskRefreshNotice(snapshot);
     const staleAnnouncement = staleRefreshAnnouncement(priorStaleKey, notice);
@@ -489,7 +527,7 @@ function createLiveWorkCart({ request, requestRefresh, navigate }) {
     empty.hidden = items.length > 0;
     list.hidden = items.length === 0;
     withFocusRestored(() => {
-      replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate })));
+      replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate, signal })));
     }, { root: host });
     const phases = new Map(items.map((item) => [item.key, item.phase]));
     const announcements = [];
@@ -573,10 +611,12 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
               method: "POST",
               body: JSON.stringify(buildLibrivoxPayload(book.id, readForgeOptions(root))),
             });
+            if (signal.aborted) return;
             notify(`${book.title} is in the work cart.`, { kind: "success" });
             announce(`${book.title} is queued for extraction and Forge.`);
             await requestRefresh();
           } catch (error) {
+            if (signal.aborted) return;
             importButton.disabled = false;
             notify(error.message, { kind: "failure", timeout: 0 });
           }
@@ -591,7 +631,7 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
     } catch (error) {
       if (!signal.aborted) replace(searchResults, element("p", { className: "inline-error", role: "alert", text: error.message }));
     } finally {
-      setBusy(searchResults, false);
+      if (!signal.aborted) setBusy(searchResults, false);
     }
   });
 
@@ -606,7 +646,7 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
   const uploadStatus = element("p", {
     className: "field-help",
     role: "status",
-    text: "Up to 500 files and 20 GiB total become one collection. Failed uploads remain available for retry for 24 hours.",
+    text: "Upload limits are loading from TonieFi.",
   });
   const uploadButton = element("button", { type: "submit", className: "button button-secondary" }, [
     iconNode("upload"), element("span", { text: "Upload and prepare" }),
@@ -637,16 +677,18 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
         options: readForgeOptions(root),
         request,
       });
+      if (signal.aborted) return;
       fileInput.value = "";
       uploadTitle.value = "";
       uploadStatus.textContent = `${files.length} ${files.length === 1 ? "file is" : "files are"} in the work cart.`;
       notify("Your uploaded collection is in the work cart.", { kind: "success" });
       await requestRefresh();
     } catch (error) {
+      if (signal.aborted) return;
       uploadStatus.textContent = error.message;
       notify(error.message, { kind: "failure", timeout: 0 });
     } finally {
-      uploadButton.disabled = false;
+      if (!signal.aborted) uploadButton.disabled = false;
     }
   });
 
@@ -658,11 +700,19 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
     element("summary", {}, [iconNode("upload"), element("span", { text: "Upload audio files" })]),
     uploadForm,
   ]);
-  return element("section", { className: "secondary-intake", "aria-labelledby": "secondary-intake-title" }, [
+  const host = element("section", { className: "secondary-intake", "aria-labelledby": "secondary-intake-title" }, [
     heading,
     intro,
     element("div", { className: "secondary-intake-grid" }, [librivox, uploads]),
   ]);
+  return {
+    host,
+    onRefresh(snapshot) {
+      if (!signal?.aborted && !uploadButton.disabled) {
+        uploadStatus.textContent = uploadPolicyText(snapshot.status);
+      }
+    },
+  };
 }
 
 export function createDeskScreen({
@@ -840,6 +890,7 @@ export function createDeskScreen({
       const acceptedRows = Array.from(sourceList.children);
       try {
         await request("/api/prepare", { method: "POST", body: JSON.stringify(payload) });
+        if (signal.aborted) return;
         animateSubmission(acceptedRows, root, cart.host);
         const count = payload.sources.length;
         entries = [];
@@ -848,24 +899,32 @@ export function createDeskScreen({
         announce(`${count} ${count === 1 ? "story was" : "stories were"} accepted for preparation.`);
         await refresh.request();
       } catch (error) {
+        if (signal.aborted) return;
         notify(error.message, { kind: "failure", timeout: 0 });
         validation.dataset.kind = "failure";
         validation.textContent = error.message;
       } finally {
-        submitting = false;
-        renderSources();
+        if (!signal.aborted) {
+          submitting = false;
+          renderSources();
+        }
       }
     });
 
     const secondary = createSecondaryIntake({ root, request, requestRefresh: () => refresh.request(), signal });
-    intake.append(heading, lead, form, secondary);
-    const cart = createLiveWorkCart({ request, requestRefresh: () => refresh.request(), navigate });
+    intake.append(heading, lead, form, secondary.host);
+    const cart = createLiveWorkCart({ request, requestRefresh: () => refresh.request(), navigate, signal });
     root.append(intake, cart.host);
     replace(workspace, root);
     renderSources();
 
-    const unsubscribe = refresh.subscribe(cart.onRefresh);
+    const onRefresh = (snapshot) => {
+      cart.onRefresh(snapshot);
+      secondary.onRefresh(snapshot);
+    };
+    const unsubscribe = refresh.subscribe(onRefresh);
     cart.onRefresh(refresh.snapshot);
+    secondary.onRefresh(refresh.snapshot);
     return () => unsubscribe();
   };
 }

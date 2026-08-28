@@ -225,6 +225,68 @@ test("router commits only the latest isolated async render", async () => {
   }
 });
 
+test("router retains and aborts a mounted route before cleanup", async () => {
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalCustomEvent = globalThis.CustomEvent;
+  const workspace = new FakeElement("main");
+  const order = [];
+  let mountedSignal;
+
+  globalThis.document = {
+    createElement: (tagName) => new FakeElement(tagName),
+    getElementById: () => null,
+    querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {},
+  };
+  globalThis.window = {
+    location: { pathname: "/first", search: "", origin: "http://example.test" },
+    history: {
+      state: null,
+      pushState(state, _title, path) {
+        this.state = state;
+        globalThis.window.location.pathname = path;
+      },
+      replaceState() {},
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  globalThis.CustomEvent = class {
+    constructor(name, options) {
+      this.name = name;
+      this.detail = options.detail;
+    }
+  };
+
+  const router = createRouter([
+    { name: "first", path: "/first" },
+    { name: "second", path: "/second" },
+  ], { workspace });
+  router.register("first", ({ signal }) => {
+    mountedSignal = signal;
+    signal.addEventListener("abort", () => order.push("abort"));
+    return () => order.push(signal.aborted ? "cleanup-after-abort" : "cleanup-before-abort");
+  });
+  router.register("second", () => {});
+
+  try {
+    router.start();
+    await Promise.resolve();
+    assert.equal(mountedSignal.aborted, false);
+    await router.navigate("second");
+    assert.equal(mountedSignal.aborted, true);
+    assert.deepEqual(order, ["abort", "cleanup-after-abort"]);
+  } finally {
+    router.destroy();
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
 test("focused review renders loading synchronously and ignores hydration after cleanup", async () => {
   const originalDocument = globalThis.document;
   let resolveCollection;
@@ -240,7 +302,11 @@ test("focused review renders loading synchronously and ignores hydration after c
       workspace,
       slug: "night-stories",
       request: async () => new Promise((resolve) => { resolveCollection = resolve; }),
-      refresh: { snapshot: { status: { usable_limit_seconds: 5000 } }, request: async () => ({}) },
+      refresh: {
+        snapshot: { status: { usable_limit_seconds: 5000 }, jobs: [] },
+        request: async () => ({}),
+        subscribe: () => () => {},
+      },
       player: { play() {} },
       signal: controller.signal,
     });

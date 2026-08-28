@@ -131,6 +131,11 @@ def status() -> dict[str, Any]:
         "tonie_limit_seconds": config.TONIE_LIMIT_SECONDS,
         "usable_limit_seconds": config.usable_limit(),
         "tonie_limit_human": audio.human_duration(config.TONIE_LIMIT_SECONDS),
+        "upload_max_bytes": jobs.UPLOAD_MAX_BYTES,
+        "upload_max_human": jobs.upload_limit_label(jobs.UPLOAD_MAX_BYTES),
+        "upload_max_files": jobs.UPLOAD_MAX_FILES,
+        "upload_stage_retention_seconds": jobs.UPLOAD_STAGE_RETENTION_SECONDS,
+        "upload_stage_dir": str(config.upload_stage_dir()),
         "tools": audio.have_tools(),
         "credentials": push.credential_status(),
     }
@@ -138,15 +143,13 @@ def status() -> dict[str, Any]:
 
 @app.post("/api/settings/credentials")
 def save_credentials(body: Credentials) -> dict[str, Any]:
-    db.set_setting("tonies_username", body.username.strip())
-    db.set_setting("tonies_password", body.password)
+    db.replace_credentials(body.username.strip(), body.password)
     return {"ok": True}
 
 
 @app.delete("/api/settings/credentials")
 def delete_credentials() -> dict[str, Any]:
-    db.delete_setting("tonies_username")
-    db.delete_setting("tonies_password")
+    db.delete_credentials()
     return push.credential_status()
 
 
@@ -265,9 +268,12 @@ async def prepare_uploads(
 
 @app.post("/api/forge")
 def run_forge(body: ForgeRequest) -> dict[str, Any]:
-    if not library.get(body.slug):
+    collection = library.get(body.slug)
+    if not collection:
         raise fail(404, f"No collection named {body.slug}.")
-    job_id = jobs.enqueue("forge", f"Forge {body.slug}", body.model_dump())
+    if collection.get("stage") == "forged":
+        raise fail(409, "Forge is already complete for this collection.")
+    job_id = db.create_forge_job_once(f"Forge {body.slug}", body.model_dump())
     return {"job_id": job_id}
 
 

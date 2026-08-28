@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
+import { forgePreparationState } from "./library.js";
 import {
   announce,
   createMutationController,
@@ -23,14 +24,19 @@ export function forgedCollectionsNewestFirst(collections) {
 
 export function tonieCapacity(tonie, groupSeconds, replaceExisting, limitSeconds) {
   const present = Number(tonie?.seconds_present ?? tonie?.secondsPresent ?? 0);
-  const free = Number(tonie?.seconds_free ?? Math.max(0, limitSeconds - present));
-  const availableSeconds = replaceExisting ? Number(limitSeconds) : free;
+  const availableSeconds = replaceExisting
+    ? Number(limitSeconds)
+    : Math.max(0, Number(limitSeconds) - present);
   const projectedSeconds = replaceExisting ? Number(groupSeconds) : present + Number(groupSeconds);
   return {
     availableSeconds,
     projectedSeconds,
     fits: Number(groupSeconds) <= availableSeconds,
   };
+}
+
+export function reviewCapacityLimit(status = {}) {
+  return Number(status.usable_limit_seconds || 0);
 }
 
 export function buildPushBatchPayload(collection, selections, operationKey) {
@@ -148,6 +154,7 @@ function factList(collection) {
 }
 
 function forgeSummary(collection) {
+  if (collection.stage !== "forged") return "Forge incomplete";
   const forge = collection.forge || {};
   const details = [];
   if (forge.normalized) details.push("−16 LUFS normalized");
@@ -431,6 +438,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
   let active = true;
   let collection = null;
   let status = refresh.snapshot.status;
+  let jobs = refresh.snapshot.jobs || [];
   let toniesStale = false;
   const root = element("article", { className: "review-detail-screen", "aria-labelledby": "review-detail-title" });
   replace(workspace, loadingState("Opening collection review", "Reading the collection manifest and capacity plan."));
@@ -487,6 +495,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
 
   function renderDetail({ focusKey = "", fallback = null } = {}) {
     if (!active || signal.aborted || !collection) return;
+    const preparation = forgePreparationState(collection, jobs);
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
     const titleInput = element("input", {
       id: "review-collection-title",
@@ -544,7 +553,15 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
       element("div", { className: "review-detail-heading" }, [
         coverNode(collection, "review-detail-cover"),
         element("div", {}, [
-          element("span", { className: "status-stamp", "data-status": "success", text: "Ready to review" }),
+          element("span", {
+            className: "status-stamp",
+            "data-status": preparation.state === "ready"
+              ? "success"
+              : preparation.state === "failed" ? "failure" : "warning",
+            text: preparation.state === "ready"
+              ? "Ready to review"
+              : preparation.state === "pending" ? "Forge queued" : "Forge incomplete",
+          }),
           element("h1", { id: "review-detail-title", text: collection.title || "Untitled collection", tabindex: "-1" }),
           titleForm,
           detailFacts(collection),
@@ -790,7 +807,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
         const panel = createAssignmentPanel({
           collection,
           tonies,
-          limitSeconds: status.tonie_limit_seconds,
+          limitSeconds: reviewCapacityLimit(status),
           onSubmit: async (selected, { form, submit }) => {
             if (assignmentAttempt?.inFlight) return;
             const summary = selected.map(({ group, tonie, replaceExisting }) => (
@@ -892,12 +909,64 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
       element("p", { text: "No target information is loaded until you choose Creative Tonies." }),
       chooseButton,
     );
+    const preparationPanel = element("section", {
+      className: "assignment-panel preparation-panel",
+      "aria-labelledby": "preparation-title",
+    }, [
+      element("h2", { id: "preparation-title", text: "Finish preparation" }),
+      element("p", {
+        text: preparation.state === "pending"
+          ? "Forge is queued. Assignment stays locked until the prepared collection reaches Review Shelf."
+          : preparation.state === "failed"
+            ? preparation.error
+            : "This extracted collection has not completed Forge. Finish preparation before reviewing capacity or assigning Creative Tonies.",
+      }),
+    ]);
+    if (preparation.state !== "pending") {
+      const finish = element("button", {
+        type: "button",
+        className: "button button-primary finish-preparation-button",
+        text: "Finish preparation",
+        "data-focus-key": "finish-preparation",
+      });
+      finish.addEventListener("click", async () => {
+        finish.disabled = true;
+        try {
+          const receipt = await request("/api/forge", {
+            method: "POST",
+            body: JSON.stringify({ slug }),
+            signal,
+          });
+          if (!active || signal.aborted) return;
+          jobs = [{
+            id: receipt.job_id ?? receipt.id,
+            kind: "forge",
+            status: "queued",
+            payload: { slug },
+          }, ...jobs];
+          renderDetail({ focusKey: "finish-preparation" });
+          notify(`${collection.title || "Collection"} is queued to finish Forge.`, { kind: "success" });
+          await refresh.request();
+        } catch (error) {
+          if (!active || signal.aborted) return;
+          jobs = [{
+            id: Number.MAX_SAFE_INTEGER,
+            kind: "forge",
+            status: "failed",
+            error: error.message,
+            payload: { slug },
+          }, ...jobs];
+          renderDetail({ focusKey: "finish-preparation" });
+          notify(error.message, { kind: "failure", timeout: 0 });
+        }
+      });
+      preparationPanel.append(finish);
+    }
     replace(root, header, element("div", { className: "review-detail-grid" }, [
       element("div", { className: "review-detail-main" }, [chapters]),
-      element("aside", { className: "review-detail-plan" }, [
-        capacityPlan(collection, status.usable_limit_seconds),
-        assignmentHost,
-      ]),
+      element("aside", { className: "review-detail-plan" }, preparation.state === "ready"
+        ? [capacityPlan(collection, status.usable_limit_seconds), assignmentHost]
+        : [preparationPanel]),
     ]));
     const fallbackTarget = fallback || root.querySelector("h1");
     restoreFocus(token, { root, fallback: fallbackTarget });
@@ -915,9 +984,26 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
     }
   }
 
+  function onRefresh(snapshot) {
+    if (!active || signal.aborted) return;
+    if (!snapshot.stale?.includes("jobs")) jobs = snapshot.jobs || [];
+    const indexed = snapshot.collections?.find((item) => item.slug === slug);
+    if (indexed?.stage === "forged" && collection?.stage !== "forged") {
+      loadCollection().then(() => {
+        if (active && !signal.aborted) renderDetail({ focusKey: "review-detail-title" });
+      }).catch((error) => {
+        if (active && !signal.aborted) renderMutationStale(error);
+      });
+      return;
+    }
+    if (collection) renderDetail();
+  }
+
+  const unsubscribe = refresh.subscribe(onRefresh);
   hydrate();
   return () => {
     active = false;
+    unsubscribe();
     if (toniesStale) announce("Creative Tonie capacity figures remain stale.");
   };
 }

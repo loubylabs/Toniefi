@@ -64,6 +64,20 @@ function stageLabel(stage) {
   return stage === "forged" ? "Forge complete" : stage === "extracted" ? "Extracted" : stage || "Local";
 }
 
+export function forgePreparationState(collection, jobs = []) {
+  if (collection?.stage === "forged") return { state: "ready", error: "" };
+  const job = jobs
+    .filter((item) => item.kind === "forge" && item.payload?.slug === collection?.slug)
+    .sort((left, right) => Number(right.id || 0) - Number(left.id || 0))[0];
+  if (job?.status === "queued" || job?.status === "running") {
+    return { state: "pending", error: "" };
+  }
+  if (job?.status === "failed") {
+    return { state: "failed", error: job.error || "Forge stopped before preparation completed." };
+  }
+  return { state: "incomplete", error: "" };
+}
+
 export function createLibraryScreen({
   request = api,
   refresh,
@@ -73,6 +87,7 @@ export function createLibraryScreen({
   return function renderLibrary({ workspace, signal }) {
     let active = true;
     let collections = refresh.snapshot.collections || [];
+    let jobs = refresh.snapshot.jobs || [];
     let query = "";
     const root = element("section", { className: "library-screen", "aria-labelledby": "library-title" });
     const titleGroup = element("div", {}, [
@@ -133,16 +148,63 @@ export function createLibraryScreen({
 
     function collectionRow(collection, index, shown) {
       const titleId = `library-collection-${collection.slug}`;
-      const open = element("a", {
-        className: "button button-primary",
-        href: `/review/${encodeURIComponent(collection.slug)}`,
-        "data-route": "review",
-        "data-focus-key": `library-${collection.slug}-open`,
-        "data-collection-mutation": "",
-      }, [iconNode("review"), element("span", { text: "Open for review" })]);
-      open.addEventListener("click", (event) => {
-        if (mutation.pending) event.preventDefault();
-      });
+      const preparation = forgePreparationState(collection, jobs);
+      const primary = preparation.state === "ready"
+        ? element("a", {
+          className: "button button-primary",
+          href: `/review/${encodeURIComponent(collection.slug)}`,
+          "data-route": "review",
+          "data-focus-key": `library-${collection.slug}-open`,
+          "data-collection-mutation": "",
+        }, [iconNode("review"), element("span", { text: "Open for review" })])
+        : element("button", {
+          type: "button",
+          className: "button button-primary library-finish",
+          disabled: preparation.state === "pending",
+          "data-focus-key": `library-${collection.slug}-open`,
+          "data-collection-mutation": "",
+        }, [
+          iconNode("forge"),
+          element("span", { text: preparation.state === "pending" ? "Forge queued" : "Finish preparation" }),
+        ]);
+      if (preparation.state === "ready") {
+        primary.addEventListener("click", (event) => {
+          if (mutation.pending) event.preventDefault();
+        });
+      } else {
+        primary.addEventListener("click", async () => {
+          if (preparation.state === "pending" || mutation.pending || signal?.aborted) return;
+          primary.disabled = true;
+          try {
+            const receipt = await request("/api/forge", {
+              method: "POST",
+              body: JSON.stringify({ slug: collection.slug }),
+              signal,
+            });
+            if (!active || signal?.aborted) return;
+            jobs = [{
+              id: receipt.job_id,
+              kind: "forge",
+              status: "queued",
+              payload: { slug: collection.slug },
+            }, ...jobs];
+            render({ focusKey: `library-${collection.slug}-open` });
+            notify(`${collection.title || "Collection"} is queued to finish Forge.`, { kind: "success" });
+            await refresh.request();
+          } catch (error) {
+            if (!active || signal?.aborted) return;
+            jobs = [{
+              id: Number.MAX_SAFE_INTEGER,
+              kind: "forge",
+              status: "failed",
+              error: error.message,
+              payload: { slug: collection.slug },
+            }, ...jobs];
+            render({ focusKey: `library-${collection.slug}-open` });
+            notify(error.message, { kind: "failure", timeout: 0 });
+          }
+        });
+      }
       const removeButton = element("button", {
         type: "button",
         className: "button button-secondary library-delete",
@@ -192,7 +254,10 @@ export function createLibraryScreen({
         ]),
         facts,
         element("p", { className: "library-source", text: source }),
-        element("div", { className: "library-row-actions" }, [open, removeButton]),
+        preparation.state === "failed"
+          ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
+          : null,
+        element("div", { className: "library-row-actions" }, [primary, removeButton]),
       ]);
       return element("li", { className: "library-row", "aria-labelledby": titleId }, [collectionCover(collection), body]);
     }
@@ -239,6 +304,7 @@ export function createLibraryScreen({
     function onRefresh(snapshot) {
       if (!active || signal?.aborted) return;
       const failed = snapshot.stale?.includes("collections");
+      if (!snapshot.stale?.includes("jobs")) jobs = snapshot.jobs || [];
       stale.hidden = !failed;
       if (failed) showStale("Library information could not refresh. Showing the last available local collection index.");
       else replace(stale);

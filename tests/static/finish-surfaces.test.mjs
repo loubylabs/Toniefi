@@ -7,6 +7,7 @@ import {
   createTonieMutation,
   tonieLoadView,
 } from "../../app/static/tonies.js";
+import { reviewCapacityLimit } from "../../app/static/review.js";
 import {
   activityAction,
   activityFacts,
@@ -29,6 +30,7 @@ class TinyElement {
     this.attributes = new Map();
     this.listeners = new Map();
     this.className = "";
+    this.dataset = {};
     this.hidden = false;
     this.disabled = false;
     this.value = "";
@@ -63,6 +65,25 @@ class TinyElement {
   addEventListener(name, listener) {
     this.listeners.set(name, listener);
   }
+
+  querySelector(selector) {
+    if (selector === "span:last-child") {
+      return [...this.childNodes].reverse().find((node) => node?.tagName === "SPAN") || null;
+    }
+    return null;
+  }
+
+  focus() {}
+}
+
+
+function descendants(root) {
+  return [root, ...(root?.childNodes || []).flatMap(descendants)];
+}
+
+
+function textOf(node) {
+  return [node?.textContent || "", ...(node?.childNodes || []).map(textOf)].join("");
 }
 
 
@@ -89,6 +110,10 @@ test("Tonie chapter payload carries the title-aware canonical base", () => {
       { id: "chapter-a", title: "One" },
     ],
   });
+});
+
+test("Review assignment uses the server usable limit instead of raw capacity", () => {
+  assert.equal(reviewCapacityLimit({ tonie_limit_seconds: 5400, usable_limit_seconds: 5370 }), 5370);
 });
 
 
@@ -198,8 +223,8 @@ test("Activity consumes only chronological history from the refresh snapshot", (
   };
   assert.deepEqual(activityHistory(snapshot), [{ id: 50 }, { id: 49 }]);
 
-  const appSource = readFileSync(new URL("../../app/static/app.js", import.meta.url), "utf8");
-  assert.match(appSource, /api\/jobs\/history/);
+  const refreshSource = readFileSync(new URL("../../app/static/refresh.js", import.meta.url), "utf8");
+  assert.match(refreshSource, /api\/jobs\/history/);
 });
 
 
@@ -242,8 +267,8 @@ test("Settings credential view makes environment precedence explicit", () => {
     source: "environment",
     username: "family@example.com",
   }), {
-    state: "connected",
-    label: "Connected",
+    state: "configured",
+    label: "Configured",
     sourceLabel: "Environment variables",
     username: "family@example.com",
     fieldsDisabled: true,
@@ -252,6 +277,8 @@ test("Settings credential view makes environment precedence explicit", () => {
   });
   assert.equal(credentialView({ configured: false, source: "none", username: "" }).state, "unconfigured");
   assert.equal(credentialView({ configured: true, source: "saved", username: "saved@example.com" }).saveLabel, "Replace local credentials");
+  assert.equal(credentialView({ configured: true }, { state: "connected" }).label, "Connected");
+  assert.equal(credentialView({ configured: true }, { state: "failed" }).label, "Connection failed");
   assert.deepEqual(credentialView({
     configured: false,
     source: "environment",
@@ -326,6 +353,60 @@ test("Settings keeps service disclosures mounted while status is loading", () =>
     assert.equal(textOf(disclosure), exactDisclosure);
     onRefresh({ status: null, stale: ["status"], errors: { status: new Error("offline") } });
     assert.equal(textOf(disclosure), exactDisclosure);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+
+test("Replacing credentials clears a successful session test back to Configured", async () => {
+  const originalDocument = globalThis.document;
+  const document = {
+    activeElement: null,
+    createElement: (tagName) => new TinyElement(tagName),
+    getElementById: () => null,
+  };
+  globalThis.document = document;
+  const workspace = new TinyElement("main");
+  const status = {
+    credentials: { configured: true, source: "saved", username: "old@example.com" },
+    tonie_limit_seconds: 5400,
+    usable_limit_seconds: 5370,
+    tools: {},
+  };
+  const refreshedStatus = {
+    ...status,
+    credentials: { configured: true, source: "saved", username: "new@example.com" },
+  };
+  const refresh = {
+    snapshot: { status },
+    subscribe: () => () => {},
+    request: async () => ({ status: refreshedStatus, stale: [], errors: {} }),
+  };
+  const request = async (path) => path === "/api/settings/test"
+    ? { email: "old@example.com" }
+    : { configured: true, source: "saved", username: "new@example.com" };
+
+  try {
+    createSettingsScreen({ request, refresh })({
+      workspace,
+      signal: new AbortController().signal,
+    });
+    const nodes = descendants(workspace);
+    const testConnection = nodes.find((node) => textOf(node) === "Test connection");
+    await testConnection.listeners.get("click")();
+    assert.match(textOf(descendants(workspace).find((node) => node.className === "account-connection-status")), /Connected/);
+
+    const username = nodes.find((node) => node.attributes?.get("id") === "settings-username");
+    const password = nodes.find((node) => node.attributes?.get("id") === "settings-password");
+    const form = nodes.find((node) => node.className === "credential-form");
+    username.value = "new@example.com";
+    password.value = "new-password";
+    await form.listeners.get("submit")({ preventDefault() {} });
+
+    const connectionStatus = descendants(workspace).find((node) => node.className === "account-connection-status");
+    assert.match(textOf(connectionStatus), /Configured/);
+    assert.doesNotMatch(textOf(connectionStatus), /Connected/);
   } finally {
     globalThis.document = originalDocument;
   }
