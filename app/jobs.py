@@ -132,8 +132,17 @@ def enqueue_many(entries: list[tuple[str, str, dict]]) -> list[int]:
     return db.create_jobs(entries)
 
 
+class PushRetryConflict(RuntimeError):
+    """Confirmed sends must return to Review instead of cloning a job."""
+
+
 def retry_failed_job(job_id: int) -> int:
     with _upload_stage_lock:
+        job = db.get_job(job_id)
+        if job and job.get("status") == "failed" and job.get("kind") == "push":
+            raise PushRetryConflict(
+                "Creative Tonie sends must be reviewed and confirmed again in Review."
+            )
         return db.clone_failed_job(job_id)
 
 
@@ -147,6 +156,7 @@ def present(job: dict) -> dict:
 
     status = displayed.get("status", "")
     kind = displayed.get("kind", "")
+    displayed["retryable"] = status == "failed" and kind != "push"
     if status == "failed":
         displayed["phase"] = "failed"
     elif separator and prefix in {"extracting", "forging"}:

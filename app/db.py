@@ -176,7 +176,7 @@ def clone_failed_job(job_id: int) -> int:
     conn = connect()
     with _lock:
         row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if row is None or row["status"] != "failed":
+        if row is None or row["status"] != "failed" or row["kind"] == "push":
             return 0
         cur = conn.execute(
             "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "

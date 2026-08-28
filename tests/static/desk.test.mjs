@@ -225,6 +225,7 @@ test("buildWorkCartItems merges preparation jobs with collection facts and keeps
       label: "https://example.com/failed",
       progress: "Levelling 2/8",
       error: "Audio processing stopped.",
+      retryable: true,
       payload: { url: "https://example.com/failed", slug: "failed-book" },
       result: {},
     },
@@ -300,6 +301,7 @@ test("buildWorkCartItems keeps every active job ahead of failed and completed wo
     label: `Story ${id}`,
     progress: "",
     error: status === "failed" ? "Stopped" : "",
+    retryable: status === "failed",
     payload: { url: `https://example.com/${id}`, slug: `story-${id}` },
     result: status === "done" ? { slug: `story-${id}` } : {},
   });
@@ -314,6 +316,23 @@ test("buildWorkCartItems keeps every active job ahead of failed and completed wo
     buildWorkCartItems([job(6, "running"), job(5, "queued"), job(4, "running")], [], 2).map((item) => item.jobId),
     [6, 5, 4],
   );
+});
+
+test("buildWorkCartItems honors the server retryable contract", () => {
+  const [item] = buildWorkCartItems([{
+    id: 31,
+    kind: "prepare_url",
+    status: "failed",
+    phase: "failed",
+    label: "Reviewed elsewhere",
+    progress: "",
+    error: "Return to Review",
+    retryable: false,
+    payload: { url: "https://example.com/reviewed" },
+    result: {},
+  }], []);
+
+  assert.equal(item.canRetry, false);
 });
 
 test("buildWorkCartItems does not mark a legacy import-only LibriVox job ready", () => {

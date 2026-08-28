@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -220,8 +221,6 @@ def test_worker_dispatch_has_no_group_index_resolution(isolated, monkeypatch):
 
 
 def test_manifest_mutations_share_one_read_modify_write_lock(isolated, monkeypatch):
-    import threading
-
     real_read = library._read_manifest
     first_read = threading.Event()
     resume = threading.Event()
@@ -256,3 +255,137 @@ def test_manifest_mutations_share_one_read_modify_write_lock(isolated, monkeypat
     manifest = library.get(isolated)
     assert manifest["title"] == "Renamed collection"
     assert manifest["tracks"][0]["title"] == "Renamed track"
+
+
+def test_two_push_workers_serialize_one_tonie_from_read_through_upload(isolated, monkeypatch):
+    body = batch_body(isolated)
+    entered_first_read = threading.Event()
+    release_first_read = threading.Event()
+    second_worker_read = threading.Event()
+    worker_two_started = threading.Event()
+    thread_errors = []
+
+    class SharedCloud(StubCloud):
+        def get_tonie(self, household_id, tonie_id):
+            if threading.current_thread().name == "push-worker-one" and not entered_first_read.is_set():
+                entered_first_read.set()
+                assert release_first_read.wait(5)
+            elif threading.current_thread().name == "push-worker-two":
+                second_worker_read.set()
+            return super().get_tonie(household_id, tonie_id)
+
+    cloud = SharedCloud()
+    monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
+    payload = {
+        **body["assignments"][0],
+        "slug": isolated,
+        "manifest_fingerprint": body["manifest_fingerprint"],
+        "replace": True,
+    }
+
+    def run_push(started=None):
+        if started:
+            started.set()
+        try:
+            push.push_confirmed(payload)
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    first = threading.Thread(name="push-worker-one", target=run_push)
+    second = threading.Thread(name="push-worker-two", target=run_push, args=(worker_two_started,))
+    first.start()
+    assert entered_first_read.wait(5)
+    second.start()
+    assert worker_two_started.wait(5)
+    serialized = not second_worker_read.wait(0.15)
+    release_first_read.set()
+    first.join(5)
+    second.join(5)
+
+    assert serialized
+    assert not first.is_alive() and not second.is_alive()
+    assert len(thread_errors) == 1
+    assert isinstance(thread_errors[0], push.StalePush)
+    assert cloud.calls.count("clear") == 1
+    assert len([call for call in cloud.calls if call.startswith("upload:")]) == 2
+
+
+def test_collection_lease_blocks_local_mutation_from_remote_read_through_upload(
+    isolated,
+    monkeypatch,
+):
+    body = batch_body(isolated)
+    entered_remote_read = threading.Event()
+    release_remote_read = threading.Event()
+    mutation_done = threading.Event()
+    thread_errors = []
+
+    class PausedCloud(StubCloud):
+        def get_tonie(self, household_id, tonie_id):
+            if not entered_remote_read.is_set():
+                entered_remote_read.set()
+                assert release_remote_read.wait(5)
+            return super().get_tonie(household_id, tonie_id)
+
+    cloud = PausedCloud()
+    monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
+    payload = {
+        **body["assignments"][0],
+        "slug": isolated,
+        "manifest_fingerprint": body["manifest_fingerprint"],
+        "replace": True,
+    }
+
+    def run_push():
+        try:
+            push.push_confirmed(payload)
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    def remove_confirmed_file():
+        try:
+            library.delete_track(isolated, "one.mp3")
+        except BaseException as exc:
+            thread_errors.append(exc)
+        finally:
+            mutation_done.set()
+
+    worker = threading.Thread(name="leased-push", target=run_push)
+    mutation = threading.Thread(name="local-mutation", target=remove_confirmed_file)
+    worker.start()
+    assert entered_remote_read.wait(5)
+    mutation.start()
+    blocked = not mutation_done.wait(0.15)
+    release_remote_read.set()
+    worker.join(5)
+    mutation.join(5)
+
+    assert blocked
+    assert not worker.is_alive() and not mutation.is_alive()
+    assert thread_errors == []
+    assert cloud.calls.index("clear") < cloud.calls.index("upload:one.mp3")
+    assert not (config.LIBRARY_DIR / isolated / "one.mp3").exists()
+
+
+def test_failed_push_job_cannot_be_cloned_by_generic_retry(isolated):
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    receipt = client.post("/api/push/batch", json=body).json()
+    job_id = receipt["job_ids"][0]
+    original = db.get_job(job_id)
+    db.update_job(job_id, status="failed", error="remote stale")
+
+    response = client.post(f"/api/jobs/{job_id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Creative Tonie sends must be reviewed and confirmed again in Review."
+    assert db.jobs_for_refresh()[0]["id"] == job_id
+    assert db.get_job(job_id)["payload"] == original["payload"]
+    assert jobs.present(db.get_job(job_id))["retryable"] is False
+
+
+def test_failed_prepare_job_remains_explicitly_retryable(isolated):
+    job_id = db.create_job("prepare_url", "Prepare", {"url": "https://example.test/story"})
+    db.update_job(job_id, status="failed", error="network")
+
+    assert jobs.present(db.get_job(job_id))["retryable"] is True

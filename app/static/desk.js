@@ -212,7 +212,7 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
       progress: job.progress || (phase === "queued" ? "Waiting for a worker" : ""),
       error: job.error || "",
       slug,
-      canRetry: job.status === "failed",
+      canRetry: Boolean(job.retryable),
       trackCount: Number(collection?.track_count) || 0,
       duration: collection?.total_duration || "",
       hasCover: Boolean(collection?.cover),

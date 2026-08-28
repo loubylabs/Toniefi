@@ -424,7 +424,10 @@ def get_job(job_id: int) -> dict[str, Any]:
 
 @app.post("/api/jobs/{job_id}/retry")
 def retry_job(job_id: int) -> dict[str, Any]:
-    retry_id = jobs.retry_failed_job(job_id)
+    try:
+        retry_id = jobs.retry_failed_job(job_id)
+    except jobs.PushRetryConflict as exc:
+        raise fail(409, str(exc)) from exc
     if not retry_id:
         raise fail(400, "Only failed jobs can be retried.")
     job = db.get_job(retry_id)

@@ -4,12 +4,13 @@ import test from "node:test";
 import { filterCollectionsByTitle } from "../../app/static/library.js";
 import {
   buildPushBatchPayload,
-  confirmPushBatch,
+  createAssignmentAttempt,
   forgedCollectionsNewestFirst,
   moveControlFocusKey,
   tonieCapacity,
 } from "../../app/static/review.js";
 import { createMutationController, moveItem, snapshotRefreshOutcome } from "../../app/static/shared.js";
+import { rescanCollections } from "../../app/static/library.js";
 
 test("moveItem moves an item one position toward the start", () => {
   assert.deepEqual(moveItem(["chapter-a", "chapter-b", "chapter-c"], 1, -1), [
@@ -94,27 +95,6 @@ test("buildPushBatchPayload carries exact reviewed files, remote state, and one 
   });
 });
 
-test("confirmPushBatch never enqueues before final confirmation and posts one exact batch", async () => {
-  const payload = { operation_key: "operation-1", assignments: [{ files: ["one.mp3"] }] };
-  const calls = [];
-  assert.equal(await confirmPushBatch({ confirm: async () => false, request: async (...args) => calls.push(args), payload }), null);
-  assert.deepEqual(calls, []);
-
-  const receipt = await confirmPushBatch({
-    confirm: async () => true,
-    request: async (...args) => {
-      calls.push(args);
-      return { job_ids: [7] };
-    },
-    payload,
-  });
-  assert.deepEqual(receipt, { job_ids: [7] });
-  assert.deepEqual(calls, [["/api/push/batch", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }]]);
-});
-
 test("mutation controller serializes controls and reloads truth after failure", async () => {
   const controls = [{ disabled: false }, { disabled: false }];
   const root = { querySelectorAll: () => controls, setAttribute() {}, removeAttribute() {} };
@@ -149,6 +129,96 @@ test("snapshot refresh outcome reports partial collection failure instead of suc
     stale: true,
     error,
   });
+});
+
+test("assignment attempt disables before confirmation and rejects repeated submit", async () => {
+  let releaseConfirmation;
+  let confirmationCount = 0;
+  let postCount = 0;
+  let posted;
+  const pendingStates = [];
+  const payload = { operation_key: "stable-operation", assignments: [{ files: ["one.mp3"] }] };
+  const attempt = createAssignmentAttempt({
+    payload,
+    confirm: async () => {
+      confirmationCount += 1;
+      return new Promise((resolve) => { releaseConfirmation = resolve; });
+    },
+    request: async (...args) => {
+      postCount += 1;
+      posted = args;
+      return { job_ids: [11] };
+    },
+    setPending: (pending) => pendingStates.push(pending),
+  });
+
+  const first = attempt.submit();
+  const repeated = await attempt.submit();
+  assert.equal(repeated, false);
+  assert.deepEqual(pendingStates, [true]);
+  assert.equal(confirmationCount, 1);
+  assert.equal(postCount, 0);
+  releaseConfirmation(true);
+  assert.deepEqual(await first, { job_ids: [11] });
+  assert.equal(postCount, 1);
+  assert.equal(posted[0], "/api/push/batch");
+  assert.equal(posted[1].method, "POST");
+  assert.equal(posted[1].body, JSON.stringify(payload));
+  assert.deepEqual(pendingStates, [true, false]);
+});
+
+test("assignment retry retains one payload and replaces failure with recovered receipt", async () => {
+  const payload = { operation_key: "stable-operation", assignments: [{ files: ["one.mp3"] }] };
+  const bodies = [];
+  const states = [];
+  const attempt = createAssignmentAttempt({
+    payload,
+    confirm: async () => true,
+    request: async (_url, options) => {
+      bodies.push(options.body);
+      if (bodies.length === 1) throw new Error("response uncertain");
+      return { operation_key: "stable-operation", job_ids: [11] };
+    },
+    onFailure: (error) => states.push(`failure:${error.message}`),
+    onReceipt: (receipt) => states.push(`success:${receipt.job_ids.join(",")}`),
+  });
+
+  assert.equal(await attempt.submit(), null);
+  assert.equal(attempt.payload.operation_key, "stable-operation");
+  assert.deepEqual(await attempt.retry(), { operation_key: "stable-operation", job_ids: [11] });
+  assert.deepEqual(bodies, [JSON.stringify(payload), JSON.stringify(payload)]);
+  assert.deepEqual(states, ["failure:response uncertain", "success:11"]);
+});
+
+test("Library Rescan uses mutation serialization and rehydrates one snapshot", async () => {
+  let releaseRescan;
+  const requestCalls = [];
+  const controls = [{ tagName: "BUTTON", disabled: false }, { tagName: "BUTTON", disabled: false }];
+  const root = {
+    querySelectorAll: (selector) => selector === "[data-collection-mutation]" ? controls : [],
+    setAttribute() {},
+    removeAttribute() {},
+  };
+  const refresh = {
+    request: async () => ({ collections: [{ slug: "one" }], stale: [], errors: {} }),
+  };
+  const controller = createMutationController({ root, reload: refresh.request });
+  const first = controller.run(() => rescanCollections({
+    collections: [{ slug: "one" }],
+    request: async (...args) => {
+      requestCalls.push(args);
+      return new Promise((resolve) => { releaseRescan = resolve; });
+    },
+    refresh,
+  }));
+  assert.deepEqual(controls.map((control) => control.disabled), [true, true]);
+  assert.equal(await controller.run(async () => "delete"), false);
+  releaseRescan({ slug: "one" });
+  const result = await first;
+  assert.equal(result.failures.length, 0);
+  assert.deepEqual(result.snapshot.collections, [{ slug: "one" }]);
+  assert.equal(requestCalls.length, 1);
+  assert.deepEqual(controls.map((control) => control.disabled), [false, false]);
 });
 
 test("moveControlFocusKey chooses an enabled control when a chapter reaches a boundary", () => {

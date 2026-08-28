@@ -48,14 +48,47 @@ export function buildPushBatchPayload(collection, selections, operationKey) {
   };
 }
 
-export async function confirmPushBatch({ confirm, request, payload, signal }) {
-  if (!await confirm()) return null;
-  if (signal?.aborted) return null;
-  return request("/api/push/batch", {
-    method: "POST",
-    body: JSON.stringify(payload),
-    ...(signal ? { signal } : {}),
-  });
+export function createAssignmentAttempt({
+  payload,
+  confirm,
+  request,
+  signal = null,
+  setPending = () => {},
+  onReceipt = () => {},
+  onFailure = () => {},
+}) {
+  let inFlight = false;
+
+  async function send({ needsConfirmation }) {
+    if (inFlight || signal?.aborted) return false;
+    inFlight = true;
+    setPending(true);
+    try {
+      if (needsConfirmation && !await confirm()) return false;
+      if (signal?.aborted) return false;
+      const receipt = await request("/api/push/batch", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        ...(signal ? { signal } : {}),
+      });
+      if (signal?.aborted) return false;
+      await onReceipt(receipt);
+      return receipt;
+    } catch (error) {
+      if (!signal?.aborted) await onFailure(error);
+      return null;
+    } finally {
+      inFlight = false;
+      if (!signal?.aborted) setPending(false);
+    }
+  }
+
+  return {
+    payload,
+    submit: () => send({ needsConfirmation: true }),
+    retry: () => send({ needsConfirmation: false }),
+    get inFlight() { return inFlight; },
+  };
 }
 
 export function moveControlFocusKey(trackName, targetIndex, total, offset) {
@@ -753,28 +786,33 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
             element("p", { text: "These figures were refreshed just before target selection." }),
           ]),
         ]);
+        let assignmentAttempt = null;
         const panel = createAssignmentPanel({
           collection,
           tonies,
           limitSeconds: status.tonie_limit_seconds,
           onSubmit: async (selected, { form, submit }) => {
+            if (assignmentAttempt?.inFlight) return;
             const summary = selected.map(({ group, tonie, replaceExisting }) => (
               `Group ${group.index} (${group.duration}) will ${replaceExisting ? "replace" : "append to"} ${tonie.name || "Creative Tonie"}`
             )).join(". ");
-            const operationKey = globalThis.crypto?.randomUUID?.() || `push-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-            const payload = buildPushBatchPayload(collection, selected, operationKey);
             const confirm = () => showConfirmDialog({
-                title: "Send these groups?",
-                message: `${summary}. Replacing clears the target's current chapters. Tonie Cloud changes have no undo.`,
-                confirmLabel: `Confirm ${selected.length} ${selected.length === 1 ? "send" : "sends"}`,
-                destructive: true,
+              title: "Send these groups?",
+              message: `${summary}. Replacing clears the target's current chapters. Tonie Cloud changes have no undo.`,
+              confirmLabel: `Confirm ${selected.length} ${selected.length === 1 ? "send" : "sends"}`,
+              destructive: true,
+            });
+
+            function setAssignmentPending(pending) {
+              setBusy(assignmentHost, pending, pending ? "Confirming Creative Tonie assignment" : "Creative Tonie assignment");
+              assignmentHost.toggleAttribute("data-assignment-pending", pending);
+              assignmentHost.querySelectorAll("input, select, button").forEach((control) => {
+                control.disabled = pending;
               });
-            try {
-              const receipt = await confirmPushBatch({ confirm, request, payload, signal });
+            }
+
+            async function renderReceipt(receipt) {
               if (!active || signal.aborted) return;
-              submit.focus({ preventScroll: true });
-              if (!receipt) return;
-              form.querySelectorAll("input, select, button").forEach((control) => { control.disabled = true; });
               const queued = receipt.job_ids.length;
               toniesStale = true;
               replace(assignmentHost,
@@ -787,7 +825,9 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
               );
               notify("Creative Tonie sends were queued after confirmation.", { kind: "success" });
               await refresh.request();
-            } catch (error) {
+            }
+
+            function renderFailure(error) {
               if (!active || signal.aborted) return;
               toniesStale = true;
               replace(assignmentHost,
@@ -796,19 +836,32 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
                   element("strong", { text: "The send could not be completed." }),
                   element("p", { text: `${error.message} Remote figures are stale. Retry the confirmed batch safely, or refresh targets to review again.` }),
                   element("div", { className: "dialog-actions" }, [
-                    element("button", { type: "button", className: "button button-primary", text: "Retry confirmed batch", onclick: async () => {
-                      try {
-                        await request("/api/push/batch", { method: "POST", body: JSON.stringify(payload), signal });
-                        if (active && !signal.aborted) await refresh.request();
-                      } catch (retryError) {
-                        if (active && !signal.aborted) notify(retryError.message, { kind: "failure", timeout: 0 });
-                      }
-                    } }),
+                    element("button", { type: "button", className: "button button-primary", text: "Retry confirmed batch", onclick: () => assignmentAttempt.retry() }),
                     element("button", { type: "button", className: "button button-secondary", text: "Refresh targets", onclick: showTargets }),
                   ]),
                 ]),
               );
               notify(error.message, { kind: "failure", timeout: 0 });
+            }
+
+            if (!assignmentAttempt) {
+              const operationKey = globalThis.crypto?.randomUUID?.() || `push-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+              const payload = buildPushBatchPayload(collection, selected, operationKey);
+              assignmentAttempt = createAssignmentAttempt({
+                payload,
+                confirm,
+                request,
+                signal,
+                setPending: setAssignmentPending,
+                onReceipt: renderReceipt,
+                onFailure: renderFailure,
+              });
+            }
+            const receipt = await assignmentAttempt.submit();
+            if (!active || signal.aborted) return;
+            if (receipt === false) {
+              assignmentAttempt = null;
+              submit.focus({ preventScroll: true });
             }
           },
         });

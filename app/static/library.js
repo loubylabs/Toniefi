@@ -19,6 +19,20 @@ export function filterCollectionsByTitle(collections, query) {
   return collections.filter((collection) => String(collection.title || "").toLocaleLowerCase().includes(needle));
 }
 
+export async function rescanCollections({ collections, request, refresh, signal = null }) {
+  const outcomes = await Promise.allSettled(collections.map((collection) => (
+    request(`/api/collections/${encodeURIComponent(collection.slug)}?refresh=true`, {
+      ...(signal ? { signal } : {}),
+    })
+  )));
+  const failures = outcomes.filter((outcome) => outcome.status === "rejected");
+  const snapshot = await refresh.request();
+  if (snapshotRefreshOutcome(snapshot, "collections").stale) {
+    failures.push({ status: "rejected", reason: snapshot.errors?.collections });
+  }
+  return { failures, snapshot };
+}
+
 function iconNode(name, className = "") {
   const node = element("span", { className, "aria-hidden": "true" });
   node.innerHTML = icon(name);
@@ -237,34 +251,30 @@ export function createLibraryScreen({
     });
 
     rescan.addEventListener("click", async () => {
-      rescan.disabled = true;
-      setBusy(root, true, "Rescanning local collection folders");
-      const current = collections.slice();
-      const outcomes = await Promise.allSettled(current.map((collection) => (
-        request(`/api/collections/${encodeURIComponent(collection.slug)}?refresh=true`, { signal })
-      )));
-      const failures = outcomes.filter((outcome) => outcome.status === "rejected");
       try {
-        const snapshot = await refresh.request();
-        if (snapshotRefreshOutcome(snapshot, "collections").stale) {
-          failures.push({ status: "rejected", reason: snapshot.errors?.collections });
-        }
-      } finally {
-        if (active && !signal?.aborted) {
-          setBusy(root, false);
-          rescan.disabled = false;
-          rescan.focus({ preventScroll: true });
-        }
-      }
-      if (!active || signal?.aborted) return;
-      if (failures.length) {
-        notify(`${failures.length} ${failures.length === 1 ? "refresh step" : "refresh steps"} could not complete. The last available details remain visible. Retry when the library is available.`, {
-          kind: "failure",
-          timeout: 0,
+        const result = await mutation.run(async () => {
+          const outcome = await rescanCollections({
+            collections: collections.slice(),
+            request,
+            refresh,
+            signal,
+          });
+          if (active && !signal?.aborted) onRefresh(outcome.snapshot);
+          return outcome;
         });
-      } else {
-        notify("Local collection folders rescanned.", { kind: "success" });
-        announce("Library rescan complete.");
+        if (!result || !active || signal?.aborted) return;
+        if (result.failures.length) {
+          notify(`${result.failures.length} ${result.failures.length === 1 ? "refresh step" : "refresh steps"} could not complete. The last available details remain visible. Retry when the library is available.`, {
+            kind: "failure",
+            timeout: 0,
+          });
+        } else {
+          notify("Local collection folders rescanned.", { kind: "success" });
+          announce("Library rescan complete.");
+        }
+        rescan.focus({ preventScroll: true });
+      } catch (error) {
+        if (active && !signal?.aborted) notify(error.message, { kind: "failure", timeout: 0 });
       }
     });
 

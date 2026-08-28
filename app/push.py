@@ -7,6 +7,8 @@ chapter per track.
 """
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -30,6 +32,18 @@ def client_from_settings() -> tonies.TonieCloud:
 # ------------------------------------------------------ chapter management
 
 TITLE_LIMIT = 128
+_target_locks_guard = threading.Lock()
+_target_locks: dict[tuple[str, str], threading.RLock] = {}
+
+
+@contextmanager
+def target_lease(household_id: str, tonie_id: str):
+    """Serialize every write to one Creative Tonie in this process."""
+    key = (str(household_id), str(tonie_id))
+    with _target_locks_guard:
+        lock = _target_locks.setdefault(key, threading.RLock())
+    with lock:
+        yield
 
 
 class StaleChapters(RuntimeError):
@@ -149,6 +163,16 @@ def set_tonie_chapters(
     """Rewrite a Tonie's chapter list. Rename, reorder and remove are all
     this one call, because the Tonie Cloud only offers a whole-list PATCH.
     """
+    with target_lease(household_id, tonie_id):
+        return _set_tonie_chapters_locked(household_id, tonie_id, base, requested)
+
+
+def _set_tonie_chapters_locked(
+    household_id: str,
+    tonie_id: str,
+    base: list[dict],
+    requested: list[dict],
+) -> dict[str, Any]:
     client = client_from_settings()
     try:
         tonie = client.get_tonie(household_id, tonie_id)
@@ -274,8 +298,17 @@ def _remote_identity(chapters: list[dict[str, Any]]) -> list[tuple[str, str]]:
 
 
 def push_confirmed(payload: dict[str, Any], progress: Progress = _noop) -> dict[str, Any]:
+    with library.collection_lease():
+        _, tracks = confirmed_tracks(payload)
+        return _push_confirmed_tracks(payload, tracks, progress)
+
+
+def _push_confirmed_tracks(
+    payload: dict[str, Any],
+    tracks: list[dict[str, Any]],
+    progress: Progress,
+) -> dict[str, Any]:
     slug = payload["slug"]
-    _, tracks = confirmed_tracks(payload)
     if not tracks:
         raise RuntimeError("Nothing selected to push.")
 
@@ -288,42 +321,43 @@ def push_confirmed(payload: dict[str, Any], progress: Progress = _noop) -> dict[
             f"Split it or push one group at a time."
         )
 
-    client = client_from_settings()
-    try:
-        progress("Signing in to myTonies")
-        client.check_login()
+    with target_lease(payload["household_id"], payload["tonie_id"]):
+        client = client_from_settings()
+        try:
+            progress("Signing in to myTonies")
+            client.check_login()
 
-        state = client.get_tonie(payload["household_id"], payload["tonie_id"])
-        current_chapters = state.get("chapters") or []
-        if _remote_identity(current_chapters) != _remote_identity(payload.get("remote_chapters") or []):
-            raise StalePush("The Creative Tonie changed after confirmation. Refresh targets and review again.")
-        replace = payload["replace"]
-        if not replace:
-            present = float(state.get("secondsPresent") or 0)
-            if total > max(0, limit - present):
-                raise StalePush("The Creative Tonie no longer has enough free space for this append.")
+            state = client.get_tonie(payload["household_id"], payload["tonie_id"])
+            current_chapters = state.get("chapters") or []
+            if _remote_identity(current_chapters) != _remote_identity(payload.get("remote_chapters") or []):
+                raise StalePush("The Creative Tonie changed after confirmation. Refresh targets and review again.")
+            replace = payload["replace"]
+            if not replace:
+                present = float(state.get("secondsPresent") or 0)
+                if total > max(0, limit - present):
+                    raise StalePush("The Creative Tonie no longer has enough free space for this append.")
 
-        if replace:
-            progress("Clearing the Tonie")
-            client.clear_tonie(payload["household_id"], payload["tonie_id"])
+            if replace:
+                progress("Clearing the Tonie")
+                client.clear_tonie(payload["household_id"], payload["tonie_id"])
 
-        uploaded = []
-        for position, track in enumerate(tracks, start=1):
-            path = library.track_path(slug, track["name"])
-            label = track.get("title") or Path(track["name"]).stem
-            progress(f"Uploading {position}/{len(tracks)}: {label}")
-            file_id = client.upload_file(path)
-            client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
-            uploaded.append({"title": label, "file": file_id})
+            uploaded = []
+            for position, track in enumerate(tracks, start=1):
+                path = library.track_path(slug, track["name"])
+                label = track.get("title") or Path(track["name"]).stem
+                progress(f"Uploading {position}/{len(tracks)}: {label}")
+                file_id = client.upload_file(path)
+                client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
+                uploaded.append({"title": label, "file": file_id})
 
-        progress("Confirming")
-        state = client.get_tonie(payload["household_id"], payload["tonie_id"])
-        return {
-            "tonie": state.get("name", payload["tonie_id"]),
-            "chapters": len(state.get("chapters", [])),
-            "uploaded": uploaded,
-            "seconds": round(total, 1),
-            "duration": audio.human_duration(total),
-        }
-    finally:
-        client.close()
+            progress("Confirming")
+            state = client.get_tonie(payload["household_id"], payload["tonie_id"])
+            return {
+                "tonie": state.get("name", payload["tonie_id"]),
+                "chapters": len(state.get("chapters", [])),
+                "uploaded": uploaded,
+                "seconds": round(total, 1),
+                "duration": audio.human_duration(total),
+            }
+        finally:
+            client.close()

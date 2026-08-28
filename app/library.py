@@ -21,6 +21,7 @@ import hashlib
 import shutil
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,13 @@ from . import audio, config
 MANIFEST = "collection.json"
 COVER_NAMES = ("cover.jpg", "cover.png", "cover.webp")
 _manifest_lock = threading.RLock()
+
+
+@contextmanager
+def collection_lease():
+    """Hold the canonical manifest lock across a multi-system operation."""
+    with _manifest_lock:
+        yield
 
 
 def _dir_for(slug: str) -> Path:
