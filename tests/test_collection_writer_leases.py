@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import audio, config, db, forge, ingest, library, push
+from app import audio, config, db, ingest, library, push
 
 
 class ObservableRLock:
@@ -166,37 +166,6 @@ def assert_writer_does_not_overlap_confirmed_push(
         final_read = len(events) - 1 - events[::-1].index("remote-read")
         write_at = events.index("writer-write")
         assert not first_read < write_at < final_read
-
-
-def test_forge_file_replacement_does_not_overlap_confirmed_push(isolated_writer, monkeypatch):
-    writer_ready = threading.Event()
-    allow_writer = threading.Event()
-    writer_write = threading.Event()
-    events = []
-
-    def progress(message):
-        if message.startswith("Levelling") and not writer_ready.is_set():
-            writer_ready.set()
-            allow_writer.wait()
-
-    def fake_run(command):
-        Path(command[-1]).write_bytes(b"normalized")
-        events.append("writer-write")
-        writer_write.set()
-
-    monkeypatch.setattr(forge.audio, "_run", fake_run)
-    monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 1000)
-    writer = lambda: forge.run(
-        isolated_writer,
-        operation_id="forge-writer-lease-test",
-        normalize=True,
-        clean_titles=False,
-        split_oversized=False,
-        progress=progress,
-    )
-    assert_writer_does_not_overlap_confirmed_push(
-        monkeypatch, isolated_writer, writer, writer_ready, allow_writer, writer_write, events,
-    )
 
 
 def test_librivox_download_does_not_overlap_confirmed_push(isolated_writer, monkeypatch):

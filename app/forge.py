@@ -36,17 +36,17 @@ _BRACKETED = re.compile(
     re.IGNORECASE,
 )
 _BARE = re.compile(
-    r"(?:^|\s[|\-–—]\s*)(?:"
+    r"(?:^|\s[|\-\u2013\u2014]\s*)(?:"
     r"full\s+(?:length\s+)?audio\s?book|audio\s?book|unabridged|complete\s+audio\s?book|"
     r"free\s+audio\s?book|full\s+audio|bedtime\s+story|read\s+aloud|"
     r"hd|hq|4k|1080p?|720p?|480p?|remastered|full\s+hd"
-    r")\s*(?=$|[|\-–—])",
+    r")\s*(?=$|[|\-\u2013\u2014])",
     re.IGNORECASE,
 )
-_TRAILING_JUNK = re.compile(r"\s*[|\-–—]\s*(?:youtube|topic)\s*$", re.IGNORECASE)
+_TRAILING_JUNK = re.compile(r"\s*[|\-\u2013\u2014]\s*(?:youtube|topic)\s*$", re.IGNORECASE)
 # The separator need not be followed by a space: yt-dlp names chapter files
 # "001-Intro". The trailing \D guard is what keeps "24-7" from becoming "7".
-_LEADING_INDEX = re.compile(r"^\s*\d{1,3}\s*[.\-–—:)]\s*(?=\D)")
+_LEADING_INDEX = re.compile(r"^\s*\d{1,3}\s*[.\-\u2013\u2014:)]\s*(?=\D)")
 _MULTISPACE = re.compile(r"\s{2,}")
 
 
@@ -76,7 +76,7 @@ def clean_title(raw: str, *, drop_leading_index: bool = False) -> str:
     if drop_leading_index:
         title = _LEADING_INDEX.sub("", title)
     title = title.replace("_", " ")
-    title = _MULTISPACE.sub(" ", title).strip(" -–—|:,.")
+    title = _MULTISPACE.sub(" ", title).strip(" -\u2013\u2014|:,.")
     return title or raw.strip() or "Untitled"
 
 
@@ -84,7 +84,7 @@ def strip_channel_prefix(title: str, uploader: str | None) -> str:
     """Drop a leading "Channel Name - " when it just repeats the uploader."""
     if not uploader:
         return title
-    pattern = re.compile(rf"^\s*{re.escape(uploader)}\s*[|\-–—:]\s*", re.IGNORECASE)
+    pattern = re.compile(rf"^\s*{re.escape(uploader)}\s*[|\-\u2013\u2014:]\s*", re.IGNORECASE)
     return pattern.sub("", title).strip() or title
 
 
@@ -148,7 +148,7 @@ def run(
 ) -> dict[str, Any]:
     with library.collection_lease():
         library.recover_collection_publications()
-        completed = library.completed_forge_operation(slug, operation_id)
+        completed = library.completed_forge(slug)
         if completed:
             return completed
         stage = library.create_replacement_stage(slug, operation_id)

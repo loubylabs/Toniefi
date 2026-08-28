@@ -143,6 +143,18 @@ def retry_failed_job(job_id: int) -> int:
             raise PushRetryConflict(
                 "Creative Tonie sends must be reviewed and confirmed again in Review."
             )
+        if job and job.get("status") == "failed" and job.get("kind") == "forge":
+            payload = job.get("payload") or {}
+            completed = library.completed_forge(payload.get("slug", ""))
+            if completed:
+                db.update_job(
+                    job_id,
+                    status="done",
+                    progress="Finished",
+                    result=completed,
+                    error="",
+                )
+                return job_id
         return db.clone_failed_job(job_id)
 
 
@@ -156,6 +168,10 @@ def present(job: dict) -> dict:
 
     status = displayed.get("status", "")
     kind = displayed.get("kind", "")
+    terminal_forge = False
+    if status == "failed" and kind == "forge":
+        payload = displayed.get("payload") or {}
+        terminal_forge = library.completed_forge(payload.get("slug", "")) is not None
     collection_stage = ""
     if status == "done" and kind == "librivox":
         payload = displayed.get("payload") or {}
@@ -164,7 +180,7 @@ def present(job: dict) -> dict:
         collection = library.get(slug) if slug else None
         collection_stage = (collection or {}).get("stage", "")
         displayed["collection_stage"] = collection_stage
-    displayed["retryable"] = status == "failed" and kind != "push"
+    displayed["retryable"] = status == "failed" and kind != "push" and not terminal_forge
     if status == "failed":
         displayed["phase"] = "failed"
     elif separator and prefix in {"extracting", "forging"}:

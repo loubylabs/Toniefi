@@ -207,7 +207,7 @@ def find_published_stage(identity: str) -> dict[str, Any] | None:
             if manifest.get("publication_id") == identity:
                 marker = path / COLLECTION_STAGE_MARKER
                 marker.unlink(missing_ok=True)
-                _release_identity_reservations(identity)
+                discard_collection_stage(identity)
                 return _decorate(path.name, path, manifest)
         return None
 
@@ -349,6 +349,8 @@ def sweep_collection_stages(referenced_identities: set[str]) -> None:
                 continue
             marker = _stage_marker(path)
             identity = marker.get("identity")
+            if isinstance(identity, str) and find_published_stage(identity):
+                continue
             if not isinstance(identity, str) or identity not in referenced_identities:
                 shutil.rmtree(path, ignore_errors=True)
                 if isinstance(identity, str):
@@ -464,15 +466,11 @@ def publish_replacement(slug: str, stage: Path, identity: str) -> dict[str, Any]
         return get(slug)
 
 
-def completed_forge_operation(slug: str, identity: str) -> dict[str, Any] | None:
-    """Return a visible publication receipt for one exact manual Forge run."""
+def completed_forge(slug: str) -> dict[str, Any] | None:
+    """Return a forged collection, whose preparation stage is terminal."""
     with _manifest_lock:
         manifest = get(slug)
-        if (
-            manifest
-            and manifest.get("stage") == "forged"
-            and manifest.get("forge_operation_id") == identity
-        ):
+        if manifest and manifest.get("stage") == "forged":
             return manifest
         return None
 
@@ -481,6 +479,13 @@ def recover_collection_publications() -> None:
     """Finish or roll back interrupted same-filesystem collection swaps."""
     with _manifest_lock:
         config.ensure_dirs()
+        for visible in list(config.LIBRARY_DIR.iterdir()):
+            if not visible.is_dir() or visible.name.startswith("."):
+                continue
+            publication_id = _read_manifest(visible).get("publication_id")
+            if isinstance(publication_id, str) and publication_id:
+                (visible / COLLECTION_STAGE_MARKER).unlink(missing_ok=True)
+                discard_collection_stage(publication_id)
         for backup in list(config.LIBRARY_DIR.glob(f"{BACKUP_STAGE_PREFIX}*")):
             if not backup.is_dir():
                 continue

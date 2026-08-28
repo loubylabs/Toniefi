@@ -31,8 +31,14 @@ CREATE TABLE IF NOT EXISTS settings (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    name        TEXT PRIMARY KEY,
+    applied_at  REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
 """
+
+FORGE_OPERATION_IDS_MIGRATION = "2026-08-28-forge-operation-ids"
 
 
 def connect() -> sqlite3.Connection:
@@ -49,8 +55,44 @@ def connect() -> sqlite3.Connection:
 def init() -> None:
     conn = connect()
     with _lock:
-        conn.executescript(SCHEMA)
-        conn.commit()
+        try:
+            conn.executescript(SCHEMA)
+            conn.execute("BEGIN IMMEDIATE")
+            _migrate_forge_operation_ids(conn)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def _migrate_forge_operation_ids(conn: sqlite3.Connection) -> None:
+    """Give every persisted Forge job its required durable operation identity."""
+    applied = conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE name=?",
+        (FORGE_OPERATION_IDS_MIGRATION,),
+    ).fetchone()
+    if applied:
+        return
+    rows = conn.execute("SELECT id,payload FROM jobs WHERE kind='forge'").fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        identity = payload.get("forge_operation_id")
+        if isinstance(identity, str) and identity:
+            continue
+        payload["forge_operation_id"] = f"forge-{uuid4().hex}"
+        conn.execute(
+            "UPDATE jobs SET payload=? WHERE id=?",
+            (json.dumps(payload), row["id"]),
+        )
+    conn.execute(
+        "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
+        (FORGE_OPERATION_IDS_MIGRATION, time.time()),
+    )
 
 
 # ---------------------------------------------------------------- settings
@@ -113,6 +155,8 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
     """Create one logical batch atomically and return ids in input order."""
     if not entries:
         return []
+    if any(kind == "forge" for kind, _, _ in entries):
+        raise ValueError("Forge jobs must use create_forge_job_once().")
     now = time.time()
     conn = connect()
     with _lock:

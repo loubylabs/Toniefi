@@ -173,12 +173,13 @@ def test_manual_forge_retry_after_published_process_death_is_a_verified_noop(
     interrupted = db.fail_stale_running()
     library.recover_collection_publications()
     retry_id = jobs.retry_failed_job(job_id)
-    retried = db.claim_job()
-    second = jobs._handle(retried)
+    resolved = db.get_job(retry_id)
 
     assert [job["id"] for job in interrupted] == [job_id]
-    assert retried["id"] == retry_id
-    assert first["slug"] == second["slug"] == slug
+    assert retry_id == job_id
+    assert resolved["status"] == "done"
+    assert db.claim_job() is None
+    assert first["slug"] == resolved["result"]["slug"] == slug
     assert transforms == {"trim": 2, "normalize": 2}
     assert (path / "one.mp3").read_bytes() == b"one.mp3|trim|level"
     assert (path / "two.mp3").read_bytes() == b"two.mp3|trim|level"
@@ -198,6 +199,131 @@ def test_duplicate_history_retry_reuses_the_active_forge_job(isolated):
 
     assert second_retry == first_retry
     assert [job["id"] for job in active] == [first_retry]
+
+
+@pytest.mark.parametrize("stale_path", ["direct", "cloned"])
+def test_forged_stage_is_terminal_for_every_stale_forge_worker_path(
+    isolated,
+    monkeypatch,
+    stale_path,
+):
+    slug = make_collection()
+    path = config.LIBRARY_DIR / slug
+    transforms = {"trim": 0, "normalize": 0}
+
+    def trim(target: Path, *_):
+        transforms["trim"] += 1
+        target.write_bytes(target.read_bytes() + b"|trim")
+
+    def normalize(target: Path, **_):
+        transforms["normalize"] += 1
+        target.write_bytes(target.read_bytes() + b"|level")
+
+    monkeypatch.setattr(forge, "trim_track", trim)
+    monkeypatch.setattr(forge, "normalize_track", normalize)
+    monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 1000)
+    payload = {
+        "slug": slug,
+        "normalize": True,
+        "clean_titles": False,
+        "trim_head": 1,
+        "trim_tail": 0,
+        "split_oversized": False,
+    }
+    failed_id = db.create_forge_job_once(f"Forge {slug}", payload)
+    failed = db.get_job(failed_id)
+    db.update_job(failed_id, status="failed", error="first attempt stopped")
+    completed_id = db.create_forge_job_once(f"Forge {slug}", payload)
+    completed = db.claim_job()
+
+    assert completed["id"] == completed_id
+    assert completed["payload"]["forge_operation_id"] != failed["payload"]["forge_operation_id"]
+    published = jobs._handle(completed)
+    db.update_job(completed_id, status="done", result=published)
+
+    stale = db.get_job(failed_id)
+    if stale_path == "cloned":
+        clone_id = db.clone_failed_job(failed_id)
+        stale = db.claim_job()
+        assert stale["id"] == clone_id
+    stale_result = jobs._handle(stale)
+
+    assert stale_result["slug"] == slug
+    assert transforms == {"trim": 2, "normalize": 2}
+    assert (path / "one.mp3").read_bytes() == b"one.mp3|trim|level"
+    assert (path / "two.mp3").read_bytes() == b"two.mp3|trim|level"
+
+
+def test_failed_forge_history_resolves_to_the_terminal_collection(isolated):
+    slug = make_collection(stage="forged")
+    path = config.LIBRARY_DIR / slug
+    manifest = json.loads((path / library.MANIFEST).read_text(encoding="utf-8"))
+    manifest["forge_operation_id"] = "forge-completed-by-newer-job"
+    (path / library.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    failed_id = db.create_forge_job_once(f"Forge {slug}", {"slug": slug})
+    db.update_job(failed_id, status="failed", error="older operation stopped")
+
+    before = jobs.present(db.get_job(failed_id))
+    response = TestClient(main.app).post(f"/api/jobs/{failed_id}/retry")
+
+    assert before["retryable"] is False
+    assert response.status_code == 200
+    assert response.json()["status"] == "done"
+    assert response.json()["result"]["slug"] == slug
+    assert db.get_job(failed_id)["error"] == ""
+
+
+def test_init_migrates_all_legacy_forge_jobs_once_for_claim_and_retry(isolated):
+    conn = db.connect()
+    migration_name = "2026-08-28-forge-operation-ids"
+    conn.execute("DELETE FROM schema_migrations WHERE name=?", (migration_name,))
+    legacy_ids = {}
+    for position, status in enumerate(("queued", "running", "failed"), start=1):
+        cursor = conn.execute(
+            "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+            "VALUES('forge',?,?,?,?,?)",
+            (
+                status,
+                f"Legacy {status}",
+                json.dumps({"slug": f"legacy-{status}"}),
+                float(position),
+                float(position),
+            ),
+        )
+        legacy_ids[status] = int(cursor.lastrowid)
+    conn.commit()
+
+    db.init()
+    migrated = {status: db.get_job(job_id) for status, job_id in legacy_ids.items()}
+    operation_ids = {
+        status: job["payload"]["forge_operation_id"]
+        for status, job in migrated.items()
+    }
+    db.init()
+
+    claimed = db.claim_job()
+    retry_id = jobs.retry_failed_job(legacy_ids["failed"])
+    retry = db.get_job(retry_id)
+
+    assert all(identity.startswith("forge-") for identity in operation_ids.values())
+    assert len(set(operation_ids.values())) == 3
+    assert {
+        status: db.get_job(job_id)["payload"]["forge_operation_id"]
+        for status, job_id in legacy_ids.items()
+    } == operation_ids
+    assert claimed["id"] == legacy_ids["queued"]
+    assert claimed["payload"]["forge_operation_id"] == operation_ids["queued"]
+    assert migrated["running"]["payload"]["forge_operation_id"] == operation_ids["running"]
+    assert retry["payload"]["forge_operation_id"] == operation_ids["failed"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schema_migrations WHERE name=?",
+        (migration_name,),
+    ).fetchone()[0] == 1
+
+
+def test_generic_job_creation_cannot_bypass_canonical_forge_payloads(isolated):
+    with pytest.raises(ValueError, match="create_forge_job_once"):
+        db.create_job("forge", "Legacy bypass", {"slug": "legacy-bypass"})
 
 
 def test_hidden_collection_stage_publishes_once_and_is_absent_from_library(isolated, monkeypatch):
@@ -526,6 +652,107 @@ def test_ready_new_collection_publication_recovers_after_interrupted_rename(
     assert [item["slug"] for item in library.list_all()] == ["recovery-story"]
     assert library.get("recovery-story")["stage"] == "forged"
     assert not source.path.exists()
+
+
+def test_recovery_consumes_published_hidden_source_before_retry_and_completion(
+    isolated,
+    monkeypatch,
+):
+    source = library.begin_collection_stage(
+        "url-visible-before-source-cleanup",
+        title="Visible Receipt",
+        source="url",
+    )
+    (source.path / "one.mp3").write_bytes(b"prepared")
+    library.rescan_collection_stage(source.identity)
+    library.complete_collection_stage(source.identity)
+    failed_id = db.create_job(
+        "prepare_url",
+        "Visible receipt",
+        {"url": "https://video.test/receipt", "stage_id": source.identity},
+    )
+    db.update_job(failed_id, status="failed", error="stopped after publication")
+    monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 60)
+    real_discard = library.discard_collection_stage
+    interrupted = True
+
+    def interrupt_cleanup(identity: str):
+        nonlocal interrupted
+        if interrupted and identity == source.identity:
+            interrupted = False
+            raise KeyboardInterrupt("process stopped before source cleanup")
+        real_discard(identity)
+
+    monkeypatch.setattr(library, "discard_collection_stage", interrupt_cleanup)
+    with pytest.raises(KeyboardInterrupt, match="before source cleanup"):
+        forge.run_collection_stage(
+            source.identity,
+            normalize=False,
+            clean_titles=False,
+            split_oversized=False,
+        )
+
+    assert [item["slug"] for item in library.list_all()] == [source.slug]
+    assert source.path.is_dir()
+    assert source.identity in db.referenced_collection_stage_ids()
+
+    monkeypatch.setattr(library, "discard_collection_stage", real_discard)
+    library.recover_collection_publications()
+    assert not source.path.exists()
+    recovered = forge.run_collection_stage(
+        source.identity,
+        normalize=False,
+        clean_titles=False,
+        split_oversized=False,
+    )
+    db.update_job(failed_id, status="done", result=recovered, error="")
+    library.sweep_collection_stages(db.referenced_collection_stage_ids())
+
+    assert recovered["slug"] == source.slug
+    assert not source.path.exists()
+    assert [item["slug"] for item in library.list_all()] == [source.slug]
+
+
+def test_sweep_consumes_published_hidden_source_despite_failed_job_reference(
+    isolated,
+    monkeypatch,
+):
+    source = library.begin_collection_stage(
+        "upload-published-before-source-cleanup",
+        title="Sweep Receipt",
+        source="upload",
+    )
+    (source.path / "one.mp3").write_bytes(b"prepared")
+    library.rescan_collection_stage(source.identity)
+    library.complete_collection_stage(source.identity)
+    failed_id = db.create_job(
+        "upload_prepare",
+        "Sweep receipt",
+        {"stage": "upload-retained", "collection_stage_id": source.identity},
+    )
+    db.update_job(failed_id, status="failed", error="stopped after publication")
+    monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 60)
+    real_discard = library.discard_collection_stage
+
+    monkeypatch.setattr(
+        library,
+        "discard_collection_stage",
+        lambda identity: (_ for _ in ()).throw(KeyboardInterrupt("cleanup stopped")),
+    )
+    with pytest.raises(KeyboardInterrupt, match="cleanup stopped"):
+        forge.run_collection_stage(
+            source.identity,
+            normalize=False,
+            clean_titles=False,
+            split_oversized=False,
+        )
+
+    monkeypatch.setattr(library, "discard_collection_stage", real_discard)
+    assert source.identity in db.referenced_collection_stage_ids()
+    library.sweep_collection_stages(db.referenced_collection_stage_ids())
+
+    assert not source.path.exists()
+    assert [item["slug"] for item in library.list_all()] == [source.slug]
 
 
 def test_collection_stage_sweep_keeps_retryable_jobs_and_removes_abandoned_stages(isolated):
