@@ -45,6 +45,15 @@ export function replace(host, ...children) {
   return host;
 }
 
+export function moveItem(items, index, offset) {
+  const next = [...items];
+  const target = index + offset;
+  if (index < 0 || index >= next.length || target < 0 || target >= next.length) return next;
+  const [item] = next.splice(index, 1);
+  next.splice(target, 0, item);
+  return next;
+}
+
 export function announce(message, { assertive = false } = {}) {
   const region = document.getElementById("liveRegion");
   if (!region) return;

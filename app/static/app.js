@@ -1,6 +1,8 @@
 import { api } from "./api.js";
 import { createDeskScreen } from "./desk.js";
 import { icon } from "./icons.js";
+import { createLibraryScreen } from "./library.js";
+import { createReviewScreen } from "./review.js";
 import { createRouter } from "./router.js";
 import { element, notify, replace } from "./shared.js";
 
@@ -18,21 +20,6 @@ const routeDefinitions = [
 ];
 
 const placeholders = {
-  desk: {
-    title: "Desk",
-    copy: "Your intake tray and live work cart are ready for the next batch.",
-    icon: "desk",
-  },
-  review: {
-    title: "Review Shelf",
-    copy: "Prepared collections wait here until you choose what happens next.",
-    icon: "review",
-  },
-  library: {
-    title: "Library",
-    copy: "Every local collection remains available as ordinary folders and audio files.",
-    icon: "library",
-  },
   tonies: {
     title: "Creative Tonies",
     copy: "Review connected Tonies and their contents before making a cloud change.",
@@ -54,6 +41,57 @@ function injectIcons() {
   document.querySelectorAll("[data-icon]").forEach((host) => {
     host.innerHTML = icon(host.dataset.icon);
   });
+}
+
+function createPersistentAudioPlayer() {
+  const host = document.getElementById("audioPlayerHost");
+  if (!host) throw new Error("The persistent audio player host is missing.");
+  const label = element("strong", { id: "audioTrackLabel", text: "No chapter selected" });
+  const stop = element("button", {
+    type: "button",
+    className: "button button-secondary audio-stop",
+    "aria-label": "Stop chapter playback",
+  }, [
+    (() => {
+      const symbol = element("span", { "aria-hidden": "true" });
+      symbol.innerHTML = icon("pause");
+      return symbol;
+    })(),
+    element("span", { text: "Stop" }),
+  ]);
+  const heading = element("div", { className: "audio-player-heading" }, [
+    element("div", {}, [element("span", { className: "audio-player-caption", text: "Now previewing" }), label]),
+    stop,
+  ]);
+  const audio = element("audio", {
+    id: "persistentAudioPlayer",
+    controls: true,
+    preload: "metadata",
+    "aria-labelledby": "audioTrackLabel",
+  });
+  stop.addEventListener("click", () => {
+    audio.pause();
+    audio.currentTime = 0;
+    stop.focus({ preventScroll: true });
+  });
+  replace(host, heading, audio);
+
+  return {
+    play({ src, label: trackLabel }) {
+      host.hidden = false;
+      label.textContent = trackLabel;
+      host.setAttribute("aria-label", `Audio player: ${trackLabel}`);
+      audio.setAttribute("aria-label", `Chapter preview: ${trackLabel}`);
+      audio.src = src;
+      const started = audio.play();
+      if (started?.catch) {
+        started.catch(() => notify("Playback could not start automatically. Use the audio player controls to try again.", {
+          kind: "failure",
+          timeout: 0,
+        }));
+      }
+    },
+  };
 }
 
 function placeholderRenderer(name) {
@@ -268,6 +306,7 @@ function initializeMobileMore() {
 }
 
 export const refresh = createRefreshCoordinator();
+export const player = createPersistentAudioPlayer();
 
 export const router = createRouter(routeDefinitions, {
   onError(error) {
@@ -279,10 +318,10 @@ export const router = createRouter(routeDefinitions, {
   },
 });
 
-Object.keys(placeholders)
-  .filter((name) => name !== "desk")
-  .forEach((name) => router.register(name, placeholderRenderer(name)));
+Object.keys(placeholders).forEach((name) => router.register(name, placeholderRenderer(name)));
 router.register("desk", createDeskScreen({ request: api, refresh }));
+router.register("review", createReviewScreen({ request: api, refresh, player }));
+router.register("library", createLibraryScreen({ request: api, refresh }));
 injectIcons();
 initializeMobileMore();
 refresh.subscribe(updateShell);
