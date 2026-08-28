@@ -1,5 +1,7 @@
 import { icon } from "./icons.js";
 
+let confirmationDialogId = 0;
+
 export function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
@@ -122,7 +124,7 @@ export function withFocusRestored(render, options = {}) {
 }
 
 export function setBusy(host, busy, label = "Working") {
-  host.toggleAttribute("aria-busy", busy);
+  host.setAttribute("aria-busy", String(Boolean(busy)));
   if (busy) host.setAttribute("aria-label", label);
   else host.removeAttribute("aria-label");
 }
@@ -138,8 +140,13 @@ export function showConfirmDialog({
   if (!host) return Promise.resolve(false);
 
   return new Promise((resolve) => {
-    const dialog = element("dialog", { className: "confirmation-dialog" });
-    const heading = element("h2", { text: title });
+    confirmationDialogId += 1;
+    const titleId = `confirmation-title-${confirmationDialogId}`;
+    const dialog = element("dialog", {
+      className: "confirmation-dialog",
+      "aria-labelledby": titleId,
+    });
+    const heading = element("h2", { id: titleId, text: title });
     const copy = element("p", { text: message });
     const actions = element("div", { className: "dialog-actions" });
     const cancel = element("button", { type: "button", className: "button button-secondary", text: cancelLabel });

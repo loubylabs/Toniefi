@@ -8,6 +8,7 @@ const RESTING_REFRESH_MS = 30000;
 
 const routeDefinitions = [
   { name: "desk", path: "/" },
+  { name: "desk", path: "/desk" },
   { name: "review", path: "/review/:slug?" },
   { name: "library", path: "/library" },
   { name: "tonies", path: "/tonies" },
@@ -223,10 +224,12 @@ function updateShell(snapshot) {
   }
 
   const active = snapshot.jobs.filter((job) => job.status === "queued" || job.status === "running").length;
-  const activityPulse = document.getElementById("activityPulse");
-  if (activityPulse) {
-    activityPulse.hidden = active === 0;
-    activityPulse.setAttribute("aria-label", `${active} ${active === 1 ? "job" : "jobs"} active`);
+  const activityStatus = document.getElementById("activityStatus");
+  const activityCount = document.getElementById("activityCount");
+  if (activityStatus && activityCount) {
+    activityCount.textContent = String(active);
+    activityStatus.hidden = active === 0;
+    activityStatus.setAttribute("aria-label", `${active} ${active === 1 ? "job" : "jobs"} active`);
   }
 }
 

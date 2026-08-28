@@ -344,7 +344,18 @@ def healthz() -> JSONResponse:
 
 
 @app.get("/")
-def index() -> FileResponse:
+@app.get("/desk")
+@app.get("/review")
+@app.get("/library")
+@app.get("/tonies")
+@app.get("/activity")
+@app.get("/settings")
+def application_document() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/review/{slug}")
+def collection_review_document(slug: str) -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 

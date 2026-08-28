@@ -268,12 +268,26 @@ svg {
   line-height: 1;
 }
 
-.nav-pulse {
-  width: 0.625rem;
-  height: 0.625rem;
-  border: 0.125rem solid var(--bookcloth-deep);
-  border-radius: 50%;
+.nav-job-status {
+  display: inline-flex;
+  min-width: 2rem;
+  height: 1.5rem;
+  padding: 0 var(--space-1);
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  border-radius: 999px;
   background: var(--action);
+  color: var(--bookcloth-deep);
+  font-size: var(--type-xs);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.nav-job-status svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  stroke-width: 2.2;
 }
 
 .account-summary {
@@ -332,6 +346,11 @@ svg {
 
 #workspace:focus {
   outline: none;
+}
+
+.route-stage {
+  width: 100%;
+  min-width: 0;
 }
 
 .route-pending,
@@ -396,14 +415,23 @@ svg {
   display: none;
 }
 
-.notification-region {
+.persistent-utilities {
   position: fixed;
   z-index: 80;
   right: var(--space-4);
   bottom: var(--space-4);
   display: grid;
-  width: min(26rem, calc(100vw - 2rem));
+  width: min(32rem, calc(100vw - 2rem));
   gap: var(--space-2);
+  pointer-events: none;
+}
+
+.notification-region {
+  display: grid;
+  width: 100%;
+  max-height: min(50vh, 28rem);
+  gap: var(--space-2);
+  overflow-y: auto;
   pointer-events: none;
 }
 
@@ -463,17 +491,14 @@ svg {
 }
 
 .audio-player-host {
-  position: fixed;
-  z-index: 60;
-  right: var(--space-4);
-  bottom: var(--space-4);
-  left: calc(17.5rem + var(--space-4));
+  width: 100%;
   min-width: 0;
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--bookcloth);
   border-radius: var(--radius);
   background: var(--paper-raised);
   box-shadow: var(--shadow-raised);
+  pointer-events: auto;
 }
 
 .confirmation-dialog {
@@ -694,9 +719,6 @@ textarea::placeholder {
     padding: var(--space-3);
   }
 
-  .audio-player-host {
-    left: calc(14rem + var(--space-4));
-  }
 }
 
 @media (max-width: 759.98px) {
@@ -807,16 +829,10 @@ textarea::placeholder {
     background: rgba(185, 242, 39, 0.14);
   }
 
-  .notification-region {
+  .persistent-utilities {
     right: var(--space-3);
     bottom: calc(5.25rem + env(safe-area-inset-bottom));
     width: calc(100vw - 1.5rem);
-  }
-
-  .audio-player-host {
-    right: var(--space-3);
-    bottom: calc(5.25rem + env(safe-area-inset-bottom));
-    left: var(--space-3);
   }
 
   .button,

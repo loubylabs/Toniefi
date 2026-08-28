@@ -7,6 +7,7 @@ const paths = {
   brand: '<path d="M7 4h10l2 3-2 3 2 3-2 3 2 3H5l2-3-2-3 2-3-2-3z"/><path d="M8 8h8M8 12h8M8 16h8"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   chevronRight: '<path d="m9 18 6-6-6-6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   clean: '<path d="M4 7h10M7 4v6M10 14h10M17 11v6M4 20h10M8 17v6"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   cloud: '<path d="M7 18h10a4 4 0 0 0 .7-7.94A6 6 0 0 0 6.2 9.2 4.5 4.5 0 0 0 7 18Z"/>',

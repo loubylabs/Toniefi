@@ -46,7 +46,10 @@
         <a href="/activity" data-route="activity">
           <span data-icon="activity" aria-hidden="true"></span>
           <span>Activity</span>
-          <span class="nav-pulse" id="activityPulse" hidden aria-label="jobs active"></span>
+          <span class="nav-job-status" id="activityStatus" hidden aria-label="jobs active">
+            <span data-icon="clock" aria-hidden="true"></span>
+            <span id="activityCount"></span>
+          </span>
         </a>
         <a href="/settings" data-route="settings">
           <span data-icon="settings" aria-hidden="true"></span>
@@ -72,10 +75,12 @@
     </main>
   </div>
 
-  <div class="notification-region" id="notifications" aria-label="Notifications"></div>
+  <div class="persistent-utilities">
+    <div class="notification-region" id="notifications" aria-label="Notifications"></div>
+    <section class="audio-player-host" id="audioPlayerHost" aria-label="Audio player" hidden></section>
+  </div>
   <div class="visually-hidden" id="liveRegion" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="dialogHost"></div>
-  <section class="audio-player-host" id="audioPlayerHost" aria-label="Audio player" hidden></section>
 
   <nav class="mobile-navigation" aria-label="Mobile primary">
     <a href="/" data-route="desk">

@@ -9,6 +9,8 @@ class ShellDocument(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.body_children: list[tuple[str, str]] = []
+        self.class_names: set[str] = set()
+        self.icon_names: set[str] = set()
         self.ids: set[str] = set()
         self.module_scripts: list[str] = []
         self.skip_targets: list[str] = []
@@ -41,6 +43,9 @@ class ShellDocument(HTMLParser):
                 self.module_scripts.append(source)
 
         classes = set((attributes.get("class") or "").split())
+        self.class_names.update(classes)
+        if icon_name := attributes.get("data-icon"):
+            self.icon_names.add(icon_name)
         if tag == "a" and "skip-link" in classes:
             target = attributes.get("href")
             if target:
@@ -108,3 +113,25 @@ def test_shell_retires_the_wizard_and_loads_modules():
     ):
         assert label in document.navigation_labels
     assert "More" in document.mobile_controls
+    assert "persistent-utilities" in document.class_names
+    assert "activityStatus" in document.ids
+    assert "clock" in document.icon_names
+
+
+def test_every_application_route_serves_the_shell_document():
+    client = TestClient(main.app)
+    for path in (
+        "/",
+        "/desk",
+        "/review",
+        "/review/the-wind-in-the-willows",
+        "/library",
+        "/tonies",
+        "/activity",
+        "/settings",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        document = ShellDocument()
+        document.feed(response.text)
+        assert document.module_scripts == ["/static/app.js"], path

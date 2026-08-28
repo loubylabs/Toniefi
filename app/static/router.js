@@ -53,8 +53,24 @@ export function createRouter(routes, {
   const renderers = new Map();
   let current = null;
   let cleanup = null;
+  let activeController = null;
   let sequence = 0;
   let started = false;
+
+  function cleanupFor(result) {
+    if (typeof result === "function") return result;
+    if (typeof result?.destroy === "function") return () => result.destroy();
+    return null;
+  }
+
+  function dispose(disposable, route) {
+    if (!disposable) return;
+    try {
+      disposable();
+    } catch (error) {
+      onError(error, route);
+    }
+  }
 
   function resolve(pathname = window.location.pathname) {
     for (const definition of definitions) {
@@ -76,34 +92,47 @@ export function createRouter(routes, {
   async function render({ focus = false } = {}) {
     const route = resolve();
     if (!route || !workspace) return;
+    const renderSequence = ++sequence;
     current = route;
     markNavigation(route.name);
 
-    if (cleanup) {
-      cleanup();
-      cleanup = null;
-    }
+    activeController?.abort();
+    const controller = new AbortController();
+    activeController = controller;
+    dispose(cleanup, route);
+    cleanup = null;
 
     const renderer = renderers.get(route.name);
-    if (!renderer) return;
-    const renderSequence = ++sequence;
+    if (!renderer) {
+      activeController = null;
+      return;
+    }
+    const target = document.createElement("div");
+    target.className = "route-stage";
     try {
       const result = await renderer({
         name: route.name,
         path: window.location.pathname,
         params: route.params,
         search: new URLSearchParams(window.location.search),
+        signal: controller.signal,
         state: window.history.state,
-        workspace,
+        workspace: target,
         navigate,
       });
-      if (renderSequence !== sequence) return;
-      if (typeof result === "function") cleanup = result;
-      else if (typeof result?.destroy === "function") cleanup = () => result.destroy();
+      const nextCleanup = cleanupFor(result);
+      if (controller.signal.aborted || renderSequence !== sequence) {
+        dispose(nextCleanup, route);
+        return;
+      }
+      workspace.replaceChildren(target);
+      cleanup = nextCleanup;
       if (focus) workspace.focus({ preventScroll: true });
       document.dispatchEvent(new CustomEvent("toniefi:routechange", { detail: route }));
     } catch (error) {
-      onError(error, route);
+      if (!controller.signal.aborted && renderSequence === sequence) onError(error, route);
+    } finally {
+      if (activeController === controller) activeController = null;
     }
   }
 
@@ -161,7 +190,10 @@ export function createRouter(routes, {
   function destroy() {
     document.removeEventListener("click", handleLink);
     window.removeEventListener("popstate", handlePopState);
-    if (cleanup) cleanup();
+    sequence += 1;
+    activeController?.abort();
+    activeController = null;
+    dispose(cleanup, current);
     cleanup = null;
     started = false;
   }
