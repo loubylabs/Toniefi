@@ -1477,9 +1477,13 @@ img.review-detail-cover {
 .source-row-list {
   display: grid;
   min-width: 0;
+  max-block-size: clamp(11rem, 24vh, 14rem);
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border: var(--rule-thin);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.76);
@@ -2956,6 +2960,10 @@ img.review-detail-cover {
     align-items: start;
   }
 
+  .source-row-list {
+    max-block-size: 9rem;
+  }
+
   .source-row-controls {
     grid-column: 2;
     justify-content: flex-end;
@@ -3000,15 +3008,6 @@ img.review-detail-cover {
 
   .desk-prepare-button {
     min-height: 3.5rem;
-    order: 1;
-  }
-
-  .forge-summary {
-    order: 2;
-  }
-
-  .desk-action-note {
-    order: 3;
   }
 
   .secondary-intake {

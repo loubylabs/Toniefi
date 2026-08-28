@@ -280,6 +280,53 @@ test("Desk gives every accepted source URL textbox a distinct accessible name", 
   }
 });
 
+test("Desk keeps a populated source tray immediately before its preparation action", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+
+  try {
+    createDeskScreen({
+      request: async () => ({}),
+      refresh,
+    })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    const paste = dom.document.getElementById("source-paste");
+    paste.value = Array.from(
+      { length: 5 },
+      (_, index) => `https://example.test/story-${index + 1}`,
+    ).join("\n");
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+
+    const form = dom.workspace.querySelector(".source-intake-form");
+    const tray = dom.workspace.querySelector(".source-row-list");
+    const prepare = dom.workspace.querySelector(".desk-prepare-button");
+    const forge = dom.workspace.querySelector(".forge-summary");
+    const formChildren = form.childNodes.filter((child) => typeof child !== "string");
+    const trayIndex = formChildren.indexOf(tray);
+    const inputs = tray.querySelectorAll("input");
+
+    assert.equal(formChildren[trayIndex + 1], prepare);
+    assert.ok(formChildren.indexOf(forge) > formChildren.indexOf(prepare));
+    assert.equal(prepare.textContent, "Prepare 5 stories");
+    assert.equal(inputs.length, 5);
+    assert.equal(inputs.at(-1).getAttribute("aria-label"), "Source URL 5");
+    inputs.at(-1).focus();
+    assert.equal(dom.document.activeElement, inputs.at(-1));
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("Desk renders forged truth instead of an obsolete failed Forge card", () => {
   const dom = installDom();
   const controller = new AbortController();

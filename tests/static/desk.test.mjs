@@ -68,6 +68,16 @@ function simpleComputedDeclarations(styles, tagName, classes) {
   return Object.fromEntries([...computed].map(([property, entry]) => [property, entry.value]));
 }
 
+function exactRuleDeclarations(styles, selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const body = styles.match(new RegExp(`${escaped}\\s*\\{([^{}]*)\\}`))?.[1] || "";
+  return Object.fromEntries(body.split(";").flatMap((declaration) => {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) return [];
+    return [[declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim()]];
+  }));
+}
+
 test("parseSourceLines trims source URLs and preserves their entered order", () => {
   const parsed = parseSourceLines("  https://example.com/first  \n\nhttps://example.com/second\n https://example.com/third ");
 
@@ -207,6 +217,17 @@ test("source move and removal preserve stable identities for focus restoration",
     entries: [entries[0], entries[2]],
     nextFocusId: "source-c",
   });
+});
+
+test("populated source tray has a bounded internal scroll region", () => {
+  const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
+  const tray = exactRuleDeclarations(css, ".source-row-list");
+
+  assert.match(tray["max-block-size"], /^clamp\(/);
+  assert.equal(tray["overflow-x"], "hidden");
+  assert.equal(tray["overflow-y"], "auto");
+  assert.equal(tray["overscroll-behavior"], "contain");
+  assert.equal(tray["scrollbar-gutter"], "stable");
 });
 
 test("submitUploadBatch sends the whole selection to one persisted operation", async () => {

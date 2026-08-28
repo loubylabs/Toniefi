@@ -886,7 +886,7 @@ export function createDeskScreen({
       iconNode("info"),
       element("span", { text: "Preparation stops at Review Shelf. No Creative Tonie changes happen here." }),
     ]);
-    form.append(sourceHeading, pasteLabel, pasteControls, sourceList, validation, forgeSummary, prepareButton, actionNote);
+    form.append(sourceHeading, pasteLabel, pasteControls, validation, sourceList, prepareButton, forgeSummary, actionNote);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (submitting) return;
