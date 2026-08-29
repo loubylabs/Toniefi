@@ -152,6 +152,50 @@ def test_operation_key_reuse_with_different_payload_conflicts(isolated):
     assert len(db.jobs_for_refresh()) == 1
 
 
+@pytest.mark.parametrize("retired", [
+    {"slug": "night-stories"},
+    {"manifest_fingerprint": "f" * 64},
+    {"files": ["one.mp3"]},
+])
+def test_a_batch_carrying_the_retired_single_collection_fields_is_refused(isolated, retired):
+    """The previous shape is removed, not accepted beside the new one.
+
+    Accepted and discarded, an unmigrated caller keeps sending a collection the
+    server never reads, and every send silently carries the wrong one.
+    """
+    body = batch_body(isolated)
+    body.update(retired)
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 422
+    assert db.jobs_for_refresh() == []
+
+
+def test_a_retired_field_inside_one_assignment_source_is_refused(isolated):
+    body = batch_body(isolated)
+    body["assignments"][0]["files"] = ["one.mp3"]
+    body["assignments"][0]["sources"][0]["group_index"] = 1
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 422
+    assert db.jobs_for_refresh() == []
+
+
+def test_every_request_body_this_application_accepts_forbids_extra_fields():
+    """One rule, checked structurally, so a new model cannot quietly opt out."""
+    models = [
+        value for value in vars(main).values()
+        if isinstance(value, type)
+        and issubclass(value, main.BaseModel)
+        and value not in {main.BaseModel, main.RequestModel}
+    ]
+
+    assert models
+    assert [model.__name__ for model in models if model.model_config.get("extra") != "forbid"] == []
+
+
 def test_old_single_push_endpoint_is_retired(isolated):
     response = TestClient(main.app).post("/api/push", json={
         "slug": isolated,

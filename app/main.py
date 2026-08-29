@@ -11,7 +11,7 @@ from urllib.parse import unquote_to_bytes, urlparse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import audio, config, db, ingest, jobs, library, push, tonies
 
@@ -90,19 +90,32 @@ def valid_source_url(value: str) -> bool:
 
 # ------------------------------------------------------------------ models
 
-class TitlePatch(BaseModel):
+class RequestModel(BaseModel):
+    """The base every request body inherits, so extras are refused everywhere.
+
+    A request that carries a retired field beside its replacement comes from a
+    caller nobody migrated, and accepting it while silently discarding the
+    retired field is how that caller stays wrong without anyone finding out.
+    The only client is the browser in this repository, so there is no installed
+    base to keep working and no reason to be lenient.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TitlePatch(RequestModel):
     title: str
 
 
-class ReorderRequest(BaseModel):
+class ReorderRequest(RequestModel):
     names: list[str]
 
 
-class PrepareSource(BaseModel):
+class PrepareSource(RequestModel):
     url: str
 
 
-class PrepareOptions(BaseModel):
+class PrepareOptions(RequestModel):
     use_chapters: bool = True
     normalize: bool = True
     clean_titles: bool = True
@@ -111,17 +124,17 @@ class PrepareOptions(BaseModel):
     split_oversized: bool = True
 
 
-class PrepareBatch(BaseModel):
+class PrepareBatch(RequestModel):
     sources: list[PrepareSource]
     options: PrepareOptions = Field(default_factory=PrepareOptions)
 
 
-class LibrivoxImport(BaseModel):
+class LibrivoxImport(RequestModel):
     book_id: str
     options: PrepareOptions = Field(default_factory=PrepareOptions)
 
 
-class ForgeRequest(BaseModel):
+class ForgeRequest(RequestModel):
     slug: str
     normalize: bool = True
     clean_titles: bool = True
@@ -130,18 +143,18 @@ class ForgeRequest(BaseModel):
     split_oversized: bool = True
 
 
-class ChapterRef(BaseModel):
+class ChapterRef(RequestModel):
     id: str
     title: str = ""
 
 
-class PushSource(BaseModel):
+class PushSource(RequestModel):
     slug: str
     manifest_fingerprint: str = Field(min_length=64, max_length=64)
     files: list[str] = Field(min_length=1)
 
 
-class PushAssignment(BaseModel):
+class PushAssignment(RequestModel):
     household_id: str
     tonie_id: str
     replace: bool
@@ -152,19 +165,19 @@ class PushAssignment(BaseModel):
     sources: list[PushSource] = Field(min_length=1)
 
 
-class PushBatch(BaseModel):
+class PushBatch(RequestModel):
     operation_key: str = Field(min_length=1, max_length=128)
     assignments: list[PushAssignment] = Field(min_length=1, max_length=100)
 
 
-class ChaptersPut(BaseModel):
+class ChaptersPut(RequestModel):
     # `base` carries titles as well as ids, because a rename made elsewhere is
     # invisible to an id-only precondition and would be silently reverted.
     base: list[ChapterRef]
     chapters: list[ChapterRef]
 
 
-class Credentials(BaseModel):
+class Credentials(RequestModel):
     username: str
     password: str
 
