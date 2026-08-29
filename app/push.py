@@ -75,6 +75,10 @@ def client_from_settings() -> tonies.TonieCloud:
 # ------------------------------------------------------ chapter management
 
 TITLE_LIMIT = 128
+# The Tonie Cloud documents maxLength 100 for a Creative Tonie's name. That is a
+# different limit from TITLE_LIMIT, which caps a chapter title at 128. They are
+# different fields on different resources; do not unify them.
+NAME_LIMIT = 100
 _target_locks_guard = threading.Lock()
 _target_locks: dict[tuple[str, str], threading.RLock] = {}
 
@@ -91,6 +95,10 @@ def target_lease(household_id: str, tonie_id: str):
 
 class StaleChapters(RuntimeError):
     """The Tonie's chapters changed since the browser last looked at them."""
+
+
+class StaleTonieName(RuntimeError):
+    """This Tonie was renamed somewhere else since the browser last read it."""
 
 
 class StalePush(RuntimeError):
@@ -294,6 +302,58 @@ def _set_tonie_chapters_locked(
         return answer
     finally:
         client.close()
+
+
+def set_tonie_name(
+    household_id: str,
+    tonie_id: str,
+    base_name: str,
+    name: str,
+) -> dict[str, Any]:
+    """Rename one Creative Tonie, without touching its chapters.
+
+    `base_name` is the name the browser had on screen when the operator
+    decided. The upstream offers no conditional write, so comparing it here
+    narrows the lost-update window to a single round trip rather than the life
+    of an open tab. It is the same guard merge_chapters applies, for the same
+    reason.
+    """
+    wanted = (name or "").strip()[:NAME_LIMIT]
+    if not wanted:
+        # A chapter title keeps its old value when blanked, because a slipped
+        # keystroke there must not leave a nameless chapter on a Tonie. A
+        # rename is the opposite case: it is a deliberate act on one field, so
+        # silently keeping the old name would report success for a write that
+        # was never made.
+        raise ValueError("A Creative Tonie needs a name.")
+
+    with target_lease(household_id, tonie_id):
+        client = client_from_settings()
+        try:
+            tonie = client.get_tonie(household_id, tonie_id)
+            if (tonie.get("name") or "") != (base_name or ""):
+                raise StaleTonieName("This Tonie was renamed somewhere else. Reloading.")
+
+            # get_tonie does not carry the household, but a GET /api/tonies
+            # entry does, and this response has to match it for every caller.
+            household_name = ""
+            for house in client.households():
+                if house.get("id") == household_id:
+                    household_name = house.get("name", "")
+                    break
+
+            tonie["name"] = wanted
+            tonie["householdId"] = household_id
+            tonie["householdName"] = household_name
+
+            # Built BEFORE the write. Nothing that can raise may run after a
+            # landed PATCH, or a rename the Tonie Cloud accepted is reported as
+            # a failure and the operator retries a change already made.
+            answer = describe_tonie(tonie)
+            client.set_name(household_id, tonie_id, wanted)
+            return answer
+        finally:
+            client.close()
 
 
 # -------------------------------------------------- sending library tracks

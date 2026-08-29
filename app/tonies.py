@@ -197,6 +197,19 @@ class TonieCloud:
             json={"chapters": chapters},
         )
 
+    def set_name(self, household_id: str, tonie_id: str, name: str) -> Any:
+        """Rename a Creative Tonie, and touch nothing else.
+
+        The body is deliberately only the name. The upstream documents that
+        including "chapters" triggers a fresh transcoding, so a rename that
+        carried the chapter list would re-transcode a box for a text change.
+        """
+        return self._request(
+            "PATCH",
+            f"/households/{household_id}/creativetonies/{tonie_id}",
+            json={"name": name},
+        )
+
     def clear_tonie(self, household_id: str, tonie_id: str) -> Any:
         return self.set_chapters(household_id, tonie_id, [])
 

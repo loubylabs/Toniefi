@@ -200,6 +200,14 @@ class ChaptersPut(RequestModel):
     chapters: list[ChapterRef]
 
 
+class TonieNamePatch(RequestModel):
+    # base_name is the precondition: the name the browser had on screen. The
+    # Tonie Cloud has no conditional write, so this is what stops a rename made
+    # in the myTonies app a moment ago from being silently reverted.
+    base_name: str = ""
+    name: str
+
+
 class Credentials(RequestModel):
     username: str
     password: str
@@ -549,6 +557,19 @@ def put_tonie_chapters(household_id: str, tonie_id: str, body: ChaptersPut) -> d
             [chapter.model_dump() for chapter in body.chapters],
         )
     except push.StaleChapters as exc:
+        raise fail(409, str(exc)) from exc
+    except ValueError as exc:
+        raise fail(400, str(exc)) from exc
+    except tonies.TonieCloudError as exc:
+        raise fail(400, str(exc)) from exc
+
+
+@app.patch("/api/tonies/{household_id}/{tonie_id}")
+def patch_tonie_name(household_id: str, tonie_id: str, body: TonieNamePatch) -> dict[str, Any]:
+    """Rename a Creative Tonie. This never touches its chapters."""
+    try:
+        return push.set_tonie_name(household_id, tonie_id, body.base_name, body.name)
+    except push.StaleTonieName as exc:
         raise fail(409, str(exc)) from exc
     except ValueError as exc:
         raise fail(400, str(exc)) from exc
