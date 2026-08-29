@@ -42,8 +42,8 @@ def test_playlist_preview_numbers_every_entry_from_one(flat_playlist):
 
     assert preview["title"] == "How Search Works"
     assert preview["entries"] == [
-        {"index": 1, "id": "aaa", "title": "First", "duration": 61.0, "available": True},
-        {"index": 2, "id": "bbb", "title": "Second", "duration": 122.5, "available": True},
+        {"index": 1, "id": "aaa", "title": "First", "available": True},
+        {"index": 2, "id": "bbb", "title": "Second", "available": True},
     ]
 
 
@@ -215,7 +215,7 @@ def test_preview_route_lists_the_playlist(client, flat_playlist):
     assert response.status_code == 200
     assert response.json() == {
         "title": "How Search Works",
-        "entries": [{"index": 1, "id": "aaa", "title": "First", "duration": 61.0, "available": True}],
+        "entries": [{"index": 1, "id": "aaa", "title": "First", "available": True}],
     }
 
 

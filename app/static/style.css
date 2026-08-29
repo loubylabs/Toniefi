@@ -1551,12 +1551,10 @@ img.review-detail-cover {
   display: grid;
   gap: var(--space-2);
   min-width: 0;
-  grid-column: 1 / -1;
-  margin-block-start: var(--space-2);
-  padding: var(--space-2);
+  padding: var(--space-3);
   border: var(--rule-thin);
   border-radius: var(--radius);
-  background: var(--paper);
+  background: var(--paper-raised);
 }
 
 .playlist-picker-title {
@@ -1572,7 +1570,7 @@ img.review-detail-cover {
   color: var(--ink);
 }
 
-.playlist-picker-title .desk-clear-button {
+.playlist-picker-title .desk-clear-button:first-of-type {
   margin-inline-start: auto;
 }
 
@@ -1608,6 +1606,13 @@ img.review-detail-cover {
   gap: var(--space-2);
   min-width: 0;
   cursor: pointer;
+}
+
+.playlist-picker-row input {
+  width: 1.25rem;
+  min-height: 1.25rem;
+  margin: 0;
+  accent-color: var(--bookcloth);
 }
 
 .playlist-picker-number {

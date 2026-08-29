@@ -119,6 +119,14 @@ class MiniElement {
     }
   }
 
+  insertBefore(node, reference) {
+    if (node && typeof node !== "string") node.parentNode = this;
+    const index = this.childNodes.indexOf(reference);
+    if (index < 0) this.childNodes.push(node);
+    else this.childNodes.splice(index, 0, node);
+    return node;
+  }
+
   prepend(...children) {
     for (const child of children) {
       if (child && typeof child !== "string") child.parentNode = this;
@@ -738,9 +746,9 @@ test("Desk sends only the playlist videos left ticked", async () => {
       return {
         title: "Story Time",
         entries: [
-          { index: 1, id: "aaa", title: "One", duration: 60, available: true },
-          { index: 2, id: "bbb", title: "Two", duration: 60, available: true },
-          { index: 3, id: "ccc", title: "Three", duration: 60, available: true },
+          { index: 1, id: "aaa", title: "One", available: true },
+          { index: 2, id: "bbb", title: "Two", available: true },
+          { index: 3, id: "ccc", title: "Three", available: true },
         ],
       };
     }

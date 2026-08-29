@@ -787,6 +787,7 @@ export function createDeskScreen({
     const prepareButton = element("button", { type: "submit", className: "button button-primary desk-prepare-button", disabled: true }, [
       iconNode("forge"), element("span", { text: "Prepare stories" }),
     ]);
+    const playlistHost = element("div", { className: "playlist-picker-host" });
     const form = element("form", { className: "source-intake-form", novalidate: true });
 
     function newSourceEntry(value) {
@@ -805,11 +806,23 @@ export function createDeskScreen({
 
     function playlistPanel(row) {
       const total = row.playlist.entries.length;
+      const close = element("button", {
+        type: "button",
+        className: "desk-clear-button",
+        "data-focus-key": `${row.id}-pick-close`,
+        text: "Close",
+      });
+      close.addEventListener("click", () => {
+        const live = liveEntry(row.id);
+        if (live) live.open = false;
+        renderSources({ focusKey: `${row.id}-pick` });
+      });
       const heading = element("p", { className: "playlist-picker-title" }, [
         element("strong", { text: row.playlist.title || "Playlist" }),
         element("span", { text: total ? `${total} ${total === 1 ? "video" : "videos"}` : "No videos" }),
       ]);
       if (!total) {
+        heading.append(close);
         return element("div", { className: "playlist-picker" }, [
           heading,
           element("p", { className: "playlist-picker-empty", text: "That link is a single video, not a playlist." }),
@@ -857,7 +870,7 @@ export function createDeskScreen({
           : live.playlist.entries.filter((item) => item.available).map((item) => item.index);
         renderSources({ focusKey: `${row.id}-pick-all` });
       });
-      heading.append(toggleAll);
+      heading.append(toggleAll, close);
       return element("div", { className: "playlist-picker" }, [heading, list]);
     }
 
@@ -929,7 +942,6 @@ export function createDeskScreen({
         iconNode("link", "source-row-icon"),
         field,
         controls,
-        row.open && row.playlist ? playlistPanel(row) : null,
       ]);
     }
 
@@ -947,7 +959,9 @@ export function createDeskScreen({
         const live = liveEntry(row.id);
         if (!live) return;
         if (live.playlist) {
-          live.open = !live.open;
+          const open = !live.open;
+          for (const entry of entries) entry.open = false;
+          live.open = open;
           renderSources({ focusKey: `${row.id}-pick` });
           return;
         }
@@ -959,6 +973,7 @@ export function createDeskScreen({
             body: JSON.stringify({ url: live.value }),
           });
           if (signal.aborted) return;
+          for (const entry of entries) entry.open = false;
           live.playlist = preview;
           live.picked = (preview.entries || []).filter((item) => item.available).map((item) => item.index);
           live.open = true;
@@ -990,6 +1005,15 @@ export function createDeskScreen({
       prepareButton.querySelector("span:last-child").textContent = label;
       const token = focusKey ? { key: focusKey } : rememberFocus(intake);
       replace(sourceList, ...parsed.rows.map((row, index) => sourceRow({ ...entries[index], error: row.error }, index, parsed.rows.length)));
+      // The tray sits directly above its own action, so the picker slots in
+      // only while it is open rather than leaving an empty seat behind.
+      const opened = entries.find((entry) => entry.open && entry.playlist);
+      if (opened) {
+        replace(playlistHost, playlistPanel(opened));
+        if (!playlistHost.parentNode) form.insertBefore(playlistHost, prepareButton);
+      } else {
+        playlistHost.remove();
+      }
       restoreFocus(token, { root: intake });
     }
 

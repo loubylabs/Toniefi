@@ -225,12 +225,10 @@ def playlist_preview(url: str) -> dict[str, Any]:
 def _preview_entry(index: int, entry: dict[str, Any] | None) -> dict[str, Any]:
     """A private or deleted video still holds its place in the numbering."""
     entry = entry or {}
-    duration = entry.get("duration")
     return {
         "index": index,
         "id": entry.get("id") or "",
         "title": entry.get("title") or f"Video {index}",
-        "duration": float(duration) if isinstance(duration, (int, float)) else None,
         "available": bool(entry.get("id")) and entry.get("title") not in ("[Private video]", "[Deleted video]"),
     }
 
