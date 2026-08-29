@@ -30,6 +30,7 @@ access control, so treat network reachability as the only gate and do not expose
 | `GET` | `/api/tonies` | Creative Tonies with their current chapters |
 | `POST` | `/api/push/batch` | Queue one confirmed send batch |
 | `PUT` | `/api/tonies/{household}/{tonie}/chapters` | Canonical whole-list chapter write |
+| `PATCH` | `/api/tonies/{household}/{tonie}` | Rename one Creative Tonie |
 | `GET` | `/api/jobs` | Active and recent jobs (default 40) |
 | `GET` | `/api/jobs/history` | Job history (default 40) |
 | `GET` | `/api/jobs/{id}` | One job |
@@ -112,6 +113,32 @@ A batch holds at most 100 assignments. Manifest fingerprints are exactly 64 char
 Push jobs are not retryable through `/api/jobs/{id}/retry`, because a Creative Tonie write has no
 undo and remote state may have changed.
 
+## Rename a Creative Tonie
+
+```bash
+curl -s -X PATCH http://127.0.0.1:8080/api/tonies/HOUSEHOLD/TONIE \
+  -H 'content-type: application/json' \
+  -d '{"base_name": "Creative Tonie", "name": "Bedtime Bear"}'
+```
+
+The body is only the name and the name the browser had on screen. The upstream
+`PATCH /households/{h}/creativetonies/{t}` accepts a bare `{"name": ...}`, and its own
+documentation states that only including `chapters` triggers a re-transcode, so a rename never
+touches a Tonie's audio.
+
+`base_name` is the precondition. The Tonie Cloud offers no conditional write, so TonieFi re-reads
+the Tonie and compares its current name before writing. That narrows the lost-update window to one
+round trip; it cannot close it.
+
+| Status | When |
+| --- | --- |
+| `200` | Renamed. The body is the same shape as one entry of `GET /api/tonies`. |
+| `400` | The name was empty after trimming, or the Tonie Cloud refused the write. |
+| `409` | The Tonie was renamed somewhere else since the browser read it. |
+
+The name is trimmed and capped at 100 characters, matching the upstream `maxLength`. That is a
+different limit from the 128 characters a chapter title allows.
+
 ## Finish a legacy extracted collection
 
 Library and the collection page show **Finish preparation** for an older collection whose manifest
@@ -136,3 +163,12 @@ curl -s -X POST http://127.0.0.1:8080/api/jobs/42/retry
 
 `GET /api/jobs` returns current and recent work; `GET /api/jobs/history` returns the history,
 including failures kept after an eligible retry. Both default to 40 rows.
+
+Every job carries `progress`, the worker's own sentence, and `progress_percent`, a number from 0 to
+100 or `null`. `null` means the current phase has nothing it can honestly measure, such as signing
+in to myTonies, and the front end renders it as an indeterminate meter rather than as zero
+progress. A send's percentage is weighted by audio bytes uploaded, not by chapter count, so a
+30-second intro and a 20-minute chapter do not count as equal work. Nothing derives the figure by
+parsing `progress`.
+
+A push job's `phase` reads `sending` while it runs and `sent` once it finishes.
