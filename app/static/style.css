@@ -2991,8 +2991,7 @@ img.review-detail-cover {
     width: 100%;
   }
 
-  .review-shelf-row,
-  .library-row {
+  .review-shelf-row {
     grid-template-columns: 5.75rem minmax(0, 1fr);
   }
 

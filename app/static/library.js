@@ -168,10 +168,10 @@ export function createLibraryScreen({
     let tonies = null;
     let toniesError = "";
     let selections = [];
-    let attempt = null;
     let operationKey = "";
     let signature = "";
     let sending = false;
+    let announcedProblem = "";
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -202,7 +202,7 @@ export function createLibraryScreen({
       onStale: (error) => showStale(`${error.message} The current index remains visible.`),
     });
 
-    function collectionRow(collection, index, shown) {
+    function collectionRow(collection, index, shown, sendable) {
       const titleId = `library-collection-${collection.slug}`;
       const preparation = forgePreparationState(collection, jobs);
       const primary = preparation.state === "ready"
@@ -293,7 +293,7 @@ export function createLibraryScreen({
           removeButton.focus({ preventScroll: true });
         }
       });
-      const selectable = preparation.state === "ready";
+      const selectable = sendable.has(collection.slug);
       const tickId = `library-select-${collection.slug}`;
       const tick = selectable
         ? element("input", {
@@ -372,7 +372,9 @@ export function createLibraryScreen({
         ]));
       } else {
         summary.textContent = `${shown.length} of ${collections.length} ${collections.length === 1 ? "collection" : "collections"}`;
-        replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown)));
+        // One rule for what can be sent, and selectableCollections is it.
+        const sendable = new Set(selectableCollections(shown, jobs).map((item) => item.slug));
+        replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown, sendable)));
       }
       renderSendBar();
       mutation.sync();
@@ -398,7 +400,6 @@ export function createLibraryScreen({
       // The chapter precondition inside the payload changed, so the key that
       // identified the old payload must not identify this one.
       operationKey = "";
-      attempt = null;
       if (active && !signal?.aborted) render({ focusKey });
     }
 
@@ -414,9 +415,9 @@ export function createLibraryScreen({
       if (!picked.length) {
         replace(sendBar);
         selections = [];
-        attempt = null;
         operationKey = "";
         signature = "";
+        announcedProblem = "";
         return;
       }
       const groups = packSelection(picked, limitSeconds());
@@ -429,7 +430,6 @@ export function createLibraryScreen({
         signature = nextSignature;
         selections = groups.map(() => ({ tonie: null, replaceExisting: false }));
         operationKey = "";
-        attempt = null;
       }
       const totalSeconds = groups.reduce((sum, group) => sum + group.seconds, 0);
       const heading = element("div", { className: "screen-heading" }, [
@@ -464,14 +464,13 @@ export function createLibraryScreen({
         picker.addEventListener("change", () => {
           chosen.tonie = (tonies || []).find((tonie) => `${tonie.householdId}/${tonie.id}` === picker.value) || null;
           operationKey = "";
-          attempt = null;
           render({ focusKey: `library-send-target-${group.index}` });
         });
 
         const appendInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "append", checked: !chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-append` });
         const replaceInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "replace", checked: chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-replace` });
-        appendInput.addEventListener("change", () => { chosen.replaceExisting = false; operationKey = ""; attempt = null; render({ focusKey: `library-send-effect-${group.index}-append` }); });
-        replaceInput.addEventListener("change", () => { chosen.replaceExisting = true; operationKey = ""; attempt = null; render({ focusKey: `library-send-effect-${group.index}-replace` }); });
+        appendInput.addEventListener("change", () => { chosen.replaceExisting = false; operationKey = ""; render({ focusKey: `library-send-effect-${group.index}-append` }); });
+        replaceInput.addEventListener("change", () => { chosen.replaceExisting = true; operationKey = ""; render({ focusKey: `library-send-effect-${group.index}-replace` }); });
 
         const membership = element("ol", { className: "library-send-membership" }, group.entries.map((entry) => (
           element("li", {}, [
@@ -484,10 +483,7 @@ export function createLibraryScreen({
         return element("li", { className: "library-send-group" }, [
           element("h3", { text: groups.length === 1 ? "Chapters to send" : `Group ${group.index}` }),
           membership,
-          element("div", { className: "library-send-target-field" }, [
-            element("span", { className: "visually-hidden", text: `Group ${group.index} target` }),
-            picker,
-          ]),
+          element("div", { className: "library-send-target-field" }, [picker]),
           element("fieldset", { className: "library-send-effect" }, [
             element("legend", { text: `What group ${group.index} does to that Tonie` }),
             element("label", {}, [appendInput, element("span", { text: "Append to the back" })]),
@@ -497,10 +493,19 @@ export function createLibraryScreen({
       });
 
       const problems = tonies ? selectionProblems(groups, selections, limitSeconds()) : ["Creative Tonies are not loaded yet."];
-      const validation = element("p", { className: "library-send-validation", role: "status" },
+      const validation = element("p", { className: "library-send-validation" },
         problems.length ? [element("span", { text: problems[0] })] : []);
       if (toniesError) {
         replace(validation, element("span", { text: `Creative Tonies could not load. ${toniesError}` }));
+      }
+      // The paragraph is rebuilt every render, so it can never be the live
+      // region that fires: a node has to be in the document before its text
+      // changes. Announcing the message itself is the only way a screen reader
+      // hears it, and only on a change, or every keystroke would re-read it.
+      const spoken = toniesError ? `Creative Tonies could not load. ${toniesError}` : (problems[0] || "");
+      if (spoken !== announcedProblem) {
+        announcedProblem = spoken;
+        if (spoken) announce(spoken);
       }
 
       const send = element("button", {
@@ -536,7 +541,7 @@ export function createLibraryScreen({
       if (!operationKey) operationKey = newOperationKey();
       const payload = buildPushBatchPayload(groups, selections, operationKey);
       const replacing = selections.filter((choice) => choice.replaceExisting);
-      attempt = createSendAttempt({
+      const attempt = createSendAttempt({
         payload,
         request,
         signal,
@@ -550,7 +555,6 @@ export function createLibraryScreen({
         onReceipt: async () => {
           selection.clear();
           operationKey = "";
-          attempt = null;
           notify(`${picked.length} ${picked.length === 1 ? "story is" : "stories are"} queued to send.`, { kind: "success" });
           announce("Creative Tonie send queued.");
           await refresh.request();

@@ -222,15 +222,28 @@ export function installDom() {
   const originalWindow = globalThis.window;
   const document = new MiniDocument();
   globalThis.document = document;
-  globalThis.window = { requestAnimationFrame: (callback) => callback() };
   const workspace = document.createElement("main");
   workspace.id = "workspace";
   const dialogs = document.createElement("div");
   dialogs.id = "dialogHost";
-  document.body.append(workspace, dialogs);
+  // announce() writes through the live region on the next frame, so the region
+  // has to exist for that code path to run at all, and `spoken` records what a
+  // screen reader would have heard, in order.
+  const liveRegion = document.createElement("div");
+  liveRegion.id = "liveRegion";
+  const spoken = [];
+  globalThis.window = {
+    requestAnimationFrame: (callback) => {
+      callback();
+      if (liveRegion.textContent) spoken.push(liveRegion.textContent);
+    },
+  };
+  document.body.append(workspace, dialogs, liveRegion);
   return {
     document,
     workspace,
+    liveRegion,
+    spoken,
     restore() {
       globalThis.document = originalDocument;
       globalThis.window = originalWindow;

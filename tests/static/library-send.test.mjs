@@ -79,19 +79,48 @@ const blueTonie = () => ({
   chapters: [{ id: "c1", title: "Old chapter" }],
 });
 
-function mountLibrary({ collections, tonies = [blueTonie()] }) {
+// toniesQueue answers each /api/tonies call in turn, holding on the last entry,
+// so a test can move a Tonie underneath a chosen target. pushOutcomes answers
+// each POST /api/push/batch in turn: an Error rejects, anything else succeeds.
+const dawnStory = () => ({
+  slug: "dawn-story",
+  stage: "forged",
+  title: "Dawn Story",
+  manifest_fingerprint: "f-dawn",
+  track_count: 1,
+  total_duration: "10m 00s",
+  tonies_needed: 1,
+  tracks: [{ name: "dawn.mp3", title: "Dawn", seconds: 600, duration: "10m 00s" }],
+});
+
+const filledTonie = () => ({
+  ...blueTonie(),
+  time_free: "20m 00s",
+  seconds_present: 4200,
+  chapters: [{ id: "c9", title: "Added from the phone" }],
+});
+
+function mountLibrary({ collections, tonies = [blueTonie()], toniesQueue = null, pushOutcomes = [] }) {
   const dom = installDom();
   const controller = new AbortController();
   const pushes = [];
+  let tonieCalls = 0;
   const refresh = {
     snapshot: { status: { usable_limit_seconds: 5400 }, collections, jobs: [], stale: [], errors: {} },
     subscribe: () => () => {},
     request: async () => refresh.snapshot,
   };
   const request = async (url, options = {}) => {
-    if (url === "/api/tonies") return tonies;
+    if (url === "/api/tonies") {
+      if (!toniesQueue) return tonies;
+      const answer = toniesQueue[Math.min(tonieCalls, toniesQueue.length - 1)];
+      tonieCalls += 1;
+      return answer;
+    }
     if (url === "/api/push/batch") {
       pushes.push(JSON.parse(options.body));
+      const outcome = pushOutcomes[pushes.length - 1];
+      if (outcome instanceof Error) throw outcome;
       return { job_id: 7 };
     }
     throw new Error(`Unexpected request ${url}`);
@@ -289,6 +318,160 @@ test("a selection too long for one Tonie splits into groups that each need their
       ["Creative Tonie for group 1", "Creative Tonie for group 2"],
     );
     assert.equal(screen.node(".library-send-submit").disabled, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("adding a story to the selection clears the chosen target and never reuses the operation key", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory(), dawnStory()],
+    pushOutcomes: [new Error("The Tonie Cloud refused the batch.")],
+  });
+  try {
+    await flush();
+    await screen.dom.workspace.querySelectorAll(".library-select")[0].dispatchEvent({ type: "change" });
+    await flush();
+    let picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+
+    // A refused send keeps its operation key so a retry of the identical
+    // payload is recognised rather than duplicated.
+    await screen.node(".library-send-submit").click();
+    await flush();
+    assert.equal(screen.pushes.length, 1);
+    const refusedKey = screen.pushes[0].operation_key;
+
+    // Ticking a second story rebuilds the payload, so the target and the key
+    // that described the old one must both go.
+    await screen.dom.workspace.querySelectorAll(".library-select")[1].dispatchEvent({ type: "change" });
+    await flush();
+    picker = screen.node(".library-send-target");
+    assert.deepEqual(picker.childNodes.map((option) => option.selected), [false, false]);
+    assert.equal(screen.node(".library-send-submit").disabled, true);
+    assert.match(screen.node(".library-send-validation").textContent, /Group 1 has no Creative Tonie chosen/);
+    assert.equal(screen.node(".library-send-groups").childNodes.length, 1);
+    assert.equal(screen.node(".library-send-membership").childNodes.length, 3);
+
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    assert.notEqual(screen.pushes[1].operation_key, refusedKey);
+    assert.deepEqual(
+      screen.pushes[1].assignments[0].sources,
+      [
+        { slug: "night-story", manifest_fingerprint: "f-night", files: ["01.mp3", "02.mp3"] },
+        { slug: "dawn-story", manifest_fingerprint: "f-dawn", files: ["dawn.mp3"] },
+      ],
+    );
+  } finally {
+    screen.stop();
+  }
+});
+
+test("Refresh targets rebinds the chosen Tonie to the freshly fetched one", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [[{ ...blueTonie(), chapters: [] }], [filledTonie()]],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+    assert.equal(screen.node(".library-send-submit").disabled, false);
+
+    // The Tonie filled up elsewhere while the selection sat here.
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.equal(screen.node(".library-send-submit").disabled, true);
+    assert.match(screen.node(".library-send-validation").textContent, /does not fit Blue Tonie · Home/);
+
+    await screen.byFocusKey("library-send-effect-1-replace").dispatchEvent({ type: "change" });
+    await flush();
+    assert.equal(screen.node(".library-send-submit").disabled, false);
+
+    const sending = screen.node(".library-send-submit").click();
+    await flush();
+    const dialog = screen.dom.document.getElementById("dialogHost").querySelector(".confirmation-dialog");
+    await buttonWithText(dialog, "Replace and send").click();
+    await sending;
+    await flush();
+
+    assert.equal(screen.pushes.length, 1);
+    // The precondition has to describe the Tonie as it is now, not as it was
+    // when the target was chosen.
+    assert.deepEqual(screen.pushes[0].assignments[0].remote_chapters, [{ id: "c9", title: "Added from the phone" }]);
+    assert.equal(screen.pushes[0].assignments[0].replace, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a refused send leaves the selection ticked and ready to try again", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    pushOutcomes: [new Error("The Tonie Cloud refused the batch.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 1);
+    assert.equal(screen.node(".library-send-bar").hidden, false);
+    assert.equal(screen.node(".library-select").checked, true);
+    assert.equal(screen.node(".library-send-groups").childNodes.length, 1);
+    assert.equal(screen.node(".library-send-membership").childNodes.length, 2);
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.equal(screen.node(".library-send-submit").disabled, false);
+    assert.equal(screen.focusKey(), "library-send-submit");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("the bar speaks each new problem once, and says nothing on an unrelated render", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    assert.deepEqual(screen.dom.spoken, [
+      "Creative Tonies are not loaded yet.",
+      "Group 1 has no Creative Tonie chosen.",
+    ]);
+
+    const search = screen.node("input");
+    search.value = "Night";
+    await search.dispatchEvent({ type: "input" });
+    await flush();
+    assert.equal(screen.dom.spoken.length, 2);
+
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+    assert.equal(screen.dom.spoken.length, 2);
   } finally {
     screen.stop();
   }
