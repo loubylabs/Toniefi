@@ -510,10 +510,20 @@ def list_tonies() -> list[dict[str, Any]]:
 
 
 def _push_job_title(assignment: dict[str, Any]) -> str:
-    """Name a send by what it carries, since a batch is no longer one slug."""
-    slugs = {source["slug"] for source in assignment["sources"]}
+    """Name a send by what it carries, in the words the operator chose.
+
+    The raw slug was unreadable in Activity two weeks later. The collection's
+    own title is already on disk, and costs one lookup per assignment at
+    enqueue time.
+    """
+    slugs: list[str] = []
+    for source in assignment["sources"]:
+        if source["slug"] not in slugs:
+            slugs.append(source["slug"])
     if len(slugs) == 1:
-        return f"Send {next(iter(slugs))} to a Creative Tonie"
+        manifest = library.get(slugs[0])
+        title = (manifest or {}).get("title") or slugs[0]
+        return f"Send {title} to a Creative Tonie"
     return f"Send {len(slugs)} collections to a Creative Tonie"
 
 

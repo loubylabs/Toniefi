@@ -189,7 +189,7 @@ test("Activity opens the collection after preparation and after a failed push", 
     kind: "collection",
     href: "/collection/night-stories",
     label: "Open collection",
-    guidance: "Select the collection in the Library and send it again.",
+    guidance: "Some chapters may already be on the Tonie. Open the Tonie, check what landed, then send only the rest.",
   });
 });
 

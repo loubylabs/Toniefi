@@ -106,6 +106,32 @@ class StalePush(RuntimeError):
     """A confirmed local or remote send precondition no longer holds."""
 
 
+class PartialSend(RuntimeError):
+    """A send stopped after writing some chapters to the Tonie.
+
+    Each chapter is an immediate remote write, so a failure at chapter 18 of 30
+    leaves 17 on the box for good. Push jobs are deliberately not retryable,
+    and telling the operator to send it again would duplicate those 17. This
+    error carries what actually landed, so the guidance can name the real next
+    safe action instead of guessing.
+    """
+
+    def __init__(self, underlying: str, uploaded: int, total: int, tonie: str) -> None:
+        self.underlying = underlying
+        self.uploaded = uploaded
+        self.total = total
+        self.tonie = tonie
+        if uploaded:
+            landed = (
+                f"Stopped at chapter {uploaded + 1} of {total}. "
+                f"Chapters 1 to {uploaded} are already on {tonie}. "
+                f"Open that Tonie, check what landed, then send only the rest."
+            )
+        else:
+            landed = f"Nothing was added to {tonie}."
+        super().__init__(f"{underlying} {landed}")
+
+
 def _identity(chapter: dict) -> tuple[str, str]:
     """The (id, title) pair the precondition compares.
 
@@ -601,23 +627,35 @@ def _push_confirmed_tracks(
             uploaded = []
             tracks = [track for _, track in resolved]
             throttle = ProgressThrottle(progress)
-            for position, (slug, track) in enumerate(resolved, start=1):
-                path = library.track_path(slug, track["name"])
-                label = track.get("title") or Path(track["name"]).stem
-                message = f"Uploading {position}/{len(resolved)}: {label}"
-                done_index = position - 1
-                throttle.flush(message, upload_percent(tracks, done_index, 0))
-                # The default arguments bind this iteration's values. A bare
-                # closure over `message` would report every chunk of every file
-                # under the last file's name once the loop moved on.
-                file_id = client.upload_file(
-                    path,
-                    on_bytes=lambda at, m=message, d=done_index: throttle.report(
-                        m, upload_percent(tracks, d, at)
-                    ),
-                )
-                client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
-                uploaded.append({"title": label, "file": file_id})
+            tonie_name = state.get("name") or payload["tonie_id"]
+            try:
+                for position, (slug, track) in enumerate(resolved, start=1):
+                    path = library.track_path(slug, track["name"])
+                    label = track.get("title") or Path(track["name"]).stem
+                    message = f"Uploading {position}/{len(resolved)}: {label}"
+                    done_index = position - 1
+                    throttle.flush(message, upload_percent(tracks, done_index, 0))
+                    # The default arguments bind this iteration's values. A bare
+                    # closure over `message` would report every chunk of every
+                    # file under the last file's name once the loop moved on.
+                    file_id = client.upload_file(
+                        path,
+                        on_bytes=lambda at, m=message, d=done_index: throttle.report(
+                            m, upload_percent(tracks, d, at)
+                        ),
+                    )
+                    client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
+                    uploaded.append({"title": label, "file": file_id})
+            except Exception as exc:
+                # Every add_chapter above already landed. Reporting a bare
+                # transport error here is what let the recovery guidance say
+                # "send it again", which would duplicate whatever survived.
+                raise PartialSend(
+                    underlying=str(exc) or exc.__class__.__name__,
+                    uploaded=len(uploaded),
+                    total=len(resolved),
+                    tonie=tonie_name,
+                ) from exc
 
             # The bar measures audio uploaded, and by here it really is all up.
             # Sign-in and Clear report no percentage at all, because neither has
