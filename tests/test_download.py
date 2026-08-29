@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
@@ -338,6 +339,27 @@ def test_a_forge_replacement_mid_download_fails_rather_than_mixing_two_versions(
     replaced = config.LIBRARY_DIR / slug / "002-chapter.mp3"
     replaced.unlink()
     replaced.write_bytes(b"forged audio for The Shadow, normalized")
+
+    with pytest.raises(archive.SourceChanged):
+        list(chunks)
+
+
+def test_the_publication_mechanism_itself_is_caught_mid_download(isolated):
+    """Forge publishes by renaming a whole directory into place.
+
+    Every file behind the visible path is a different file afterwards, so the
+    identity check sees it even when the replacement bytes are identical. This
+    is what makes the guard cover the only writer the application actually has.
+    """
+    slug = make_collection()
+    chunks = archive.stream(library.download_entries(slug))
+    next(chunks)
+    visible = config.LIBRARY_DIR / slug
+    stage = config.LIBRARY_DIR / ".toniefi-forge-swap"
+    backup = config.LIBRARY_DIR / ".toniefi-backup-swap"
+    shutil.copytree(visible, stage)
+    visible.replace(backup)
+    stage.replace(visible)
 
     with pytest.raises(archive.SourceChanged):
         list(chunks)
