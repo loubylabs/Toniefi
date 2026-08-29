@@ -787,7 +787,7 @@ def test_a_duplicated_track_is_refused(isolated):
 
 
 def test_tracks_out_of_manifest_order_are_refused(isolated):
-    """Manifest order is the reviewed order, so the payload cannot restate it."""
+    """The manifest already holds the order, so the payload cannot restate it."""
     client = TestClient(main.app)
     body = batch_body(isolated)
     body["assignments"][0]["sources"][0]["files"] = ["two.mp3", "one.mp3"]

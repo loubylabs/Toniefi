@@ -1,11 +1,21 @@
 """The Review Shelf is gone as a screen, so it has to be gone as a word.
 
-Three scans. Product copy, design sources and application source may not name
-the retired step: a paragraph or a message telling the operator to review
-something points at a screen that is not in the build. Those two scans share
-one pattern, because "preview" has to survive in both, and for the same
-reason. It is the chapter player's own word for playing a track without
-sending it, and it is the name of the playlist endpoint the README documents.
+Four scans. Product copy, design sources, application source and the test
+suite may not name the retired step: a paragraph, a message or a test's own
+name and docstring pointing at "review" describes a screen that is not in the
+build. Those three scans share one pattern, because "preview" has to survive
+in all of them. It is the chapter player's own word for playing a track
+without sending it, and it is the name of the playlist endpoint the README
+documents.
+
+The test-suite scan cannot include this file: its whole job is to spell out
+the retired phrasing on purpose, so it is skipped by path rather than pinned
+line by line. A handful of tests elsewhere in the suite exist precisely to
+assert the word is gone (a 404 on the deleted `/review` route, a docstring
+naming what a refusal message must not say); those are pinned as exact-text
+exemptions the same way the application scan already pins its one legitimate
+use, rather than reworded, because the assertion itself is the point.
+
 A tracked spec may say "review", because a spec legitimately records the
 design review that produced it, so specs get the narrower list of phrases that
 only ever described the deleted screen.
@@ -55,6 +65,37 @@ APP_EXEMPTIONS = (
         "app/static/index.html",
         "FINISH: unreviewed and undocumented is unfinished; this build ends with "
         "the finish review, the verdict, and DESIGN.md",
+    ),
+)
+
+TEST_SOURCES = ("tests",)
+# This file is nothing but the retired phrasing, spelled out on purpose so it
+# can be matched elsewhere. Scanning it would have the guard fail on its own
+# pattern list, which proves nothing about the suite it is meant to police.
+TEST_SELF_EXEMPT = "tests/test_retired_vocabulary.py"
+
+# The legitimate uses left in the test suite, named rather than pattern
+# matched, the same way the application scan pins its one. Each of these
+# exists to assert the retired step is gone, not to describe a workflow the
+# build still has, so rewording it would blunt the assertion it makes. Each is
+# pinned to its exact line: rewording it, or adding a second use under the
+# same exemption, fails here and has to be argued for again.
+TEST_EXEMPTIONS = (
+    (
+        "tests/test_static_shell.py",
+        'assert not {"/review", "/review/{slug}"} & paths',
+    ),
+    (
+        "tests/test_static_shell.py",
+        'assert client.get("/review").status_code == 404',
+    ),
+    (
+        "tests/test_static_shell.py",
+        'assert client.get("/review/the-wind-in-the-willows").status_code == 404',
+    ),
+    (
+        "tests/test_push_batch.py",
+        '"""Five preconditions, five messages, none of them naming a review step.',
     ),
 )
 
@@ -149,6 +190,31 @@ def test_no_application_source_sends_the_operator_to_a_review():
         ]
         # A dead exemption is a rule nobody follows any more, and leaving it
         # would silently re-open the file it names.
+        assert len(exempted) == 1, f"{name} no longer carries its exempted line: {text}"
+        hits = [hit for hit in hits if hit not in exempted]
+    assert hits == []
+
+
+def test_no_test_names_or_describes_the_retired_review_step():
+    """Every test file except this one's own list of the phrases it hunts.
+
+    A failure here is a test whose name or docstring resurrects the retired
+    step, the way a merge once brought back "the reviewed order" as if the
+    workflow still had one. This file is excluded by path rather than pinned
+    line by line, because its job is to enumerate the retired phrasing on
+    purpose.
+    """
+    hits = [
+        hit for hit in _hits(TEST_SOURCES, WORKFLOW_REVIEW)
+        if not hit.startswith(f"{TEST_SELF_EXEMPT}:")
+    ]
+    for name, text in TEST_EXEMPTIONS:
+        exempted = [
+            hit for hit in hits
+            if hit.startswith(f"{name}:") and hit.endswith(f": {text}")
+        ]
+        # A dead exemption is a rule nobody follows any more, and leaving it
+        # would silently re-open the test it names.
         assert len(exempted) == 1, f"{name} no longer carries its exempted line: {text}"
         hits = [hit for hit in hits if hit not in exempted]
     assert hits == []

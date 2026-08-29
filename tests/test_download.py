@@ -102,8 +102,8 @@ def test_archive_preserves_the_original_audio_bytes(isolated):
     assert bundle.testzip() is None
 
 
-def test_archive_numbers_tracks_from_the_reviewed_order_not_the_disk_names(isolated):
-    """A Review reorder leaves the disk numbers stale. The archive must not."""
+def test_archive_numbers_tracks_from_the_manifest_order_not_the_disk_names(isolated):
+    """A collection-page reorder leaves the disk numbers stale. The archive must not."""
     slug = make_collection()
     library.reorder(slug, ["002-chapter.mp3", "001-chapter.mp3"])
 

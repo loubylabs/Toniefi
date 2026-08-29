@@ -39,8 +39,9 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 - Credentials may come from environment variables or the local SQLite settings store. Credentials saved through the UI are stored as plain text and must be described honestly.
 - A complete credential pair is Configured. Connected is reserved for a successful connection test in the current browser session.
 - Legacy extracted collections use the persisted Forge job as their only migration path to the Library.
-- Appending to a Creative Tonie is recoverable, because the added chapters can be removed afterwards, so it posts without a confirmation dialog. Replacing a Creative Tonie's chapters destroys its current cloud audio with no undo, so it always confirms.
+- Appending to a Creative Tonie is recoverable, because the added chapters can be removed afterwards, so it posts without a confirmation dialog and **Append to the back** is the preselected default for every capacity group. Replacing a Creative Tonie's chapters destroys its current cloud audio with no undo, so it always confirms and is never the default; the operator has to choose **Replace everything** deliberately.
 - Tonie chapter changes have no undo in the Tonie Cloud. Destructive actions require confirmation and concurrent external changes must never be overwritten silently.
+- On a Creative Tonie's own screen, several chapters can be ticked (individually or with Select all) and removed together: one whole-list save behind one confirmation, not one request per chapter, because a Tonie write has no undo to fall back on.
 - The app remains single-household for this redesign. Multi-user and multi-household management are outside scope.
 
 ## Brand Commitments
