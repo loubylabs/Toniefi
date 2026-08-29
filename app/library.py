@@ -950,5 +950,47 @@ def cover_path(slug: str) -> Path | None:
     return base / cover if cover else None
 
 
+# ---------------------------------------------------------------- downloads
+
+def _archive_track_name(index: int, track: dict[str, Any], source: Path) -> str:
+    """Name one track inside a download, the way the folder itself is named."""
+    title = str(track.get("title") or "").strip() or source.stem
+    return f"{index:03d}-{audio.slugify(title)}{source.suffix.lower()}"
+
+
+def download_entries(slug: str) -> list[tuple[Path, str]]:
+    """Pair every file of one collection with its name inside a download.
+
+    Track ORDER lives in the manifest, not in the filenames, so a collection
+    reordered during Review carries stale numbers on disk. Numbering here comes
+    from the manifest: whoever unpacks the archive hears the reviewed order,
+    not the order the files happened to be written in.
+
+    A track the manifest lists but disk no longer holds is skipped rather than
+    raised on. A manifest can outlive a file, and one missing chapter is no
+    reason to refuse the rest of the story.
+    """
+    with _manifest_lock:
+        manifest = get(slug)
+        if manifest is None:
+            raise FileNotFoundError(f"No such collection: {slug}")
+        base = _public_collection_path(slug)
+        entries: list[tuple[Path, str]] = []
+        for track in manifest.get("tracks", []):
+            name = track.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            source = base / name
+            if source.parent != base or not source.is_file():
+                continue
+            entries.append((source, _archive_track_name(len(entries) + 1, track, source)))
+        cover = find_cover(base)
+        if cover:
+            entries.append((base / cover, cover))
+        if (base / MANIFEST).is_file():
+            entries.append((base / MANIFEST, MANIFEST))
+        return entries
+
+
 def next_index(path: Path) -> int:
     return len(audio_files(path)) + 1
