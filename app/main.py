@@ -6,14 +6,14 @@ import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote_to_bytes, urlparse
+from urllib.parse import quote, unquote_to_bytes, urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from . import audio, config, db, ingest, jobs, library, push, tonies
+from . import archive, audio, config, db, ingest, jobs, library, push, tonies
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -394,6 +394,40 @@ def stream_track(slug: str, name: str):
     except ValueError as exc:
         raise fail(404, str(exc)) from exc
     return FileResponse(path)
+
+
+def content_disposition(filename: str) -> str:
+    """Offer a download under `filename`, encoded only when it needs it.
+
+    A collection folder dropped in by hand can be named anything printable, so
+    a quote or a non-ASCII character must not be able to break the header apart.
+    """
+    fallback = "".join(
+        character for character in filename
+        if character.isascii() and character.isprintable() and character not in '"\\'
+    )
+    header = f'attachment; filename="{fallback or "collection.zip"}"'
+    if fallback == filename:
+        return header
+    return f"{header}; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+@app.get("/api/collections/{slug}/download")
+def download_collection(slug: str):
+    """Hand one whole collection back as an ordinary zip: audio, cover, manifest.
+
+    The archive streams as it is built, so a multi-Tonie collection never has
+    to fit in memory or in the small RAM-backed scratch directory.
+    """
+    try:
+        members = library.download_entries(slug)
+    except FileNotFoundError as exc:
+        raise fail(404, str(exc)) from exc
+    return StreamingResponse(
+        archive.stream(members),
+        media_type="application/zip",
+        headers={"Content-Disposition": content_disposition(f"{slug}.zip")},
+    )
 
 
 # ---------------------------------------------------------------- 5. send
