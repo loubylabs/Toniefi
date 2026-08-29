@@ -579,7 +579,6 @@ test("a finished work cart offers one Library action, not one per story", () => 
 
     const libraryLinks = cart.host.querySelectorAll(".work-cart-library-link");
     assert.equal(libraryLinks.length, 1);
-    assert.equal(cart.host.querySelectorAll(".work-cart-review-link").length, 0);
     assert.equal(libraryLinks[0].hidden, false);
     assert.match(libraryLinks[0].textContent, /Open Library to send 2 stories/);
   } finally {

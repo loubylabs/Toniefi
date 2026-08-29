@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createRouter } from "../../app/static/router.js";
@@ -322,4 +323,60 @@ test("the collection screen renders loading synchronously and ignores hydration 
   } finally {
     globalThis.document = originalDocument;
   }
+});
+
+test("a route with no navigation entry of its own keeps its parent entry current", async () => {
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalCustomEvent = globalThis.CustomEvent;
+  const workspace = new FakeElement("main");
+  const desk = new FakeElement("a");
+  desk.dataset.route = "desk";
+  const library = new FakeElement("a");
+  library.dataset.route = "library";
+
+  globalThis.document = {
+    createElement: (tagName) => new FakeElement(tagName),
+    getElementById: () => null,
+    querySelectorAll: (selector) => selector === "[data-route]" ? [desk, library] : [],
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {},
+  };
+  globalThis.window = {
+    location: { pathname: "/collection/night-stories", search: "", origin: "http://example.test" },
+    history: { state: null, pushState() {}, replaceState() {} },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  globalThis.CustomEvent = class {
+    constructor(name, options) {
+      this.name = name;
+      this.detail = options.detail;
+    }
+  };
+
+  const router = createRouter([
+    { name: "desk", path: "/" },
+    { name: "collection", path: "/collection/:slug", navigation: "library" },
+    { name: "library", path: "/library" },
+  ], { workspace });
+  router.register("collection", () => {});
+
+  try {
+    router.start();
+    await Promise.resolve();
+    assert.equal(library.getAttribute("aria-current"), "page");
+    assert.equal(desk.getAttribute("aria-current"), null);
+  } finally {
+    router.destroy();
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+
+  // The behaviour above is only useful if the real route table asks for it, and
+  // app.js cannot be imported here because it wires itself to a live document.
+  const appSource = readFileSync(new URL("../../app/static/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /\{ name: "collection", path: "\/collection\/:slug", navigation: "library" \}/);
 });

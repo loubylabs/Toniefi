@@ -562,18 +562,9 @@ export function createCollectionScreen({
   if (!refresh) throw new Error("The collection screen requires the application refresh coordinator.");
   if (!player) throw new Error("The collection screen requires the persistent audio player.");
 
+  // `/collection/:slug` has a required parameter, so a matched route always
+  // carries a slug and this screen never has to render without one.
   return function renderCollectionRoute({ workspace, params, signal }) {
-    if (!params.slug) {
-      replace(workspace, element("section", { className: "route-pending", role: "alert" }, [
-        iconNode("alert", "route-pending-mark"),
-        element("h1", { text: "No collection was named" }),
-        element("p", { text: "Open a collection from the Library." }),
-        element("a", { className: "button button-primary", href: "/library", "data-route": "library" }, [
-          iconNode("library"), element("span", { text: "Go to Library" }),
-        ]),
-      ]));
-      return () => {};
-    }
     return createCollectionDetail({
       workspace,
       slug: params.slug,

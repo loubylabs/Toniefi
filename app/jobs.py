@@ -133,7 +133,7 @@ def enqueue_many(entries: list[tuple[str, str, dict]]) -> list[int]:
 
 
 class PushRetryConflict(RuntimeError):
-    """Confirmed sends must return to Review instead of cloning a job."""
+    """Confirmed sends must be rebuilt in the Library instead of cloning a job."""
 
 
 INVALID_FORGE_SLUG_ERROR = "This Forge job has an invalid collection slug."

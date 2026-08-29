@@ -13,7 +13,7 @@ import { createToniesScreen } from "./tonies.js";
 const routeDefinitions = [
   { name: "desk", path: "/" },
   { name: "desk", path: "/desk" },
-  { name: "collection", path: "/collection/:slug" },
+  { name: "collection", path: "/collection/:slug", navigation: "library" },
   { name: "library", path: "/library" },
   { name: "tonies", path: "/tonies" },
   { name: "activity", path: "/activity" },

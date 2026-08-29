@@ -261,7 +261,7 @@ export function createToniesScreen({ request = api } = {}) {
         detail.append(element("div", { className: "empty-state tonie-empty" }, [
           iconNode("tonie"),
           element("strong", { text: "Nothing is stored on this Tonie" }),
-          element("p", { text: "Choose this Tonie from a prepared collection in Review when you are ready to send audio." }),
+          element("p", { text: "Select stories in the Library and send them here when you are ready." }),
         ]));
         return detail;
       }
