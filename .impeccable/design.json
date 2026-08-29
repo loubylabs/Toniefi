@@ -100,7 +100,7 @@
       "kind": "chip",
       "refersTo": "status-stamp",
       "description": "Text-first phase label with semantic ink and square stamp corners.",
-      "html": "<span class=\"ds-status-stamp ds-status-ready\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m5 12 4 4L19 6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Ready to review</span>",
+      "html": "<span class=\"ds-status-stamp ds-status-ready\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m5 12 4 4L19 6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Ready to send</span>",
       "css": ".ds-status-stamp { display: inline-flex; min-height: 1.75rem; padding: 0.25rem 0.5rem; align-items: center; gap: 0.25rem; border: 1px solid currentColor; border-radius: calc(var(--radius) / 2); background: var(--paper-raised); color: var(--ink-muted); font: 800 0.75rem/1 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; text-transform: uppercase; } .ds-status-stamp svg { width: .9rem; height: .9rem; } .ds-status-ready { color: var(--success); } .ds-status-stamp:hover { background: var(--paper); } .ds-status-stamp:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; }"
     },
     {
@@ -154,7 +154,7 @@
     "dos": [
       "Do preserve the Circulation Desk split between bookcloth service chrome and cool paper work surfaces.",
       "Do use thin rules, compact labels, authored jacket fallbacks, and restrained lift to keep dense workflows scannable.",
-      "Do keep real cover jackets prominent enough to preserve collection identity across Desk, Review Shelf, Library, and focused review.",
+      "Do keep real cover jackets prominent enough to preserve collection identity across Desk, Library, and the collection page.",
       "Do pair every semantic color with visible words, an icon, a border, or an explanatory message.",
       "Do keep the 0.1875rem focus outline visible and provide 44px controls plus safe-area spacing below 759.98px.",
       "Do use the 150ms to 220ms state-transition family for ordinary feedback, the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.",

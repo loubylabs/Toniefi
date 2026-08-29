@@ -227,9 +227,9 @@ The palette pairs a dark green library binding with cool paper, near-black green
 
 The desktop application shell is a two-column grid with a 17.5rem sticky service index and a flexible workspace. The workspace uses fluid outer padding from 1.5rem to 3.5rem. Its paper ruling repeats every 3rem. Desk itself uses a 1.45fr intake column and a 0.8fr live-work column with a fluid gap from 1rem to 2.5rem. The work cart is sticky, viewport-bounded, and separated by a thin vertical rule so active work stays visible beside intake.
 
-At 1279.98px and below, focused review collapses to one main column and places its two planning panels side by side. At 1199.98px and below, the service index compacts to 14rem. At 1199px and below, Desk becomes a vertical flow, the work cart moves below intake, and its records form a two-column grid. From 760px through 1199px, navigation remains in the left service index.
+At 1279.98px and below, the collection page collapses to one main column and places its two planning panels side by side. At 1199.98px and below, the service index compacts to 14rem. At 1199px and below, Desk becomes a vertical flow, the work cart moves below intake, and its records form a two-column grid. From 760px through 1199px, navigation remains in the left service index.
 
-Below 759.98px, the service index gives way to a fixed five-slot bottom bar. Desk, Review Shelf, Library, and Creative Tonies remain first-class destinations; Activity and Settings sit in the labeled More menu. Content becomes one column, cover records retain a narrow jacket column, forms and row controls reflow, and all core controls meet a 44px minimum touch height. The workspace reserves the bottom bar plus safe-area inset. The document keeps a 20rem minimum width and prevents horizontal page scrolling.
+Below 759.98px, the service index gives way to a fixed four-slot bottom bar. Desk, Library, and Creative Tonies remain first-class destinations; Activity and Settings sit in the labeled More menu. Content becomes one column, cover records retain a narrow jacket column, forms and row controls reflow, and all core controls meet a 44px minimum touch height. The workspace reserves the bottom bar plus safe-area inset. The document keeps a 20rem minimum width and prevents horizontal page scrolling.
 
 Spacing follows the 0.25rem through 4rem scale in the frontmatter. The dominant rhythm is 0.75rem inside compact records, 1rem inside standard controls and panels, 1.5rem between related groups, 2rem around major panels, and 3rem between major workflow regions.
 
@@ -244,7 +244,7 @@ Depth is a hybrid of material layering and restrained shadow. The ruled paper fi
 ### Shadow Vocabulary
 
 - **Raised Paper** (`0 0.5rem 1.5rem rgba(11, 42, 32, 0.12), 0 0.125rem 0.4rem rgba(11, 42, 32, 0.08)`): Loading panels, focused covers, audio controls, and common raised surfaces.
-- **Quiet Record** (`0 0.35rem 0.9rem rgba(11, 42, 32, 0.08), 0 0.1rem 0.25rem rgba(11, 42, 32, 0.06)`): Shelf rows, library rows, work-cart records, Tonie rows, and settings sections.
+- **Quiet Record** (`0 0.35rem 0.9rem rgba(11, 42, 32, 0.08), 0 0.1rem 0.25rem rgba(11, 42, 32, 0.06)`): Library rows, work-cart records, Tonie rows, and settings sections.
 - **Preparation Action** (`0 0.45rem 1rem rgba(51, 79, 203, 0.2), 0 0.125rem 0.35rem rgba(51, 79, 203, 0.16)`): The count-aware Prepare action only.
 - **Overlay** (`0 1rem 3rem rgba(11, 42, 32, 0.28)`): Confirmation dialogs above a deep green translucent backdrop.
 
@@ -256,7 +256,7 @@ Depth is a hybrid of material layering and restrained shadow. The ruled paper fi
 
 The working silhouette is gently squared. Standard fields, buttons, panels, covers, dialogs, and navigation items use the 0.5rem working radius. Status stamps, inset groups, compact navigation items, and small error panels use the 0.25rem stamp radius. Count badges, progress tracks, and capacity meters use the 999px pill radius because their geometry communicates quantity rather than container identity.
 
-Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules terminate major regions such as the work-cart heading and focused-review header. Dashed borders belong to empty states. Full-color covers stay square or gently rounded and use `object-fit: cover`; authored fallbacks use bookcloth fiber and serif initials.
+Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules terminate major regions such as the work-cart heading and the collection page header. Dashed borders belong to empty states. Full-color covers stay square or gently rounded and use `object-fit: cover`; authored fallbacks use bookcloth fiber and serif initials.
 
 **The Stamp-Corner Rule.** State labels stay compact and square-cornered at 0.25rem. Do not turn them into soft filled pills.
 
@@ -278,7 +278,7 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 
 - **Style:** White paper, a 1px current-color edge, the stamp radius, uppercase 0.75rem text, and 800 weight.
 - **State:** Queued and Extracting use information ink. Forging and Warning use warning ink. Ready and Success use success ink. Failed and Failure use failure ink.
-- **Content:** The visible phase names are `Queued`, `Extracting`, `Forging`, `Ready to review`, and `Failed`.
+- **Content:** The visible phase names are `Queued`, `Extracting`, `Forging`, `Ready to send`, and `Failed`.
 
 ### Cards / Containers
 
@@ -298,20 +298,28 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 ### Navigation
 
 - **Desktop:** A sticky bookcloth service index uses a vertical list of 3.75rem rows. Inactive items use bookcloth mist. Hover adds a quiet paper wash. The current route adds a translucent chartreuse field, a faint chartreuse border, bookcloth-white text, and a chartreuse icon.
-- **Mobile:** A fixed bottom bar uses five equal slots and respects all safe-area insets. The More control opens a raised bookcloth menu for Activity and Settings.
-- **State:** Current destinations expose `aria-current="page"`. Review and Activity may add compact chartreuse count badges backed by current data.
+- **Mobile:** A fixed bottom bar uses four equal slots and respects all safe-area insets. The More control opens a raised bookcloth menu for Activity and Settings.
+- **State:** Current destinations expose `aria-current="page"`. Activity may add a compact chartreuse count badge backed by current data.
 
 ### Live Work Cart
 
-Work-cart records pair a cover jacket with a compact operational body. Each record keeps title or source, a square status stamp, progress copy, real percentage only when available, useful facts, and its next safe action. Active indeterminate work animates a periwinkle or success-colored meter. Failed work keeps the real error and Retry. Ready work links to review.
+Work-cart records pair a cover jacket with a compact operational body. Each record keeps title or source, a square status stamp, progress copy, real percentage only when available, useful facts, and its next safe action. Active indeterminate work animates a periwinkle or success-colored meter. Failed work keeps the real error and Retry. Once any work is ready, one Open Library action appears below the cart for the whole batch; it never links per row.
+
+### Library Selection Bar
+
+Ticking a finished collection's row in the Library reveals a raised paper bar beneath the list. Its heading states the count selected and the total duration, with a Refresh targets control beside it. Each capacity group is a compact record: a heading naming the group, its exact chapter membership as a ruled list, a Creative Tonie picker with no preselected option, and a two-choice effect control (**Append to the back**, the default, or **Replace everything**). Picker options carry the Tonie's name, its household, and its free space. The Send action stays disabled, and a validation line explains why, until every group names a distinct Tonie whose free space fits the group.
 
 ### Cover Jackets
 
 Use real full-color cover art when available. If no cover exists, render a bottle-green bookcloth fallback with crossing fibers and chartreuse serif initials. Never substitute invented art, counts, durations, storage values, or connection claims.
 
+### Creative Tonies Chapter Selection
+
+Each chapter row on a Tonie carries a checkbox using the standard field styling. The list heading offers Select all beside a danger button labeled Remove N selected, disabled at zero selected. Bulk removal is one whole-list save behind the standard irreversible-action dialog. Clear all chapters remains as the separate one-step wipe.
+
 ### Truthful State Surfaces
 
-`Configured` means a complete credential pair exists. `Connected` appears only after a successful connection test in the current browser session. A failed test reads `Connection failed`. Locally saved credentials are described as plain text in SQLite, and two-factor limitations remain visible. Stale remote or local data stays on screen with an explicit stale label and Retry action. `Ready to review` is reserved for forged collections. Irreversible Tonie Cloud changes name the target and state that there is no undo before confirmation.
+`Configured` means a complete credential pair exists. `Connected` appears only after a successful connection test in the current browser session. A failed test reads `Connection failed`. Locally saved credentials are described as plain text in SQLite, and two-factor limitations remain visible. Stale remote or local data stays on screen with an explicit stale label and Retry action. `Ready to send` is reserved for forged collections. Irreversible Tonie Cloud changes name the target and state that there is no undo before confirmation.
 
 **The Retained-Truth Rule.** On refresh failure, keep the last known record visible, mark it stale, show the real error where useful, and offer an explicit retry.
 
@@ -323,7 +331,7 @@ Use real full-color cover art when available. If no cover exists, render a bottl
 
 - **Do** preserve the Circulation Desk split between bookcloth service chrome and cool paper work surfaces.
 - **Do** use thin rules, compact labels, authored jacket fallbacks, and restrained lift to keep dense workflows scannable.
-- **Do** keep real cover jackets prominent enough to preserve collection identity across Desk, Review Shelf, Library, and focused review.
+- **Do** keep real cover jackets prominent enough to preserve collection identity across Desk, Library, and the collection page.
 - **Do** pair every semantic color with visible words, an icon, a border, or an explanatory message.
 - **Do** keep the 0.1875rem focus outline visible and provide 44px controls plus safe-area spacing below 759.98px.
 - **Do** use the 150ms to 220ms state-transition family for ordinary feedback, the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.

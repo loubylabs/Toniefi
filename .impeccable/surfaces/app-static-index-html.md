@@ -25,11 +25,11 @@ A single-household user prepares several audiobook sources, monitors independent
 
 ## Chosen direction
 
-Circulation Desk. A contemporary library workroom translated into a digital operations surface. Saturated bookcloth fields, cool utility paper, stamped status ink, full-color cover jackets, a compact service index, batch intake tray, live work cart, review shelf, and explicit account connection state form one system.
+Circulation Desk. A contemporary library workroom translated into a digital operations surface. Saturated bookcloth fields, cool utility paper, stamped status ink, full-color cover jackets, a compact service index, batch intake tray, live work cart, library selection bar, and explicit account connection state form one system.
 
 ## Memorable moment
 
-When a batch is submitted, individual source slips lift from the intake tray into the live work cart. Each collection retains identity and visibly advances until it reaches the review shelf.
+When a batch is submitted, individual source slips lift from the intake tray into the live work cart. Each collection retains identity and visibly advances until it reaches the Library, ready to send.
 
 ## Constraints
 
