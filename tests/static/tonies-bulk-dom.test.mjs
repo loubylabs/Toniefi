@@ -148,12 +148,9 @@ test("ticking two chapters then Select all removes every chapter in one confirme
 
     // Nothing is left, so the empty state renders and there is no bulk
     // control left to carry the remembered focus key. It falls back to the
-    // one focusable, visible landmark: Refresh Tonies. Compared by focus key,
-    // not by node identity: an assert.equal that ever has to fail on two
-    // richly cross-linked DOM-like objects (mini-dom's ownerDocument/
-    // parentNode back-references) makes node:assert's diff builder explode
-    // combinatorially rather than fail cleanly. See the note at the bottom
-    // of this file.
+    // one focusable, visible landmark: Refresh Tonies. Compared by focus
+    // key, not by node identity: the key names the control, where a mini-dom
+    // node reference would not.
     assert.equal(screen.node(".tonie-remove-selected"), null);
     assert.equal(screen.focusKey(), "tonie-refresh");
     assert.match(screen.node(".tonie-empty").textContent, /Select stories in the Library and send them here when you are ready\./);
@@ -284,8 +281,8 @@ test("focus never lands on a disabled control; it falls back instead", async () 
     // ticked on the new list) at the same focus key the click handler had
     // just focused. restoreFocus must not call .focus() on it; it must fall
     // back to Refresh Tonies instead. Asserted by focus key, not node
-    // identity: see the note at the bottom of this file for why a failing
-    // assert.equal on two mini-dom nodes must be avoided, not just tolerated.
+    // identity: the key names the control, where a mini-dom node reference
+    // would not.
     const survivor = screen.node(".tonie-remove-selected");
     assert.equal(survivor.disabled, true);
     assert.notEqual(screen.focusKey(), "tonie-t1-remove-selected");
@@ -339,11 +336,8 @@ test("a stray click on the Remove button with nothing ticked opens no dialog and
 });
 
 test("mini-dom's focus() will not move activeElement onto a disabled element", async () => {
-  // Asserted against null, never against the button itself: a failing
-  // assert.equal/.notEqual on two mini-dom element objects makes
-  // node:assert's diff builder walk their circular ownerDocument /
-  // parentNode graph and never return, hanging the run instead of failing
-  // it. See the note at the bottom of this file.
+  // Asserted against null, never against the button itself: null names the
+  // outcome, where a mini-dom node reference would not.
   const dom = installDom();
   const button = dom.document.createElement("button");
   button.disabled = true;
@@ -352,22 +346,3 @@ test("mini-dom's focus() will not move activeElement onto a disabled element", a
   assert.equal(dom.document.activeElement, null);
   dom.restore();
 });
-
-// A note on the assertion style above and in "focus never lands on a
-// disabled control...": node:assert's failure-message builder inspects
-// `actual` and `expected` in full before it can report a mismatch. A
-// mini-dom MiniElement carries an `ownerDocument` back-reference, and
-// `ownerDocument.body` reaches back into every element in the tree, so two
-// elements that are NOT the same node still share a large, densely
-// interconnected DAG. util.inspect's cycle guard only catches an object
-// appearing as its own ancestor; it does not memoize a shared node reached
-// by more than one path, so a failing comparison here can make the
-// diff builder revisit the same subtrees many times over and never finish,
-// turning a real regression into a hang instead of a failing test. Verified
-// with a standalone script outside node:test: an assert.equal(activeElement,
-// wrongNode) that is actually false hangs at multiple minutes and 100%+ CPU
-// with no output, while the same comparison written as
-// assert.equal(focusKey-or-other-primitive, ...) fails in under a
-// millisecond. Compare focus by data-focus-key (a string) or by a boolean
-// (assert.ok(a === b)), never by asserting equality of two element
-// references that might not be equal.
