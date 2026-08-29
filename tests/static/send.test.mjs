@@ -10,7 +10,6 @@ import {
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
-  targetLabel,
   tonieCapacity,
 } from "../../app/static/send.js";
 
@@ -106,12 +105,6 @@ test("tonieCapacity subtracts what is present for an append and ignores it for a
   assert.equal(tonieCapacity(tonie, 900, false, 5400).fits, true);
   assert.equal(tonieCapacity(tonie, 2000, false, 5400).fits, false);
   assert.equal(tonieCapacity(tonie, 2000, true, 5400).fits, true);
-});
-
-test("targetLabel names the household, because Tonie names repeat across them", () => {
-  assert.equal(targetLabel({ name: "Bedtime", householdName: "Emily" }), "Bedtime · Emily");
-  assert.equal(targetLabel({ name: "Bedtime" }), "Bedtime");
-  assert.equal(targetLabel({}), "Creative Tonie");
 });
 
 test("sendCapacityLimit reads the usable limit from status", () => {

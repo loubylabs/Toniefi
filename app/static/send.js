@@ -1,9 +1,11 @@
-// Every calculation a confirmed send needs, and no DOM.
+// Every calculation a confirmed send needs, and no DOM of its own.
 //
 // packSelection mirrors app/audio.py `pack` exactly: sequential first fit,
 // order preserved, a group closed only when the NEXT track would overflow it.
 // The server plans the same way and refuses a batch whose group boundaries
 // disagree, so a drift here is a 409 the operator cannot clear.
+
+import { tonieLabel } from "./shared.js";
 
 export function packSelection(collections, limitSeconds) {
   const limit = Number(limitSeconds) || 0;
@@ -58,13 +60,6 @@ export function tonieCapacity(tonie, groupSeconds, replaceExisting, limitSeconds
   };
 }
 
-export function targetLabel(tonie) {
-  // A Tonie name is unique inside a household and nowhere else, so a picker
-  // without the household can offer two identical options for two boxes.
-  const household = tonie?.householdName ? ` · ${tonie.householdName}` : "";
-  return `${tonie?.name || "Creative Tonie"}${household}`;
-}
-
 export function sendCapacityLimit(status = {}) {
   return Number(status.usable_limit_seconds || 0);
 }
@@ -90,12 +85,12 @@ export function selectionProblems(groups, selections, limitSeconds, picked = [])
     }
     const key = `${selection.tonie.householdId}/${selection.tonie.id}`;
     if (chosen.includes(key)) {
-      problems.push(`${targetLabel(selection.tonie)} is chosen for more than one group.`);
+      problems.push(`${tonieLabel(selection.tonie)} is chosen for more than one group.`);
     }
     chosen.push(key);
     const capacity = tonieCapacity(selection.tonie, group.seconds, selection.replaceExisting, limitSeconds);
     if (!capacity.fits) {
-      problems.push(`Group ${group.index} does not fit ${targetLabel(selection.tonie)}. Choose Replace everything, or another Tonie.`);
+      problems.push(`Group ${group.index} does not fit ${tonieLabel(selection.tonie)}. Choose Replace everything, or another Tonie.`);
     }
   });
   return problems;

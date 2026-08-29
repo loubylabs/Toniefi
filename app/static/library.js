@@ -9,7 +9,6 @@ import {
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
-  targetLabel,
   tonieCapacity,
 } from "./send.js";
 import {
@@ -24,6 +23,7 @@ import {
   setBusy,
   showConfirmDialog,
   snapshotRefreshOutcome,
+  tonieLabel,
 } from "./shared.js";
 
 export function filterCollectionsByTitle(collections, query) {
@@ -471,7 +471,7 @@ export function createLibraryScreen({
             // The number printed here is the one the fit check ran against, so
             // an option can never read "1h 30m free · does not fit". The API's
             // time_free counts the raw Tonie limit, not the usable one.
-            text: `${targetLabel(tonie)} · ${humanDuration(capacity.availableSeconds)} free${capacity.fits ? "" : " · does not fit"}`,
+            text: `${tonieLabel(tonie)} · ${humanDuration(capacity.availableSeconds)} free${capacity.fits ? "" : " · does not fit"}`,
             selected: chosen.tonie ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === `${tonie.householdId}/${tonie.id}` : false,
           }));
         }
@@ -562,7 +562,7 @@ export function createLibraryScreen({
         setPending: (pending) => { sending = pending; render({ focusKey: "library-send-submit" }); },
         confirm: () => showConfirmDialog({
           title: "Replace chapters on a Creative Tonie?",
-          message: `${replacing.map((choice) => targetLabel(choice.tonie)).join(", ")} will lose every chapter currently stored, and this cannot be undone. Your local library is not touched.`,
+          message: `${replacing.map((choice) => tonieLabel(choice.tonie)).join(", ")} will lose every chapter currently stored, and this cannot be undone. Your local library is not touched.`,
           confirmLabel: "Replace and send",
           destructive: true,
         }),

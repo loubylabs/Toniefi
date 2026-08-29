@@ -10,6 +10,7 @@ import {
   moveItem,
   restoreFocus,
   snapshotRefreshOutcome,
+  tonieLabel,
 } from "../../app/static/shared.js";
 import { rescanCollections } from "../../app/static/library.js";
 
@@ -133,6 +134,12 @@ test("humanDuration matches the server and drops seconds at the hour scale", () 
   assert.equal(humanDuration(5370), "1h 29m");
   assert.equal(humanDuration(1500), "25m 00s");
   assert.equal(humanDuration(30), "0m 30s");
+});
+
+test("tonieLabel names the household, because Tonie names repeat across them", () => {
+  assert.equal(tonieLabel({ name: "Bedtime", householdName: "Emily" }), "Bedtime · Emily");
+  assert.equal(tonieLabel({ name: "Bedtime" }), "Bedtime");
+  assert.equal(tonieLabel({}), "Creative Tonie");
 });
 
 test("exactDuration keeps every unit so a config readout subtracts", () => {

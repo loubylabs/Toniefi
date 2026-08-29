@@ -10,6 +10,7 @@ import {
   restoreFocus,
   setBusy,
   showConfirmDialog,
+  tonieLabel,
 } from "./shared.js";
 
 
@@ -288,8 +289,8 @@ export function createToniesScreen({ request = api } = {}) {
       }, [iconNode("trash"), element("span", { text: "Clear all chapters" })]);
       clearButton.addEventListener("click", async () => {
         const confirmed = await showConfirmDialog({
-          title: `Clear ${tonie.name || "this Tonie"}?`,
-          message: `Clear all ${tonie.chapters.length} chapters from "${tonie.name || "this Tonie"}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          title: `Clear ${tonieLabel(tonie)}?`,
+          message: `Clear all ${tonie.chapters.length} chapters from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
           confirmLabel: "Clear every chapter",
           destructive: true,
         });
@@ -338,7 +339,7 @@ export function createToniesScreen({ request = api } = {}) {
         if (removing.size === 0) return;
         const confirmed = await showConfirmDialog({
           title: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"}?`,
-          message: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"} from "${tonie.name || "this Tonie"}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          message: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"} from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
           confirmLabel: removing.size === 1 ? "Remove chapter" : `Remove ${removing.size} chapters`,
           destructive: true,
         });

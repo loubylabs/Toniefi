@@ -20,18 +20,26 @@ function blueTonie(chapters) {
   };
 }
 
-function mountTonies(chapters) {
+// `extra` mounts further Creative Tonies beside the Blue one, so a test can put
+// the same Tonie name in two households.
+function mountTonies(chapters, extra = []) {
   const dom = installDom();
   const controller = new AbortController();
   const puts = [];
-  let current = [blueTonie(chapters)];
+  let current = [blueTonie(chapters), ...extra];
   const request = async (url, options = {}) => {
     if (url === "/api/tonies") return current;
-    if (url === "/api/tonies/h1/t1/chapters" && options.method === "PUT") {
+    const target = /^\/api\/tonies\/([^/]+)\/([^/]+)\/chapters$/.exec(url);
+    if (target && options.method === "PUT") {
+      const [, householdId, tonieId] = target;
       const body = JSON.parse(options.body);
       puts.push(body);
-      current = [{ ...current[0], chapters: body.chapters, chapter_count: body.chapters.length }];
-      return current[0];
+      current = current.map((tonie) => (
+        tonie.householdId === householdId && tonie.id === tonieId
+          ? { ...tonie, chapters: body.chapters, chapter_count: body.chapters.length }
+          : tonie
+      ));
+      return current.find((tonie) => tonie.householdId === householdId && tonie.id === tonieId);
     }
     throw new Error(`Unexpected request ${url} ${options.method || "GET"}`);
   };
@@ -43,8 +51,10 @@ function mountTonies(chapters) {
     nodes: (selector) => dom.workspace.querySelectorAll(selector),
     byFocusKey: (key) => dom.workspace.querySelectorAll("[data-focus-key]").find((item) => item.getAttribute("data-focus-key") === key),
     focusKey: () => dom.document.activeElement?.getAttribute("data-focus-key") || "",
-    async openDetail() {
-      await buttonWithText(dom.workspace, "Blue Tonie").click();
+    async openDetail(focusKey = "tonie-h1:t1-summary") {
+      await dom.workspace.querySelectorAll("[data-focus-key]")
+        .find((item) => item.getAttribute("data-focus-key") === focusKey)
+        .click();
       await flush();
     },
     async tick(selector) {
@@ -345,4 +355,52 @@ test("mini-dom's focus() will not move activeElement onto a disabled element", a
   button.focus();
   assert.equal(dom.document.activeElement, null);
   dom.restore();
+});
+
+const bedtimeTonie = (householdId, householdName, chapters) => ({
+  id: `t-${householdId}`,
+  householdId,
+  householdName,
+  name: "Bedtime",
+  chapter_count: chapters.length,
+  time_free: "10m 00s",
+  chapters,
+});
+
+test("both destructive dialogs name the household, not just the Tonie", async () => {
+  // Two households, one Tonie name. Without the household the dialog asks a
+  // question the operator cannot answer, and the write it confirms is a write
+  // to a physical Tonie with no undo.
+  const screen = mountTonies(
+    [chapter("c1", "One")],
+    [
+      bedtimeTonie("h-emily", "Emily", [chapter("e1", "Emily one"), chapter("e2", "Emily two")]),
+      bedtimeTonie("h-sam", "Sam", [chapter("s1", "Sam one")]),
+    ],
+  );
+  try {
+    await flush();
+    await screen.openDetail("tonie-h-emily:t-h-emily-summary");
+
+    const ticks = screen.nodes(".tonie-chapter-select");
+    await screen.tick(`#${ticks[0].id}`);
+    screen.node(".tonie-remove-selected").click();
+    await flush();
+    const removeDialog = screen.dom.document.getElementById("dialogHost").querySelector(".confirmation-dialog");
+    assert.match(removeDialog.textContent, /Remove 1 chapter from "Bedtime · Emily"\?/);
+    await buttonWithText(removeDialog, "Cancel").click();
+    await flush();
+
+    screen.node(".tonie-clear").click();
+    await flush();
+    const clearDialog = screen.dom.document.getElementById("dialogHost").querySelector(".confirmation-dialog");
+    assert.match(clearDialog.textContent, /Clear Bedtime · Emily\?/);
+    assert.match(clearDialog.textContent, /Clear all 2 chapters from "Bedtime · Emily"\?/);
+    await buttonWithText(clearDialog, "Cancel").click();
+    await flush();
+
+    assert.deepEqual(screen.puts, []);
+  } finally {
+    screen.stop();
+  }
 });

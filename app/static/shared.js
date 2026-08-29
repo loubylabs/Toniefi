@@ -69,6 +69,15 @@ export function exactDuration(seconds) {
 }
 
 
+export function tonieLabel(tonie) {
+  // A Tonie name is unique inside a household and nowhere else, so a name on
+  // its own can describe two different boxes. Every screen that names a Tonie
+  // in a picker or a destructive dialog uses this, because "Remove 6 chapters
+  // from Bedtime" is not a question anyone with two households can answer.
+  const household = tonie?.householdName ? ` · ${tonie.householdName}` : "";
+  return `${tonie?.name || "Creative Tonie"}${household}`;
+}
+
 export function replace(host, ...children) {
   host.replaceChildren(...children.flat().filter((child) => child != null));
   return host;
