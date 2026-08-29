@@ -322,6 +322,83 @@ def test_init_migrates_all_legacy_forge_jobs_once_for_claim_and_retry(isolated):
     ).fetchone()[0] == 1
 
 
+def test_init_migrates_a_queued_push_job_into_the_multi_collection_shape(isolated):
+    """A send queued before the upgrade must survive it, not kill the worker."""
+    slug = make_collection(stage="forged")
+    fingerprint = library.manifest_fingerprint(library.get(slug))
+    legacy = {
+        "household_id": "h1",
+        "tonie_id": "t1",
+        "replace": False,
+        "remote_chapters": [{"id": "c1", "title": "Old chapter"}],
+        "slug": slug,
+        "manifest_fingerprint": fingerprint,
+        "files": ["one.mp3", "two.mp3"],
+        "operation_key": "legacy-key",
+        "operation_digest": "legacy-digest",
+        "batch_position": 1,
+        "batch_size": 1,
+    }
+    conn = db.connect()
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE name=?",
+        (db.PUSH_BATCH_SOURCES_MIGRATION,),
+    )
+    cursor = conn.execute(
+        "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+        "VALUES('push','queued',?,?,?,?)",
+        (f"Send {slug} to a Tonie", json.dumps(legacy), 1.0, 1.0),
+    )
+    conn.commit()
+    job_id = int(cursor.lastrowid)
+
+    db.init()
+    db.init()
+    claimed = db.claim_job()
+    payload = claimed["payload"]
+
+    assert claimed["id"] == job_id
+    assert payload["sources"] == [{
+        "slug": slug,
+        "manifest_fingerprint": fingerprint,
+        "files": ["one.mp3", "two.mp3"],
+    }]
+    assert not {"slug", "manifest_fingerprint", "files"} & set(payload)
+    assert {key: payload[key] for key in legacy if key not in
+            {"slug", "manifest_fingerprint", "files"}} == {
+        key: value for key, value in legacy.items()
+        if key not in {"slug", "manifest_fingerprint", "files"}
+    }
+    # The worker path that raised KeyError('sources') before the migration.
+    assert [track["name"] for _, track in push.confirmed_tracks(payload)] == [
+        "one.mp3", "two.mp3",
+    ]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schema_migrations WHERE name=?",
+        (db.PUSH_BATCH_SOURCES_MIGRATION,),
+    ).fetchone()[0] == 1
+
+
+def test_init_leaves_an_unrecognisable_legacy_push_payload_alone(isolated):
+    """A payload with nothing to carry across keeps its own error, not one the
+    migration invented by guessing at a shape it never wrote."""
+    conn = db.connect()
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE name=?",
+        (db.PUSH_BATCH_SOURCES_MIGRATION,),
+    )
+    cursor = conn.execute(
+        "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+        "VALUES('push','failed',?,?,?,?)",
+        ("Malformed send", json.dumps({"household_id": "h1"}), 1.0, 1.0),
+    )
+    conn.commit()
+
+    db.init()
+
+    assert db.get_job(int(cursor.lastrowid))["payload"] == {"household_id": "h1"}
+
+
 def test_generic_job_creation_cannot_bypass_canonical_forge_payloads(isolated):
     with pytest.raises(ValueError, match="create_forge_job_once"):
         db.create_job("forge", "Legacy bypass", {"slug": "legacy-bypass"})
