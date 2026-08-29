@@ -16,16 +16,42 @@ naming what a refusal message must not say); those are pinned as exact-text
 exemptions the same way the application scan already pins its one legitimate
 use, rather than reworded, because the assertion itself is the point.
 
-A tracked spec may say "review", because a spec legitimately records the
-design review that produced it, so specs get the narrower list of phrases that
-only ever described the deleted screen.
+A tracked document under docs/ may say "review", because a spec legitimately
+records the design review that produced it, so docs/ gets the narrower list of
+phrases that only ever described the deleted screen.
 """
 from __future__ import annotations
 
 import re
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@lru_cache(maxsize=1)
+def _gitignored() -> frozenset[Path]:
+    """Every path under ROOT that git is told to ignore.
+
+    A scan root is a directory, and two of them also hold gitignored local
+    scratch: `.impeccable` caches per-file state keyed by absolute path, and
+    `docs/` carries working notes the repository never tracks. One stale cache
+    entry naming a module deleted months ago used to fail this guard on a
+    working copy while a clean clone passed it, which is the worst failure a
+    gate can have: it reports on files the repository does not carry, and the
+    obvious way to quiet it is to prune the scan.
+
+    Ignored files are excluded rather than untracked ones, so a document
+    written but not yet staged is still scanned. That is exactly when the
+    retired phrasing comes back.
+    """
+    listing = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z",
+         "--others", "--ignored", "--exclude-standard"],
+        capture_output=True, check=True, text=True,
+    ).stdout
+    return frozenset(ROOT / name for name in listing.split("\0") if name)
 
 PRODUCT_SOURCES = ("README.md", "PRODUCT.md", "DESIGN.md", ".impeccable")
 APP_SOURCES = ("app",)
@@ -99,7 +125,7 @@ TEST_EXEMPTIONS = (
     ),
 )
 
-SPEC_SOURCES = ("docs/specs",)
+DOC_SOURCES = ("docs",)
 RETIRED_PHRASES = re.compile("|".join((
     r"review shelf",
     r"review assignment",
@@ -137,8 +163,11 @@ def _scanned_files(name: str) -> list[tuple[Path, str]]:
     files = []
     for path in paths:
         # A stale .pyc still holds the string its source has since dropped, so
-        # compiled output is not evidence about the source either way.
+        # compiled output is not evidence about the source either way, and a
+        # gitignored file is not part of the repository at all.
         if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        if path in _gitignored():
             continue
         try:
             files.append((path, path.read_text(encoding="utf-8")))
@@ -220,5 +249,11 @@ def test_no_test_names_or_describes_the_retired_review_step():
     assert hits == []
 
 
-def test_no_tracked_spec_names_the_deleted_review_screen():
-    assert _hits(SPEC_SOURCES, RETIRED_PHRASES) == []
+def test_no_tracked_document_names_the_deleted_review_screen():
+    """Every tracked file under docs/, not just the specs.
+
+    The reference documentation the README links to lives here too, and it
+    carries the same workflow prose the product sources do. A root scoped to
+    docs/specs would have let the deleted screen back in one directory over.
+    """
+    assert _hits(DOC_SOURCES, RETIRED_PHRASES) == []
