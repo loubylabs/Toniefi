@@ -32,7 +32,7 @@ Each successful preparation appears in the Library. TonieFi never assigns a Crea
 
 ### Playlists
 
-A source link that carries a `list=` parameter offers a **Pick videos** control on its tray row. It lists the playlist without downloading any audio, ticks every playable entry, and lets you untick the ones you do not want. Only the ticked entries are downloaded, so removing a video costs nothing.
+A source link that carries a `list=` parameter offers a **Pick videos** control on its tray row. It lists the playlist without downloading any audio, ticks every playable entry, and lets you untick the ones you do not want. Only the ticked entries are downloaded, so removing a video costs nothing. Untick every entry and the row is held back with **Pick at least one video from this playlist, or remove the row**, because none of them is not all of them.
 
 Leave the control alone and the link speaks for itself. A `playlist?list=...` link brings every entry; a `watch?v=...&list=...` link brings that one video, not the playlist standing behind it.
 
@@ -150,7 +150,7 @@ The response has this shape:
 }
 ```
 
-`playlist_items` is optional. It names the playlist entries to download, numbered from 1 in playlist order, and an empty list lets the link decide. `POST /api/playlist/preview` with `{"url": "..."}` returns those numbers alongside each entry title, without downloading audio.
+`playlist_items` is optional. It names the playlist entries to download, numbered from 1 in playlist order. Omit it, or send `null`, to let the link decide. A list is a pick: it is rejected when it is empty, and when any number in it is below 1. `POST /api/playlist/preview` with `{"url": "..."}` returns those numbers alongside each entry title, without downloading audio.
 
 Read current and historical work with `GET /api/jobs`. Retry one eligible failed job with `POST /api/jobs/{job_id}/retry`.
 
@@ -205,7 +205,7 @@ Download on any Library row returns that collection as one zip of audio, cover a
 
 The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed. One file is open at a time, so a collection at the 500-file intake limit cannot exhaust the process descriptor budget and an abandoned download strands nothing.
 
-Because files are opened as they are reached, a download never receives an archive that mixes two versions of a collection. Each file is fingerprinted when the download is planned and checked when it is opened, so a delete or a Forge replacement landing mid-download ends the stream at the next file. The response is chunked, so an ended stream never sends its terminating chunk and the browser reports an interrupted download instead of saving a plausible-looking archive. A download whose files have all been read is already past that point and completes normally, carrying the version it read.
+Because files are opened as they are reached, a download never receives an archive that mixes two versions of a collection. Each file is fingerprinted when the download is planned and checked twice against its open descriptor, once before its first block and once after its last, so a delete or a Forge replacement landing mid-download ends the stream at the next file, and a file rewritten in place while it is being read ends the stream on that file. The response is chunked, so an ended stream never sends its terminating chunk and the browser reports an interrupted download instead of saving a plausible-looking archive. A download whose files have all been read is already past that point and completes normally, carrying the version it read.
 
 Library deletion is intentionally destructive. Its confirmation names the local collection folder and audio files that will be removed.
 

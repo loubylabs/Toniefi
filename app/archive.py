@@ -20,14 +20,16 @@ the process descriptor limit, and a client that disconnects before the first
 chunk would strand every one of those handles. Opening inside the loop bounds
 both at a single descriptor.
 
-Every file is identified before it is read. Opening late means Forge can
-replace a collection, or a delete can remove it, between one member and the
-next. Without a check the archive would still finish, and the result would be a
-valid zip mixing two versions of a story behind an index describing neither.
-Each member therefore carries the identity its source had when the download was
-planned, and a mismatch ends the stream. Because the response is chunked, an
-ended stream never sends its terminating chunk, so the browser reports an
-interrupted download instead of saving a plausible-looking archive.
+Every file is identified before and after it is read. Opening late means Forge
+can replace a collection, or a delete can remove it, between one member and the
+next, and holding a descriptor open does not stop a writer rewriting that same
+file in place while its blocks are still being read. Without both checks the
+archive would still finish, and the result would be a valid zip mixing two
+versions of a story behind an index describing neither. Each member therefore
+carries the identity its source had when the download was planned, and a
+mismatch at either end of the read ends the stream. Because the response is
+chunked, an ended stream never sends its terminating chunk, so the browser
+reports an interrupted download instead of saving a plausible-looking archive.
 
 Streaming also means the total size is unknown when the response starts, so the
 reply carries no Content-Length and the browser shows an unknown-size download.
@@ -41,6 +43,7 @@ import zipfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 # Read size for source files, and therefore the rough size of a yielded chunk.
 CHUNK_BYTES = 512 * 1024
@@ -72,6 +75,22 @@ def identify(path: Path) -> tuple[int, int, int]:
     """Fingerprint one file well enough to notice it being replaced."""
     stat = path.stat()
     return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def _confirm(handle: BinaryIO, member: Member) -> None:
+    """Fail the stream unless the open descriptor still holds the planned file.
+
+    Taken from the descriptor rather than the path, so it answers "is what I
+    am reading still the file I planned to read", which is the question a
+    rewrite in place turns into a different answer halfway through.
+    """
+    if member.identity is None:
+        return
+    stat = os.fstat(handle.fileno())
+    if (stat.st_ino, stat.st_size, stat.st_mtime_ns) != member.identity:
+        raise SourceChanged(
+            f"{Path(handle.name).name} changed while the download was running."
+        )
 
 
 class _Sink:
@@ -123,18 +142,14 @@ def stream(members: Iterable[Member]) -> Iterator[bytes]:
                     entry.write(member.source)
             else:
                 with member.source.open("rb") as handle:
-                    stat = os.fstat(handle.fileno())
-                    if member.identity is not None:
-                        if (stat.st_ino, stat.st_size, stat.st_mtime_ns) != member.identity:
-                            raise SourceChanged(
-                                f"{member.source.name} changed while the download was running."
-                            )
-                    info = _member_info(member.name, stat.st_mtime)
+                    _confirm(handle, member)
+                    info = _member_info(member.name, os.fstat(handle.fileno()).st_mtime)
                     with bundle.open(info, mode="w") as entry:
                         while block := handle.read(CHUNK_BYTES):
                             entry.write(block)
                             if payload := sink.drain():
                                 yield payload
+                    _confirm(handle, member)
             if payload := sink.drain():
                 yield payload
     if payload := sink.drain():

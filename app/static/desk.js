@@ -23,12 +23,15 @@ export const DEFAULT_FORGE_OPTIONS = Object.freeze({
   split_oversized: true,
 });
 
+// `picked` is null until the playlist behind a row has actually been read.
+// No pick and a pick of nothing are different answers: the first leaves the
+// link to speak for itself, the second is a contradiction the intake refuses.
 function sourceRecords(lines) {
   const items = Array.isArray(lines) ? lines : String(lines ?? "").split(/\r?\n/);
   return items
     .map((item) => (item && typeof item === "object")
-      ? { value: String(item.value ?? "").trim(), picked: Array.isArray(item.picked) ? item.picked : [] }
-      : { value: String(item ?? "").trim(), picked: [] })
+      ? { value: String(item.value ?? "").trim(), picked: Array.isArray(item.picked) ? item.picked : null }
+      : { value: String(item ?? "").trim(), picked: null })
     .filter((record) => record.value);
 }
 
@@ -46,8 +49,9 @@ export function looksLikePlaylist(value) {
   }
 }
 
-export function playlistPickLabel({ total = 0, picked = [] } = {}) {
-  if (!total || !picked.length) return "Pick videos";
+export function playlistPickLabel({ total = 0, picked = null } = {}) {
+  if (!total || !picked) return "Pick videos";
+  if (!picked.length) return "No videos picked";
   if (picked.length >= total) return `All ${total} videos`;
   return `${picked.length} of ${total} videos`;
 }
@@ -62,10 +66,10 @@ function hasSupportedScheme(value) {
 }
 
 export function parseSourceLines(lines) {
-  const values = sourceValues(lines);
+  const records = sourceRecords(lines);
   const seen = new Map();
   let uniqueCount = 0;
-  const rows = values.map((value, index) => {
+  const rows = records.map(({ value, picked }, index) => {
     if (seen.has(value)) {
       return { value, error: `This source duplicates row ${seen.get(value) + 1}.` };
     }
@@ -76,6 +80,9 @@ export function parseSourceLines(lines) {
     }
     if (uniqueCount > MAX_SOURCES) {
       return { value, error: "Only 50 unique source URLs can be prepared at once." };
+    }
+    if (picked && !picked.length) {
+      return { value, error: "Pick at least one video from this playlist, or remove the row." };
     }
     return { value, error: "" };
   });
@@ -105,7 +112,9 @@ export function buildPreparePayload(lines, options = {}) {
   return {
     sources: parsed.rows.map((row, index) => ({
       url: row.value,
-      playlist_items: [...records[index].picked].sort((first, second) => first - second),
+      playlist_items: records[index].picked
+        ? [...records[index].picked].sort((first, second) => first - second)
+        : null,
     })),
     options: normalizedOptions(options),
   };
@@ -798,7 +807,7 @@ export function createDeskScreen({
 
     function newSourceEntry(value) {
       sourceId += 1;
-      return { id: `source-${sourceId}`, value, playlist: null, picked: [], open: false };
+      return { id: `source-${sourceId}`, value, playlist: null, picked: null, open: false };
     }
 
     function liveEntry(id) {
@@ -842,11 +851,11 @@ export function createDeskScreen({
           "data-focus-key": `${row.id}-pick-${item.index}`,
           disabled: !item.available,
         });
-        box.checked = row.picked.includes(item.index);
+        box.checked = (row.picked || []).includes(item.index);
         box.addEventListener("change", () => {
           const live = liveEntry(row.id);
           if (!live) return;
-          const picked = new Set(live.picked);
+          const picked = new Set(live.picked || []);
           if (box.checked) picked.add(item.index);
           else picked.delete(item.index);
           live.picked = [...picked].sort((first, second) => first - second);
@@ -861,7 +870,8 @@ export function createDeskScreen({
           item.available ? null : element("span", { className: "playlist-picker-note", text: "Unavailable" }),
         ]));
       }
-      const everything = row.picked.length >= row.playlist.entries.filter((item) => item.available).length;
+      const chosen = row.picked || [];
+      const everything = chosen.length >= row.playlist.entries.filter((item) => item.available).length;
       const toggleAll = element("button", {
         type: "button",
         className: "desk-clear-button",
@@ -905,7 +915,7 @@ export function createDeskScreen({
         const live = liveEntry(row.id);
         if (live && live.value !== input.value) {
           // A different link is a different playlist, so nothing picked survives.
-          Object.assign(live, { playlist: null, picked: [], open: false });
+          Object.assign(live, { playlist: null, picked: null, open: false });
         }
         entries[index].value = input.value;
         renderSources({ focusKey: `${row.id}-input` });
@@ -988,7 +998,7 @@ export function createDeskScreen({
           if (signal.aborted) return;
           notify(error.message, { kind: "failure", timeout: 0 });
           button.disabled = false;
-          label.textContent = playlistPickLabel({ total: 0, picked: [] });
+          label.textContent = playlistPickLabel({ total: 0, picked: null });
         }
       });
       return button;

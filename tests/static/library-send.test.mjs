@@ -1,10 +1,41 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { ApiError } from "../../app/static/api.js";
 import { createLibraryScreen, createSelectionState, selectableCollections } from "../../app/static/library.js";
 
 import { buttonWithText, flush, installDom } from "./mini-dom.mjs";
+
+// The phone breakpoint appears more than once in the stylesheet, and every
+// rule in it also exists at desktop width, so a rule is read out of the block
+// that holds it rather than out of the file.
+function phoneDeclarations(selector) {
+  const styles = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const query = "@media (max-width: 759.98px)";
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (let at = styles.indexOf(query); at >= 0; at = styles.indexOf(query, at + 1)) {
+    const open = styles.indexOf("{", at);
+    let depth = 0;
+    for (let index = open; index < styles.length; index += 1) {
+      if (styles[index] === "{") depth += 1;
+      else if (styles[index] === "}" && (depth -= 1) === 0) {
+        const block = styles.slice(open + 1, index);
+        const body = block.match(new RegExp(`${escaped}\\s*\\{([^{}]*)\\}`))?.[1];
+        if (body) {
+          return Object.fromEntries(body.split(";").flatMap((declaration) => {
+            const separator = declaration.indexOf(":");
+            if (separator < 0) return [];
+            return [[declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim()]];
+          }));
+        }
+        break;
+      }
+    }
+  }
+  return {};
+}
 
 const forged = (slug) => ({
   slug,
@@ -1108,4 +1139,29 @@ test("a replace of a group larger than the free figure still sends", async () =>
   } finally {
     screen.stop();
   }
+});
+
+
+test("the phone send bar leaves the collections behind it on screen", () => {
+  // Measured at 390x844 before this cap: the bar stood 756px tall, hid every
+  // row it was sending, and ended 32px below the top of the fixed navigation,
+  // so the last of Send sat behind it. A bar that tall is also pinned against
+  // the top of its containing block, where the sticky bottom offset has no
+  // room left to lift it clear.
+  const bar = phoneDeclarations(".library-send-bar");
+
+  assert.equal(bar["max-height"], "55svh");
+  assert.equal(bar.bottom, "calc(4.5rem + env(safe-area-inset-bottom))");
+});
+
+test("only the chapter list gives way when the phone send bar runs out of room", () => {
+  // The target field and the send buttons are the point of the bar, so the
+  // list of what is being sent is the one part allowed to shrink and scroll.
+  assert.equal(phoneDeclarations(".library-send-bar > *").flex, "0 0 auto");
+
+  const groups = phoneDeclarations(".library-send-groups");
+
+  assert.equal(groups.flex, "1 1 auto");
+  assert.equal(groups["min-height"], "0");
+  assert.equal(groups["overflow-y"], "auto");
 });

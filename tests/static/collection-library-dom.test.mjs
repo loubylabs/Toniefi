@@ -448,3 +448,58 @@ test("Desk sends only the playlist videos left ticked", async () => {
     dom.restore();
   }
 });
+
+test("Desk holds back a playlist row with nothing ticked instead of sending it", async () => {
+  // Unticking everything used to submit an empty list, which the download read
+  // as "nobody picked", and a bare playlist link brings every entry under that
+  // reading. The one gesture meaning stop cost the most.
+  const dom = installDom();
+  globalThis.window.matchMedia = () => ({ matches: true });
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const posted = [];
+  const request = async (path, options = {}) => {
+    if (path === "/api/playlist/preview") {
+      return {
+        title: "Story Time",
+        entries: [
+          { index: 1, id: "aaa", title: "One", available: true },
+          { index: 2, id: "bbb", title: "Two", available: true },
+        ],
+      };
+    }
+    if (path === "/api/prepare") posted.push(JSON.parse(options.body));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    dom.document.getElementById("source-paste").value = "https://www.youtube.com/playlist?list=PL1";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+    await buttonWithText(dom.workspace, "Pick videos").click();
+    await flush();
+
+    await buttonWithText(dom.workspace, "Untick all").click();
+    await flush();
+
+    assert.match(dom.workspace.querySelector(".inline-error").textContent, /Pick at least one video/);
+    assert.equal(buttonWithText(dom.workspace, "Prepare 1 story").disabled, true);
+
+    await dom.workspace.querySelector(".source-intake-form").dispatchEvent({ type: "submit" });
+    await flush();
+
+    assert.deepEqual(posted, []);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});

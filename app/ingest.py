@@ -260,13 +260,21 @@ def import_url(
         chapters_dir = tmp / "chapters"
         progress("Fetching audio")
 
-        # Default to the one video the link points at. A bare playlist link is
-        # unaffected by --no-playlist, so it still brings every entry; a
-        # watch?v=...&list=... link no longer drags its whole playlist in
+        # No pick defaults to the one video the link points at. A bare playlist
+        # link is unaffected by --no-playlist, so it still brings every entry;
+        # a watch?v=...&list=... link no longer drags its whole playlist in
         # behind it. Picking entries is what opts you into the playlist.
-        picked = _playlist_items_spec(playlist_items or [])
-        selection = (["--yes-playlist", "--playlist-items", picked]
-                     if picked else ["--no-playlist"])
+        #
+        # A pick that names nothing is refused instead of falling back on that
+        # default, because the fallback is what made unticking every entry
+        # download all of them.
+        if playlist_items is None:
+            selection = ["--no-playlist"]
+        else:
+            picked = _playlist_items_spec(playlist_items)
+            if not picked:
+                raise ValueError("A playlist pick has to name at least one entry number.")
+            selection = ["--yes-playlist", "--playlist-items", picked]
         cmd = [
             "yt-dlp",
             *selection,

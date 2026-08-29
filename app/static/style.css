@@ -3443,7 +3443,19 @@ img.collection-detail-cover {
 
   .library-send-bar {
     display: flex;
-    max-height: calc(100vh - 4.5rem - env(safe-area-inset-bottom) - var(--space-4));
+    /* Half the screen at most, for two reasons. The bar covers the very rows
+       it is sending, so a phone needs to keep seeing and unticking them; and
+       a bar as tall as the room its containing block has is pinned to the top
+       of that block, where the sticky bottom offset below can no longer lift
+       its buttons clear of the navigation. Taking the whole height budget did
+       both, and put the last 15px of Send behind the nav. A long chapter list
+       scrolls inside the bar instead of growing it.
+
+       svh is the viewport with the browser toolbar showing, which is the
+       height a phone actually gives a page. vh is the toolbar-collapsed one,
+       so it measures screen the reader cannot see yet. 55svh leaves room for
+       the 4.5rem navigation on any viewport worth rendering to. */
+    max-height: 55svh;
     padding: var(--space-4);
     /* Sits above the fixed .mobile-navigation (min-height: calc(4.5rem +
        env(safe-area-inset-bottom)), z-index: 70) rather than under it, so a
@@ -3451,6 +3463,14 @@ img.collection-detail-cover {
     bottom: calc(4.5rem + env(safe-area-inset-bottom));
     flex-direction: column;
     overflow: hidden;
+  }
+
+  /* Every child holds its size, so nothing but the list below can be squeezed
+     out of a bar that has run out of room. The heading says what is being
+     sent, the groups carry the Tonie and the effect, and the buttons are the
+     point of the whole surface. */
+  .library-send-bar > * {
+    flex: 0 0 auto;
   }
 
   .library-send-groups {

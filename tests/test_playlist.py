@@ -264,15 +264,65 @@ def test_prepare_run_forwards_the_picked_numbers_to_the_download(monkeypatch):
     assert seen["playlist_items"] == [2, 4]
 
 
-def test_numbers_that_are_all_rubbish_download_the_single_video(isolated_library, fake_download):
+def test_an_explicit_pick_of_nothing_is_refused_rather_than_downloading_everything(client, monkeypatch):
+    """The one case that used to bring the whole playlist in.
+
+    Unticking every entry sent an empty list, which read exactly like a source
+    nobody had picked from, so the download fell back to letting the link speak
+    for itself. A bare playlist link ignores --no-playlist, so "none of them"
+    arrived as "all of them".
+    """
+    payloads = []
+    monkeypatch.setattr(main.jobs, "enqueue_many",
+                        lambda entries: payloads.extend(entries) or ["job-1"])
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": "https://www.youtube.com/playlist?list=PL1", "playlist_items": []}],
+    })
+
+    assert response.status_code == 400
+    assert "at least one video" in response.json()["detail"]
+    assert payloads == []
+
+
+def test_an_entry_number_below_one_is_refused(client, monkeypatch):
+    """Entry numbers are the ones the preview showed, and they start at 1."""
+    payloads = []
+    monkeypatch.setattr(main.jobs, "enqueue_many",
+                        lambda entries: payloads.extend(entries) or ["job-1"])
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": "https://www.youtube.com/playlist?list=PL1", "playlist_items": [0, 2]}],
+    })
+
+    assert response.status_code == 400
+    assert payloads == []
+
+
+def test_a_source_nobody_picked_from_carries_no_pick_at_all(client, monkeypatch):
+    """No pick is a different value from an empty pick, all the way down."""
+    payloads = []
+    monkeypatch.setattr(main.jobs, "enqueue_many",
+                        lambda entries: payloads.extend(entry[2] for entry in entries) or ["job-1"])
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": "https://www.youtube.com/playlist?list=PL1"}],
+    })
+
+    assert response.status_code == 200
+    assert payloads[0]["playlist_items"] is None
+
+
+def test_an_empty_pick_never_reaches_yt_dlp_as_the_whole_playlist(isolated_library, fake_download):
+    """The download refuses the contradiction too, rather than trusting its caller."""
     recorded = fake_download(["000-Only.mp3"])
 
-    ingest.import_url(
-        "https://www.youtube.com/watch?v=aaa&list=PL1",
-        stage_id="url-rubbish",
-        use_chapters=False,
-        playlist_items=[0, -3],
-    )
+    with pytest.raises(ValueError, match="at least one"):
+        ingest.import_url(
+            "https://www.youtube.com/playlist?list=PL1",
+            stage_id="url-empty-pick",
+            use_chapters=False,
+            playlist_items=[],
+        )
 
-    assert "--no-playlist" in recorded[0]
-    assert "--playlist-items" not in recorded[0]
+    assert recorded == []

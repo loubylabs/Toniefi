@@ -114,8 +114,12 @@ class ReorderRequest(RequestModel):
 class PrepareSource(RequestModel):
     url: str
     # Which playlist entries to download, as the numbers the preview showed.
-    # Empty means the link speaks for itself: one video, or a whole playlist.
-    playlist_items: list[int] = Field(default_factory=list)
+    # None means nobody picked, and the link speaks for itself: one video, or
+    # a whole playlist. A list is a pick, and a pick of nothing is a
+    # contradiction rather than a default, so prepare_sources refuses it. The
+    # two used to share the empty list, which turned "none of them" into "all
+    # of them" for any link a --no-playlist flag does not restrain.
+    playlist_items: list[int] | None = None
 
 
 class PlaylistPreviewRequest(RequestModel):
@@ -259,6 +263,13 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
         raise fail(400, "Duplicate source URLs are not allowed.")
     if len(sources) > 50:
         raise fail(400, "A batch can contain at most 50 sources.")
+    for source in body.sources:
+        if source.playlist_items is None:
+            continue
+        if not source.playlist_items:
+            raise fail(400, "Pick at least one video, or remove that playlist source.")
+        if any(item < 1 for item in source.playlist_items):
+            raise fail(400, "Playlist entry numbers start at 1.")
 
     options = body.options.model_dump()
     entries = [
