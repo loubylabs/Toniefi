@@ -377,6 +377,24 @@ def test_a_file_rewritten_in_place_mid_download_is_caught_too(isolated):
         list(chunks)
 
 
+def test_a_file_rewritten_during_its_own_read_is_caught(tmp_path):
+    """The dangerous window is inside one file, not only between two.
+
+    A member larger than one read block is rewritten after its first block has
+    already been yielded. The bytes still to come are the new version's, so
+    the archive would otherwise finish valid and hold half of each.
+    """
+    source = tmp_path / "story.mp3"
+    source.write_bytes(b"a" * (archive.CHUNK_BYTES * 2))
+    member = archive.Member(name="story.mp3", source=source, identity=archive.identify(source))
+    chunks = archive.stream([member])
+    next(chunks)
+    source.write_bytes(b"b" * (archive.CHUNK_BYTES * 2))
+
+    with pytest.raises(archive.SourceChanged):
+        list(chunks)
+
+
 def test_a_download_past_its_last_file_completes_with_the_version_it_read(isolated):
     """Nothing is left to open, so there is nothing left to detect. That is fine.
 
