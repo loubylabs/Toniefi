@@ -161,11 +161,84 @@ def _player_client_args() -> list[str]:
             f"youtube:player_client={config.YTDLP_PLAYER_CLIENTS}"]
 
 
+def _playlist_items_spec(items: list[int]) -> str:
+    """Compact picked entry numbers into yt-dlp's --playlist-items grammar.
+
+    [1, 3, 4, 5] becomes "1,3-5", which keeps the argument short on a long
+    playlist where the user unticked only a handful of entries.
+    """
+    ordered = sorted({int(item) for item in items if int(item) > 0})
+    spans: list[str] = []
+    start = previous = None
+    for number in ordered:
+        if start is None:
+            start = previous = number
+            continue
+        if number == previous + 1:
+            previous = number
+            continue
+        spans.append(_span(start, previous))
+        start = previous = number
+    if start is not None:
+        spans.append(_span(start, previous))
+    return ",".join(spans)
+
+
+def _span(start: int, end: int) -> str:
+    return str(start) if start == end else f"{start}-{end}"
+
+
+def playlist_preview(url: str) -> dict[str, Any]:
+    """List a playlist's entries without downloading any audio.
+
+    `--flat-playlist` asks the site for the index page only, so a hundred-video
+    playlist answers in a second and costs nothing. Entry numbers count every
+    position, including videos the site refuses to serve, because that is what
+    `--playlist-items` counts when the download runs.
+    """
+    if not shutil.which("yt-dlp"):
+        raise RuntimeError("yt-dlp is not installed in this container.")
+    cmd = [
+        "yt-dlp",
+        "--flat-playlist", "--dump-single-json",
+        "--no-warnings", "--ignore-no-formats-error",
+        *_player_client_args(),
+        url,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-3:]
+        raise RuntimeError(f"yt-dlp could not read that playlist: {' / '.join(tail) or 'unknown error'}")
+    try:
+        info = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as error:
+        raise RuntimeError("yt-dlp returned something that was not a playlist.") from error
+    return {
+        "title": info.get("title") or "",
+        "entries": [_preview_entry(index, entry)
+                    for index, entry in enumerate(info.get("entries") or [], start=1)],
+    }
+
+
+def _preview_entry(index: int, entry: dict[str, Any] | None) -> dict[str, Any]:
+    """A private or deleted video still holds its place in the numbering."""
+    entry = entry or {}
+    duration = entry.get("duration")
+    return {
+        "index": index,
+        "id": entry.get("id") or "",
+        "title": entry.get("title") or f"Video {index}",
+        "duration": float(duration) if isinstance(duration, (int, float)) else None,
+        "available": bool(entry.get("id")) and entry.get("title") not in ("[Private video]", "[Deleted video]"),
+    }
+
+
 def import_url(
     url: str,
     *,
     stage_id: str,
     use_chapters: bool = True,
+    playlist_items: list[int] | None = None,
     progress: Progress = _noop,
 ) -> dict[str, Any]:
     """Extract audio from a URL with yt-dlp, keeping metadata and cover art.
@@ -187,9 +260,15 @@ def import_url(
         chapters_dir = tmp / "chapters"
         progress("Fetching audio")
 
+        # Default to the one video the link points at. A bare playlist link is
+        # unaffected by --no-playlist, so it still brings every entry; a
+        # watch?v=...&list=... link no longer drags its whole playlist in
+        # behind it. Picking entries is what opts you into the playlist.
+        selection = (["--yes-playlist", "--playlist-items", _playlist_items_spec(playlist_items)]
+                     if playlist_items else ["--no-playlist"])
         cmd = [
             "yt-dlp",
-            "--yes-playlist" if "list=" in url else "--no-playlist",
+            *selection,
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
             "--no-progress", "--newline", "--no-warnings",
