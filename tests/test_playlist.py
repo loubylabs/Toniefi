@@ -155,3 +155,43 @@ def test_picked_playlist_numbers_reach_yt_dlp(isolated_library, fake_download):
     assert "--yes-playlist" in command
     assert "--no-playlist" not in command
     assert command[command.index("--playlist-items") + 1] == "1,3-5"
+
+
+def test_a_playlist_keeps_videos_that_have_no_chapters(isolated_library, fake_download):
+    fake_download(
+        ["001-Video One.mp3", "002-Video Two.mp3"],
+        chapters=["001-001-Opening.mp3", "001-002-Middle.mp3"],
+        info={"title": "Video One", "playlist_title": "Story Time"},
+    )
+
+    result = ingest.import_url(
+        "https://www.youtube.com/playlist?list=PL1",
+        stage_id="url-mixed",
+        playlist_items=[1, 2],
+    )
+
+    assert [track["title"] for track in result["tracks"]] == ["Opening", "Middle", "Video Two"]
+
+
+def test_chapter_files_are_named_with_their_video_number(isolated_library, fake_download):
+    recorded = fake_download(["001-Video One.mp3"])
+
+    ingest.import_url("https://www.youtube.com/playlist?list=PL1", stage_id="url-template")
+
+    template = next(part for part in recorded[0] if part.startswith("chapter:"))
+    assert "%(playlist_index" in template
+
+
+def test_a_playlist_is_named_after_the_playlist_not_its_first_video(isolated_library, fake_download):
+    fake_download(
+        ["001-Video One.mp3", "002-Video Two.mp3"],
+        info={"title": "Video One", "playlist_title": "Story Time"},
+    )
+
+    result = ingest.import_url(
+        "https://www.youtube.com/playlist?list=PL1",
+        stage_id="url-named",
+        playlist_items=[1, 2],
+    )
+
+    assert result["title"] == "Story Time"
