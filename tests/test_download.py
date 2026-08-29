@@ -219,14 +219,16 @@ def test_download_entries_names_every_member_from_the_manifest(isolated):
 
     entries = library.download_entries(slug)
 
-    assert [(source, name) for source, name in entries if not isinstance(source, bytes)] == [
+    assert [(member.source, member.name) for member in entries if not isinstance(member.source, bytes)] == [
         (path / "001-chapter.mp3", "001-the-boy-who-would-not-grow-up.mp3"),
         (path / "002-chapter.mp3", "002-the-shadow.mp3"),
         (path / "cover.jpg", "cover.jpg"),
     ]
-    generated, name = entries[-1]
-    assert name == library.MANIFEST
-    assert isinstance(generated, bytes)
+    assert all(member.identity == archive.identify(member.source)
+               for member in entries if not isinstance(member.source, bytes))
+    assert entries[-1].name == library.MANIFEST
+    assert isinstance(entries[-1].source, bytes)
+    assert entries[-1].identity is None
 
 
 def test_download_entries_rejects_a_missing_collection(isolated):
@@ -320,10 +322,56 @@ def test_a_download_opens_one_file_at_a_time(isolated):
 def test_a_file_deleted_mid_download_fails_the_download_rather_than_truncating_it(isolated):
     """A zip that stops early must not look like a zip that finished."""
     slug = make_collection()
-    entries = library.download_entries(slug)
-    chunks = archive.stream(entries)
+    chunks = archive.stream(library.download_entries(slug))
     next(chunks)
     (config.LIBRARY_DIR / slug / "002-chapter.mp3").unlink()
 
     with pytest.raises(FileNotFoundError):
         list(chunks)
+
+
+def test_a_forge_replacement_mid_download_fails_rather_than_mixing_two_versions(isolated):
+    """A valid zip holding half of one story and half of another is the worst case."""
+    slug = make_collection()
+    chunks = archive.stream(library.download_entries(slug))
+    next(chunks)
+    replaced = config.LIBRARY_DIR / slug / "002-chapter.mp3"
+    replaced.unlink()
+    replaced.write_bytes(b"forged audio for The Shadow, normalized")
+
+    with pytest.raises(archive.SourceChanged):
+        list(chunks)
+
+
+def test_a_file_rewritten_in_place_mid_download_is_caught_too(isolated):
+    """Same inode, different bytes. Size and mtime still give it away."""
+    slug = make_collection()
+    chunks = archive.stream(library.download_entries(slug))
+    next(chunks)
+    target = config.LIBRARY_DIR / slug / "002-chapter.mp3"
+    target.write_bytes(b"different audio entirely for The Shadow")
+
+    with pytest.raises(archive.SourceChanged):
+        list(chunks)
+
+
+def test_a_download_past_its_last_file_completes_with_the_version_it_read(isolated):
+    """Nothing is left to open, so there is nothing left to detect. That is fine.
+
+    This is the honest limit of the guard, and the reason the documentation
+    promises an aborted download only while files remain to be opened.
+    """
+    slug = make_collection(cover=None)
+    entries = library.download_entries(slug)
+
+    def delete_once_every_file_is_read():
+        for member in entries:
+            if isinstance(member.source, bytes):
+                library.delete(slug)
+            yield member
+
+    bundle = zipfile.ZipFile(io.BytesIO(b"".join(archive.stream(delete_once_every_file_is_read()))))
+
+    assert not (config.LIBRARY_DIR / slug).exists()
+    assert bundle.testzip() is None
+    assert bundle.read("002-the-shadow.mp3") == b"audio for The Shadow"

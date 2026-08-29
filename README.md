@@ -190,7 +190,9 @@ The library is deliberately plain:
 
 Download on any Library row returns that collection as one zip of audio, cover art, and `collection.json`, so the files are reachable without shell access to the host. Track order lives in the manifest rather than in the filenames, so the archive renumbers its tracks from the manifest and a collection reordered during Review still unpacks in the reviewed order. The archived `collection.json` is rewritten to name the files the archive actually holds, so the index never points at a filename the archive lacks.
 
-The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed. One file is open at a time, so a collection at the 500-file intake limit cannot exhaust the process descriptor budget and an abandoned download strands nothing. Deleting a collection while it is downloading aborts that download, and the browser reports it as interrupted rather than saving a truncated archive that looks complete.
+The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed. One file is open at a time, so a collection at the 500-file intake limit cannot exhaust the process descriptor budget and an abandoned download strands nothing.
+
+Because files are opened as they are reached, a download never receives an archive that mixes two versions of a collection. Each file is fingerprinted when the download is planned and checked when it is opened, so a delete or a Forge replacement landing mid-download ends the stream at the next file. The response is chunked, so an ended stream never sends its terminating chunk and the browser reports an interrupted download instead of saving a plausible-looking archive. A download whose files have all been read is already past that point and completes normally, carrying the version it read.
 
 Library deletion is intentionally destructive. Its confirmation names the local collection folder and audio files that will be removed.
 
