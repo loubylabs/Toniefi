@@ -625,6 +625,87 @@ test("retrying an unchanged selection reuses the operation key the refused send 
   }
 });
 
+test("Refresh targets keeps the operation key when nothing in the payload moved", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    // Two separate objects carrying identical data, which is what a refresh
+    // answers with when nothing changed on the Tonie.
+    toniesQueue: [[blueTonie()], [blueTonie()]],
+    pushOutcomes: [new Error("The connection dropped before the receipt arrived.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    // The server committed this one and the response was lost, so the operator
+    // sees a failure and has no way to know a job already exists.
+    await screen.node(".library-send-submit").click();
+    await flush();
+    assert.equal(screen.pushes.length, 1);
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    // Same key, so the server recognises the retry and hands back the first
+    // job receipt instead of appending the same chapters a second time.
+    assert.equal(screen.pushes[1].operation_key, screen.pushes[0].operation_key);
+    assert.deepEqual(screen.pushes[1].assignments, screen.pushes[0].assignments);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("Refresh targets drops the operation key when the Tonie gained a chapter", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [
+      [blueTonie()],
+      [{ ...blueTonie(), chapters: [{ id: "c1", title: "Old chapter" }, { id: "c2", title: "Added from the phone" }] }],
+    ],
+    pushOutcomes: [new Error("The connection dropped before the receipt arrived.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+    assert.equal(screen.pushes.length, 1);
+    assert.deepEqual(screen.pushes[0].assignments[0].remote_chapters, [{ id: "c1", title: "Old chapter" }]);
+
+    // Someone added a chapter from the phone, so the precondition the next
+    // send carries is different and this is a different operation.
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    assert.notEqual(screen.pushes[1].operation_key, screen.pushes[0].operation_key);
+    assert.deepEqual(screen.pushes[1].assignments[0].remote_chapters, [
+      { id: "c1", title: "Old chapter" },
+      { id: "c2", title: "Added from the phone" },
+    ]);
+  } finally {
+    screen.stop();
+  }
+});
+
 test("an option never advertises free space the fit check will refuse", async () => {
   const oversized = nightStory();
   oversized.tracks = [{ name: "long.mp3", title: "Long", seconds: 5371, duration: "1h 30m" }];

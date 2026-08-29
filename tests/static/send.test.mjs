@@ -10,6 +10,7 @@ import {
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
+  targetSignature,
   tonieCapacity,
 } from "../../app/static/send.js";
 
@@ -296,4 +297,48 @@ test("createSendAttempt returns false when confirmation is declined", async () =
 
   assert.equal(await attempt.submit(), false);
   assert.equal(calls, 0);
+});
+
+test("targetSignature is stable when a refresh returns identical Tonie data", () => {
+  const before = [{ tonie: { id: "t1", householdId: "h1", seconds_present: 0, chapters: [{ id: "c1", title: "Old" }] }, replaceExisting: false }];
+  const after = [{ tonie: { id: "t1", householdId: "h1", seconds_present: 0, chapters: [{ id: "c1", title: "Old" }] }, replaceExisting: false }];
+
+  assert.equal(targetSignature(before), targetSignature(after));
+});
+
+test("targetSignature ignores fields the payload never carries", () => {
+  // Free space and the display name are read for the picker and the fit check,
+  // never written into the payload, so moving them is not a new operation.
+  const before = [{ tonie: { id: "t1", householdId: "h1", name: "Bedtime", seconds_present: 0, chapters: [] }, replaceExisting: false }];
+  const after = [{ tonie: { id: "t1", householdId: "h1", name: "Bedtime Tonie", seconds_present: 4200, chapters: [] }, replaceExisting: false }];
+
+  assert.equal(targetSignature(before), targetSignature(after));
+});
+
+test("targetSignature changes when the chosen Tonie gains a chapter", () => {
+  const before = [{ tonie: { id: "t1", householdId: "h1", chapters: [{ id: "c1", title: "Old" }] }, replaceExisting: false }];
+  const after = [{ tonie: { id: "t1", householdId: "h1", chapters: [{ id: "c1", title: "Old" }, { id: "c2", title: "Added from the phone" }] }, replaceExisting: false }];
+
+  assert.notEqual(targetSignature(before), targetSignature(after));
+});
+
+test("targetSignature changes when a chapter is renamed elsewhere", () => {
+  const before = [{ tonie: { id: "t1", householdId: "h1", chapters: [{ id: "c1", title: "Old" }] }, replaceExisting: false }];
+  const after = [{ tonie: { id: "t1", householdId: "h1", chapters: [{ id: "c1", title: "Renamed" }] }, replaceExisting: false }];
+
+  assert.notEqual(targetSignature(before), targetSignature(after));
+});
+
+test("targetSignature changes when the chosen Tonie is gone", () => {
+  const before = [{ tonie: { id: "t1", householdId: "h1", chapters: [] }, replaceExisting: false }];
+  const after = [{ tonie: null, replaceExisting: false }];
+
+  assert.notEqual(targetSignature(before), targetSignature(after));
+});
+
+test("targetSignature separates two Tonies sharing an id in different households", () => {
+  const before = [{ tonie: { id: "t1", householdId: "h1", chapters: [] }, replaceExisting: false }];
+  const after = [{ tonie: { id: "t1", householdId: "h2", chapters: [] }, replaceExisting: false }];
+
+  assert.notEqual(targetSignature(before), targetSignature(after));
 });

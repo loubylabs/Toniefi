@@ -9,6 +9,7 @@ import {
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
+  targetSignature,
   tonieCapacity,
 } from "./send.js";
 import {
@@ -407,10 +408,14 @@ export function createLibraryScreen({
       if (token !== targetsToken) return;
       tonies = loaded;
       toniesError = failure;
+      const beforeRefresh = targetSignature(selections);
       rebindTargets(selections, tonies);
-      // The chapter precondition inside the payload changed, so the key that
-      // identified the old payload must not identify this one.
-      operationKey = "";
+      // The key names one payload, so it is cleared exactly when the refresh
+      // changed what that payload carries. A refresh that answers with the same
+      // Tonie and the same chapters rebuilds an identical payload, and dropping
+      // the key there would let a retry after a lost response queue a second
+      // job and append the same chapters twice.
+      if (targetSignature(selections) !== beforeRefresh) operationKey = "";
       if (active && !signal?.aborted) render({ focusKey });
     }
 
