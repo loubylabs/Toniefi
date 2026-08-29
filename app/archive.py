@@ -43,6 +43,7 @@ import zipfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 # Read size for source files, and therefore the rough size of a yielded chunk.
 CHUNK_BYTES = 512 * 1024
@@ -76,7 +77,7 @@ def identify(path: Path) -> tuple[int, int, int]:
     return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 
-def _confirm(handle, member: "Member") -> None:
+def _confirm(handle: BinaryIO, member: Member) -> None:
     """Fail the stream unless the open descriptor still holds the planned file.
 
     Taken from the descriptor rather than the path, so it answers "is what I
