@@ -1,0 +1,186 @@
+// Every calculation a confirmed send needs, and no DOM.
+//
+// packSelection mirrors app/audio.py `pack` exactly: sequential first fit,
+// order preserved, a group closed only when the NEXT track would overflow it.
+// The server plans the same way and refuses a batch whose group boundaries
+// disagree, so a drift here is a 409 the operator cannot clear.
+
+export function packSelection(collections, limitSeconds) {
+  const limit = Number(limitSeconds) || 0;
+  const groups = [];
+  let current = { index: 1, seconds: 0, entries: [] };
+  for (const collection of collections) {
+    for (const track of collection.tracks || []) {
+      const seconds = Number(track.seconds || 0);
+      if (current.entries.length && current.seconds + seconds > limit) {
+        groups.push(current);
+        current = { index: groups.length + 1, seconds: 0, entries: [] };
+      }
+      current.entries.push({
+        slug: collection.slug,
+        manifestFingerprint: collection.manifest_fingerprint,
+        collectionTitle: collection.title || collection.slug,
+        name: track.name,
+        title: track.title || track.name,
+        seconds,
+        duration: track.duration || "",
+      });
+      current.seconds += seconds;
+    }
+  }
+  if (current.entries.length) groups.push(current);
+  return groups;
+}
+
+export function groupSources(group) {
+  // Consecutive entries from one collection collapse into one source. The
+  // server flattens sources in order, so the collapse changes nothing it sees;
+  // it just keeps the payload readable.
+  const sources = [];
+  for (const entry of group.entries) {
+    const last = sources[sources.length - 1];
+    if (last && last.slug === entry.slug) last.files.push(entry.name);
+    else sources.push({ slug: entry.slug, manifest_fingerprint: entry.manifestFingerprint, files: [entry.name] });
+  }
+  return sources;
+}
+
+export function tonieCapacity(tonie, groupSeconds, replaceExisting, limitSeconds) {
+  const present = Number(tonie?.seconds_present ?? tonie?.secondsPresent ?? 0);
+  const availableSeconds = replaceExisting
+    ? Number(limitSeconds)
+    : Math.max(0, Number(limitSeconds) - present);
+  const projectedSeconds = replaceExisting ? Number(groupSeconds) : present + Number(groupSeconds);
+  return {
+    availableSeconds,
+    projectedSeconds,
+    fits: Number(groupSeconds) <= availableSeconds,
+  };
+}
+
+export function targetLabel(tonie) {
+  // A Tonie name is unique inside a household and nowhere else, so a picker
+  // without the household can offer two identical options for two boxes.
+  const household = tonie?.householdName ? ` · ${tonie.householdName}` : "";
+  return `${tonie?.name || "Creative Tonie"}${household}`;
+}
+
+export function sendCapacityLimit(status = {}) {
+  return Number(status.usable_limit_seconds || 0);
+}
+
+export function selectionProblems(groups, selections, limitSeconds) {
+  const problems = [];
+  const chosen = [];
+  groups.forEach((group, index) => {
+    const selection = selections[index];
+    if (!selection?.tonie) {
+      problems.push(`Group ${group.index} has no Creative Tonie chosen.`);
+      return;
+    }
+    const key = `${selection.tonie.householdId}/${selection.tonie.id}`;
+    if (chosen.includes(key)) {
+      problems.push(`${targetLabel(selection.tonie)} is chosen for more than one group.`);
+    }
+    chosen.push(key);
+    const capacity = tonieCapacity(selection.tonie, group.seconds, selection.replaceExisting, limitSeconds);
+    if (!capacity.fits) {
+      problems.push(`Group ${group.index} does not fit ${targetLabel(selection.tonie)}. Choose Replace everything, or another Tonie.`);
+    }
+  });
+  return problems;
+}
+
+export function buildPushBatchPayload(groups, selections, operationKey) {
+  return {
+    operation_key: operationKey,
+    assignments: groups.map((group, index) => {
+      const { tonie, replaceExisting } = selections[index];
+      return {
+        household_id: tonie.householdId,
+        tonie_id: tonie.id,
+        replace: replaceExisting,
+        remote_chapters: (tonie.chapters || []).map(({ id, title }) => ({ id, title: title || "" })),
+        sources: groupSources(group),
+      };
+    }),
+  };
+}
+
+export function createSendAttempt({
+  payload,
+  confirm,
+  request,
+  signal = null,
+  setPending = () => {},
+  onReceipt = () => {},
+  onFailure = () => {},
+}) {
+  // One selection, one operation key, one request at a time. A second click
+  // while a send is in flight must not queue a second batch: a Tonie write has
+  // no undo, so a duplicate upload is not something the operator can take back.
+  let inFlight = false;
+
+  async function send({ needsConfirmation }) {
+    if (inFlight || signal?.aborted) return false;
+    inFlight = true;
+    setPending(true);
+    try {
+      if (needsConfirmation && !await confirm()) return false;
+      if (signal?.aborted) return false;
+      const receipt = await request("/api/push/batch", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        ...(signal ? { signal } : {}),
+      });
+      if (signal?.aborted) return false;
+      await onReceipt(receipt);
+      return receipt;
+    } catch (error) {
+      if (!signal?.aborted) await onFailure(error);
+      return null;
+    } finally {
+      inFlight = false;
+      if (!signal?.aborted) setPending(false);
+    }
+  }
+
+  return {
+    payload,
+    // Retry reuses the same payload, and so the same operation key, which is
+    // what makes the server's idempotency digest able to recognise it.
+    submit: () => send({ needsConfirmation: true }),
+    retry: () => send({ needsConfirmation: false }),
+    get inFlight() { return inFlight; },
+  };
+}
+
+export function membershipSignature(groups) {
+  // Every input the sources are built from: which collection, at which
+  // fingerprint, which file, in which group. Target and effect are excluded
+  // because they reset on their own. Two selections with the same signature
+  // build identical sources and may share an operation key. Anything else is a
+  // different operation, and reusing a key across two different operations is
+  // exactly what the server's idempotency digest answers with a 409.
+  return JSON.stringify(groups.map((group) => (
+    group.entries.map((entry) => [entry.slug, entry.manifestFingerprint, entry.name])
+  )));
+}
+
+export function rebindTargets(selections, tonies) {
+  // Point every chosen target at the freshly fetched object, or drop it if the
+  // Tonie is gone. A retained pre-refresh object validates capacity against
+  // stale free space and sends a stale remote_chapters precondition, so the
+  // refresh would make the next send fail rather than succeed.
+  for (const choice of selections) {
+    if (!choice.tonie) continue;
+    choice.tonie = (tonies || []).find((tonie) => (
+      tonie.householdId === choice.tonie.householdId && tonie.id === choice.tonie.id
+    )) || null;
+  }
+  return selections;
+}
+
+export function newOperationKey() {
+  return globalThis.crypto?.randomUUID?.() || `push-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
