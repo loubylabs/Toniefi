@@ -23,11 +23,33 @@ export const DEFAULT_FORGE_OPTIONS = Object.freeze({
   split_oversized: true,
 });
 
+function sourceRecords(lines) {
+  const items = Array.isArray(lines) ? lines : String(lines ?? "").split(/\r?\n/);
+  return items
+    .map((item) => (item && typeof item === "object")
+      ? { value: String(item.value ?? "").trim(), picked: Array.isArray(item.picked) ? item.picked : [] }
+      : { value: String(item ?? "").trim(), picked: [] })
+    .filter((record) => record.value);
+}
+
 function sourceValues(lines) {
-  const values = Array.isArray(lines)
-    ? lines.map((line) => typeof line === "object" ? line.value : line)
-    : String(lines ?? "").split(/\r?\n/);
-  return values.map((value) => String(value ?? "").trim()).filter(Boolean);
+  return sourceRecords(lines).map((record) => record.value);
+}
+
+export function looksLikePlaylist(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && Boolean(url.searchParams.get("list"));
+  } catch (_error) {
+    return false;
+  }
+}
+
+export function playlistPickLabel({ total = 0, picked = [] } = {}) {
+  if (!total || !picked.length) return "Pick videos";
+  if (picked.length >= total) return `All ${total} videos`;
+  return `${picked.length} of ${total} videos`;
 }
 
 function hasSupportedScheme(value) {
@@ -77,10 +99,14 @@ function normalizedOptions(options = {}) {
 }
 
 export function buildPreparePayload(lines, options = {}) {
-  const parsed = parseSourceLines(lines);
+  const records = sourceRecords(lines);
+  const parsed = parseSourceLines(records);
   if (!parsed.valid) throw new Error("Fix every source before preparing this batch.");
   return {
-    sources: parsed.rows.map((row) => ({ url: row.value })),
+    sources: parsed.rows.map((row, index) => ({
+      url: row.value,
+      playlist_items: [...records[index].picked].sort((first, second) => first - second),
+    })),
     options: normalizedOptions(options),
   };
 }
@@ -765,12 +791,74 @@ export function createDeskScreen({
 
     function newSourceEntry(value) {
       sourceId += 1;
-      return { id: `source-${sourceId}`, value };
+      return { id: `source-${sourceId}`, value, playlist: null, picked: [], open: false };
+    }
+
+    function liveEntry(id) {
+      return entries.find((entry) => entry.id === id) || null;
     }
 
     function moveSource(id, offset) {
       entries = moveSourceEntries(entries, id, offset);
       renderSources({ focusKey: `${id}-input` });
+    }
+
+    function playlistPanel(row) {
+      const total = row.playlist.entries.length;
+      const heading = element("p", { className: "playlist-picker-title" }, [
+        element("strong", { text: row.playlist.title || "Playlist" }),
+        element("span", { text: total ? `${total} ${total === 1 ? "video" : "videos"}` : "No videos" }),
+      ]);
+      if (!total) {
+        return element("div", { className: "playlist-picker" }, [
+          heading,
+          element("p", { className: "playlist-picker-empty", text: "That link is a single video, not a playlist." }),
+        ]);
+      }
+      const list = element("ul", { className: "playlist-picker-list", "aria-label": "Videos in this playlist" });
+      for (const item of row.playlist.entries) {
+        const box = element("input", {
+          type: "checkbox",
+          "aria-label": `${item.index}. ${item.title}`,
+          "data-focus-key": `${row.id}-pick-${item.index}`,
+          disabled: !item.available,
+        });
+        box.checked = row.picked.includes(item.index);
+        box.addEventListener("change", () => {
+          const live = liveEntry(row.id);
+          if (!live) return;
+          const picked = new Set(live.picked);
+          if (box.checked) picked.add(item.index);
+          else picked.delete(item.index);
+          live.picked = [...picked].sort((first, second) => first - second);
+          renderSources({ focusKey: `${row.id}-pick-${item.index}` });
+        });
+        list.append(element("li", { className: "playlist-picker-row" }, [
+          element("label", {}, [
+            box,
+            element("span", { className: "playlist-picker-number", text: `${item.index}.` }),
+            element("span", { className: "playlist-picker-name", text: item.title }),
+          ]),
+          item.available ? null : element("span", { className: "playlist-picker-note", text: "Unavailable" }),
+        ]));
+      }
+      const everything = row.picked.length >= row.playlist.entries.filter((item) => item.available).length;
+      const toggleAll = element("button", {
+        type: "button",
+        className: "desk-clear-button",
+        "data-focus-key": `${row.id}-pick-all`,
+        text: everything ? "Untick all" : "Tick all",
+      });
+      toggleAll.addEventListener("click", () => {
+        const live = liveEntry(row.id);
+        if (!live) return;
+        live.picked = everything
+          ? []
+          : live.playlist.entries.filter((item) => item.available).map((item) => item.index);
+        renderSources({ focusKey: `${row.id}-pick-all` });
+      });
+      heading.append(toggleAll);
+      return element("div", { className: "playlist-picker" }, [heading, list]);
     }
 
     function sourceRow(row, index, total) {
@@ -794,6 +882,11 @@ export function createDeskScreen({
           entries = removed.entries;
           renderSources({ focusKey: removed.nextFocusId ? `${removed.nextFocusId}-input` : "" });
           return;
+        }
+        const live = liveEntry(row.id);
+        if (live && live.value !== input.value) {
+          // A different link is a different playlist, so nothing picked survives.
+          Object.assign(live, { playlist: null, picked: [], open: false });
         }
         entries[index].value = input.value;
         renderSources({ focusKey: `${row.id}-input` });
@@ -831,16 +924,58 @@ export function createDeskScreen({
       const controls = element("span", { className: "source-row-controls" }, [moveUp, moveDown, remove]);
       const field = element("div", { className: "source-row-field" }, [input]);
       if (row.error) field.append(element("span", { id: errorId, className: "inline-error", text: row.error }));
+      if (!row.error && looksLikePlaylist(row.value)) field.append(pickControl(row));
       return element("li", { className: "source-row", "data-invalid": Boolean(row.error) }, [
         iconNode("link", "source-row-icon"),
         field,
         controls,
+        row.open && row.playlist ? playlistPanel(row) : null,
       ]);
+    }
+
+    function pickControl(row) {
+      const label = element("span", {
+        text: playlistPickLabel({ total: row.playlist?.entries.length || 0, picked: row.picked }),
+      });
+      const button = element("button", {
+        type: "button",
+        className: "desk-clear-button playlist-pick-button",
+        "data-focus-key": `${row.id}-pick`,
+        "aria-expanded": row.open ? "true" : "false",
+      }, [iconNode("library"), label]);
+      button.addEventListener("click", async () => {
+        const live = liveEntry(row.id);
+        if (!live) return;
+        if (live.playlist) {
+          live.open = !live.open;
+          renderSources({ focusKey: `${row.id}-pick` });
+          return;
+        }
+        button.disabled = true;
+        label.textContent = "Reading playlist";
+        try {
+          const preview = await request("/api/playlist/preview", {
+            method: "POST",
+            body: JSON.stringify({ url: live.value }),
+          });
+          if (signal.aborted) return;
+          live.playlist = preview;
+          live.picked = (preview.entries || []).filter((item) => item.available).map((item) => item.index);
+          live.open = true;
+          renderSources({ focusKey: `${row.id}-pick` });
+        } catch (error) {
+          if (signal.aborted) return;
+          notify(error.message, { kind: "failure", timeout: 0 });
+          button.disabled = false;
+          label.textContent = playlistPickLabel({ total: 0, picked: [] });
+        }
+      });
+      return button;
     }
 
     function renderSources({ focusKey = "" } = {}) {
       const parsed = parseSourceLines(entries);
-      entries = parsed.rows.map((row, index) => ({ id: entries[index].id, value: row.value }));
+      entries = parsed.rows.map((row, index) => ({ ...entries[index], value: row.value }));
       sourceCount.textContent = `${parsed.uniqueCount} / ${MAX_SOURCES}`;
       clearSources.hidden = parsed.rows.length === 0;
       const errorCount = parsed.rows.filter((row) => row.error).length;
@@ -854,7 +989,7 @@ export function createDeskScreen({
       const label = parsed.uniqueCount === 1 ? "Prepare 1 story" : `Prepare ${parsed.uniqueCount} stories`;
       prepareButton.querySelector("span:last-child").textContent = label;
       const token = focusKey ? { key: focusKey } : rememberFocus(intake);
-      replace(sourceList, ...parsed.rows.map((row, index) => sourceRow({ ...row, id: entries[index].id }, index, parsed.rows.length)));
+      replace(sourceList, ...parsed.rows.map((row, index) => sourceRow({ ...entries[index], error: row.error }, index, parsed.rows.length)));
       restoreFocus(token, { root: intake });
     }
 

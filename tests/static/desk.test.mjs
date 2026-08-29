@@ -10,7 +10,9 @@ import {
   forgeDefinitionValues,
   forgeProfileStatus,
   moveSourceEntries,
+  looksLikePlaylist,
   parseSourceLines,
+  playlistPickLabel,
   removeSourceEntry,
   submitUploadBatch,
   staleRefreshAnnouncement,
@@ -141,8 +143,8 @@ test("buildPreparePayload creates the exact safe-default request for a valid bat
 
   assert.deepEqual(payload, {
     sources: [
-      { url: "https://example.com/one" },
-      { url: "https://example.com/two" },
+      { url: "https://example.com/one", playlist_items: [] },
+      { url: "https://example.com/two", playlist_items: [] },
     ],
     options: {
       use_chapters: true,
@@ -556,4 +558,40 @@ test("collection fallback jackets compute to the shared bookcloth treatment", ()
     assert.equal(style.color, "var(--action)");
     assert.equal(style["text-align"], "center");
   }
+});
+
+test("a link that names a playlist is offered for picking", () => {
+  assert.equal(looksLikePlaylist("https://www.youtube.com/playlist?list=PL1"), true);
+  assert.equal(looksLikePlaylist("https://www.youtube.com/watch?v=aaa&list=PL1"), true);
+  assert.equal(looksLikePlaylist("https://www.youtube.com/watch?v=aaa"), false);
+  assert.equal(looksLikePlaylist("not a url"), false);
+});
+
+test("the pick label says how much of a playlist is chosen", () => {
+  assert.equal(playlistPickLabel({}), "Pick videos");
+  assert.equal(playlistPickLabel({ total: 12, picked: [] }), "Pick videos");
+  assert.equal(playlistPickLabel({ total: 12, picked: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }), "All 12 videos");
+  assert.equal(playlistPickLabel({ total: 12, picked: [1, 3, 5] }), "3 of 12 videos");
+  assert.equal(playlistPickLabel({ total: 12, picked: [4] }), "1 of 12 videos");
+});
+
+test("prepare payload carries the picked playlist numbers", () => {
+  const payload = buildPreparePayload([
+    { value: "https://www.youtube.com/playlist?list=PL1", picked: [1, 3] },
+    { value: "https://example.test/story" },
+  ]);
+
+  assert.deepEqual(payload.sources, [
+    { url: "https://www.youtube.com/playlist?list=PL1", playlist_items: [1, 3] },
+    { url: "https://example.test/story", playlist_items: [] },
+  ]);
+});
+
+test("an expanded playlist picker scrolls inside its own bounded region", () => {
+  const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
+  const picker = exactRuleDeclarations(css, ".playlist-picker-list");
+
+  assert.match(picker["max-block-size"], /^clamp\(/);
+  assert.equal(picker["overflow-y"], "auto");
+  assert.equal(picker["overscroll-behavior"], "contain");
 });

@@ -46,6 +46,10 @@ class MiniElement {
     this.draggable = false;
   }
 
+  get children() {
+    return this.childNodes.filter((child) => typeof child !== "string");
+  }
+
   set textContent(value) {
     this._textContent = String(value ?? "");
     this.childNodes = [];
@@ -713,6 +717,64 @@ test("focused Review stage-gates assignment and offers the same Finish preparati
     await flush();
     assert.equal(calls.filter(([url]) => url === "/api/forge").length, 1);
     assert.match(dom.workspace.textContent, /Forge queued/);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Desk sends only the playlist videos left ticked", async () => {
+  const dom = installDom();
+  globalThis.window.matchMedia = () => ({ matches: true });
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const posted = [];
+  const request = async (path, options = {}) => {
+    if (path === "/api/playlist/preview") {
+      return {
+        title: "Story Time",
+        entries: [
+          { index: 1, id: "aaa", title: "One", duration: 60, available: true },
+          { index: 2, id: "bbb", title: "Two", duration: 60, available: true },
+          { index: 3, id: "ccc", title: "Three", duration: 60, available: true },
+        ],
+      };
+    }
+    if (path === "/api/prepare") posted.push(JSON.parse(options.body));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    dom.document.getElementById("source-paste").value = "https://www.youtube.com/playlist?list=PL1";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+
+    await buttonWithText(dom.workspace, "Pick videos").click();
+    await flush();
+
+    const boxes = dom.workspace.querySelector(".playlist-picker").querySelectorAll("input");
+    assert.deepEqual(boxes.map((box) => box.getAttribute("aria-label")), ["1. One", "2. Two", "3. Three"]);
+    assert.equal(boxes.every((box) => box.checked), true);
+
+    boxes[1].checked = false;
+    await boxes[1].dispatchEvent({ type: "change" });
+    await flush();
+
+    await dom.workspace.querySelector(".source-intake-form").dispatchEvent({ type: "submit" });
+    await flush();
+
+    assert.deepEqual(posted[0].sources, [
+      { url: "https://www.youtube.com/playlist?list=PL1", playlist_items: [1, 3] },
+    ]);
   } finally {
     controller.abort();
     dom.restore();
