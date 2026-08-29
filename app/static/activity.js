@@ -15,8 +15,12 @@ const PREPARATION_KINDS = new Set(["prepare_url", "upload_prepare", "librivox", 
 
 
 function resultSlug(job) {
-  const slug = job?.result?.slug || job?.payload?.slug || "";
-  return typeof slug === "string" ? slug : "";
+  const direct = job?.result?.slug || job?.payload?.slug || "";
+  if (typeof direct === "string" && direct) return direct;
+  // A push payload carries its collections under `sources`. One collection
+  // resolves to a link; several have no single collection to point at.
+  const slugs = new Set((job?.payload?.sources || []).map((source) => source?.slug).filter(Boolean));
+  return slugs.size === 1 ? [...slugs][0] : "";
 }
 
 

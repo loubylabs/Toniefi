@@ -183,7 +183,7 @@ test("Activity sends successful preparation to review and failed push back to Re
     id: 12,
     kind: "push",
     status: "failed",
-    payload: { slug: "night-stories" },
+    payload: { sources: [{ slug: "night-stories", files: ["one.mp3"] }] },
     retryable: false,
   }), {
     kind: "review",
@@ -191,6 +191,28 @@ test("Activity sends successful preparation to review and failed push back to Re
     label: "Review assignment",
     guidance: "Creative Tonie sends must be reviewed and confirmed again.",
   });
+});
+
+
+test("a failed single-collection push still links to its collection", () => {
+  const action = activityAction({
+    kind: "push",
+    status: "failed",
+    payload: { sources: [{ slug: "night-stories", files: ["one.mp3"] }] },
+  });
+
+  assert.equal(action.href, "/review/night-stories");
+});
+
+
+test("a failed multi-collection push offers no single collection link", () => {
+  const action = activityAction({
+    kind: "push",
+    status: "failed",
+    payload: { sources: [{ slug: "night-stories" }, { slug: "sea-tales" }] },
+  });
+
+  assert.equal(action.kind, "none");
 });
 
 
