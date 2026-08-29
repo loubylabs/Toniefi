@@ -172,28 +172,6 @@ export function membershipSignature(groups) {
   )));
 }
 
-export function targetSignature(selections) {
-  // Everything a target refresh can move inside the payload: which Creative
-  // Tonie each group is aimed at, and the remote_chapters precondition that
-  // Tonie contributes. The effect is the operator's own choice and no refresh
-  // touches it, so it is excluded here the same way it is in
-  // membershipSignature.
-  //
-  // A refresh that leaves this unchanged rebuilds a byte-identical payload, so
-  // the operation key still names the same operation and has to survive.
-  // Clearing it there would turn a lost response into a second upload of the
-  // same chapters, and a Tonie write has no undo.
-  return JSON.stringify((selections || []).map((choice) => {
-    const tonie = choice?.tonie;
-    if (!tonie) return null;
-    return [
-      tonie.householdId,
-      tonie.id,
-      (tonie.chapters || []).map(({ id, title }) => [id, title || ""]),
-    ];
-  }));
-}
-
 export function rebindTargets(selections, tonies) {
   // Point every chosen target at the freshly fetched object, or drop it if the
   // Tonie is gone. A retained pre-refresh object validates capacity against

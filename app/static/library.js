@@ -9,7 +9,6 @@ import {
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
-  targetSignature,
   tonieCapacity,
 } from "./send.js";
 import {
@@ -408,14 +407,16 @@ export function createLibraryScreen({
       if (token !== targetsToken) return;
       tonies = loaded;
       toniesError = failure;
-      const beforeRefresh = targetSignature(selections);
       rebindTargets(selections, tonies);
-      // The key names one payload, so it is cleared exactly when the refresh
-      // changed what that payload carries. A refresh that answers with the same
-      // Tonie and the same chapters rebuilds an identical payload, and dropping
-      // the key there would let a retry after a lost response queue a second
-      // job and append the same chapters twice.
-      if (targetSignature(selections) !== beforeRefresh) operationKey = "";
+      // The operation key is NOT touched here, whatever the refresh returned.
+      // The key tracks the operator's intent, and a refresh reports what the
+      // world did rather than what the operator decided. If the first send
+      // landed and its response was lost, this refresh is exactly where the
+      // appended chapters show up: clearing the key on that would make the
+      // next Send a brand new operation and append the same audio twice, and a
+      // Tonie write has no undo. Keeping the key hands the moved payload back
+      // under the same key, so the server's idempotency digest answers 409 and
+      // tells the operator the situation moved instead of uploading again.
       if (active && !signal?.aborted) render({ focusKey });
     }
 

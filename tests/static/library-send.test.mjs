@@ -664,12 +664,27 @@ test("Refresh targets keeps the operation key when nothing in the payload moved"
   }
 });
 
-test("Refresh targets drops the operation key when the Tonie gained a chapter", async () => {
+test("Refresh targets KEEPS the operation key when the Tonie gained a chapter", async () => {
+  // This test was the exact reverse a round ago, asserting the key was DROPPED
+  // here. That was the bug, not the fix, so do not restore it. The operation
+  // key tracks the operator's INTENT, and a target refresh reports what the
+  // world did rather than what the operator decided.
+  //
+  // Read the scenario below: the first send LANDED and its response was lost,
+  // so the chapter this refresh reveals is the one that send just appended.
+  // Dropping the key there makes the next Send a brand new operation carrying
+  // [Old, Story] as its precondition, and the Tonie ends up [Old, Story,
+  // Story]. A Tonie write has no undo, so that duplicate cannot be taken back.
+  // Keeping the key hands the moved payload back under the same key: the
+  // server's idempotency digest sees the same key with a different payload,
+  // raises OperationConflict, answers 409, and tells the operator the
+  // situation moved instead of uploading the same audio twice.
   const screen = mountLibrary({
     collections: [nightStory()],
     toniesQueue: [
       [blueTonie()],
-      [{ ...blueTonie(), chapters: [{ id: "c1", title: "Old chapter" }, { id: "c2", title: "Added from the phone" }] }],
+      // The refresh shows the append the lost-response send already made.
+      [{ ...blueTonie(), chapters: [{ id: "c1", title: "Old chapter" }, { id: "c2", title: "Night Story" }] }],
     ],
     pushOutcomes: [new Error("The connection dropped before the receipt arrived.")],
   });
@@ -682,13 +697,13 @@ test("Refresh targets drops the operation key when the Tonie gained a chapter", 
     await picker.dispatchEvent({ type: "change" });
     await flush();
 
+    // The server committed this one; only the receipt was lost. The operator
+    // cannot tell whether it landed.
     await screen.node(".library-send-submit").click();
     await flush();
     assert.equal(screen.pushes.length, 1);
     assert.deepEqual(screen.pushes[0].assignments[0].remote_chapters, [{ id: "c1", title: "Old chapter" }]);
 
-    // Someone added a chapter from the phone, so the precondition the next
-    // send carries is different and this is a different operation.
     await screen.node(".library-send-refresh").click();
     await flush();
 
@@ -696,11 +711,95 @@ test("Refresh targets drops the operation key when the Tonie gained a chapter", 
     await flush();
 
     assert.equal(screen.pushes.length, 2);
-    assert.notEqual(screen.pushes[1].operation_key, screen.pushes[0].operation_key);
+    // The ORIGINAL key, so the server can refuse rather than duplicate.
+    assert.equal(screen.pushes[1].operation_key, screen.pushes[0].operation_key);
+    assert.ok(screen.pushes[1].operation_key.length > 0);
+    // The precondition did move, which is what makes the server answer 409
+    // under that same key rather than creating a second job.
     assert.deepEqual(screen.pushes[1].assignments[0].remote_chapters, [
       { id: "c1", title: "Old chapter" },
-      { id: "c2", title: "Added from the phone" },
+      { id: "c2", title: "Night Story" },
     ]);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("Refresh targets keeps the operation key when someone else edited the Tonie", async () => {
+  // The third case of the four. The operator did not decide anything here
+  // either, so the key survives and the server refuses the moved payload under
+  // it. Same mechanism as the lost-response case, and safe for the same
+  // reason: a 409 is recoverable, a second upload is not.
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [
+      [blueTonie()],
+      [{ ...blueTonie(), chapters: [{ id: "c1", title: "Old chapter" }, { id: "c2", title: "Added from the phone" }] }],
+    ],
+    pushOutcomes: [new Error("The Tonie Cloud refused the batch.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    assert.equal(screen.pushes[1].operation_key, screen.pushes[0].operation_key);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("changing the effect after a refresh is a new operation and takes a new key", async () => {
+  // The fourth case: the operator's own action. Only this clears the key, and
+  // it still clears it after a refresh has been through, so keeping the key
+  // across a refresh never strands a genuinely different operation on an old
+  // one.
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    pushOutcomes: [new Error("The Tonie Cloud refused the batch.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    await screen.byFocusKey("library-send-effect-1-replace").dispatchEvent({ type: "change" });
+    await flush();
+
+    const sending = screen.node(".library-send-submit").click();
+    await flush();
+    const dialog = screen.dom.document.getElementById("dialogHost").querySelector(".confirmation-dialog");
+    await buttonWithText(dialog, "Replace and send").click();
+    await sending;
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    assert.notEqual(screen.pushes[1].operation_key, screen.pushes[0].operation_key);
+    assert.equal(screen.pushes[1].assignments[0].replace, true);
   } finally {
     screen.stop();
   }
@@ -731,3 +830,4 @@ test("an option never advertises free space the fit check will refuse", async ()
     screen.stop();
   }
 });
+
