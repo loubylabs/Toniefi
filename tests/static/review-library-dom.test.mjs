@@ -612,6 +612,46 @@ test("Library gives extracted collections one Finish preparation action and no r
   }
 });
 
+test("Library offers every collection a download, whether or not Forge has finished", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "peter pan & wendy",
+    title: "Peter Pan",
+    stage: "extracted",
+    track_count: 2,
+    total_duration: "1h 4m",
+    tonies_needed: 1,
+  };
+  const refresh = {
+    snapshot: { collections: [collection], jobs: [] },
+    subscribe() {
+      return () => {};
+    },
+    async request() {
+      return { collections: [collection], stale: [], errors: {} };
+    },
+  };
+  const request = async (url) => {
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    const download = dom.workspace.querySelector(".library-download");
+    assert.ok(download, "every collection row offers a download");
+    assert.equal(download.tagName, "A");
+    assert.equal(download.getAttribute("href"), "/api/collections/peter%20pan%20%26%20wendy/download");
+    assert.equal(download.hasAttribute("download"), true);
+    assert.equal(download.hasAttribute("data-collection-mutation"), true);
+    assert.match(download.textContent, /Download/);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("focused Review stage-gates assignment and offers the same Finish preparation route", async () => {
   const dom = installDom();
   const controller = new AbortController();

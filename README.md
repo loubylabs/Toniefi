@@ -12,7 +12,7 @@ The application has six destinations:
 
 - **Desk** accepts up to 50 HTTP or HTTPS source URLs at once. LibriVox search and multi-file upload are available as secondary intake modes.
 - **Review Shelf** holds every collection that completed Forge and is ready for a deliberate Creative Tonie choice.
-- **Library** shows every local collection, including extracted work that is not ready to send. Search, rescan, Finish preparation, open, and local deletion live here.
+- **Library** shows every local collection, including extracted work that is not ready to send. Search, rescan, Finish preparation, open, download, and local deletion live here.
 - **Creative Tonies** reads current remote contents before writes. It supports chapter rename, pointer and keyboard reorder, remove, and clear.
 - **Activity** keeps the 40 most recent jobs with progress, timestamps, errors, result links, and eligible retries.
 - **Settings** manages the myTonies credential source, connection tests, local credential removal, capacity, paths, and tool status.
@@ -187,6 +187,8 @@ The library is deliberately plain:
 ```
 
 `collection.json` owns track order, titles, metadata, and cached durations. Files added by hand appear after a Library rescan. Deleting TonieFi leaves the folders and MP3 files usable by other software.
+
+Download on any Library row returns that collection as one zip of audio, cover art, and `collection.json`, so the files are reachable without shell access to the host. Track order lives in the manifest rather than in the filenames, so the archive renumbers its tracks from the manifest and a collection reordered during Review still unpacks in the reviewed order. The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed.
 
 Library deletion is intentionally destructive. Its confirmation names the local collection folder and audio files that will be removed.
 

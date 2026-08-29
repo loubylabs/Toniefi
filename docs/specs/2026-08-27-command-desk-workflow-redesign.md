@@ -48,7 +48,7 @@ The application shell has six destinations:
 
 1. **Desk:** batch intake and the live work cart.
 2. **Review Shelf:** collections whose manifest stage is `forged`, plus focused collection review.
-3. **Library:** every local collection, search, rescan, open, and delete.
+3. **Library:** every local collection, search, rescan, open, download, and delete.
 4. **Creative Tonies:** remote Tonie contents and existing safe chapter management.
 5. **Activity:** complete job history, progress, errors, and eligible retries.
 6. **Settings:** account connection, credential source, connection test, credential replacement or removal, system tools, and product disclosures.
@@ -173,7 +173,7 @@ Assignment reuses the existing safe push behavior. It refreshes Tonie data befor
 
 ## Library
 
-Library is the durable local collection view. It provides search by title, Rescan, Finish preparation for legacy extracted collections, open for review when forged, and delete. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
+Library is the durable local collection view. It provides search by title, Rescan, Finish preparation for legacy extracted collections, open for review when forged, download, and delete. Download returns the collection as one zip of audio, cover art, and its manifest, numbered in the reviewed order rather than the order the files were written in. It is offered for every collection, forged or not, because the audio is on disk either way. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
 
 The current collection list behavior moves into this screen. There is no second library implementation hidden inside Desk or Review Shelf.
 

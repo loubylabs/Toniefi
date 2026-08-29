@@ -205,6 +205,19 @@ export function createLibraryScreen({
           }
         });
       }
+      // A plain link, so the browser streams the archive to disk itself. An
+      // extracted collection has its audio on disk too, so this never waits
+      // for Forge.
+      const download = element("a", {
+        className: "button button-secondary library-download",
+        href: `/api/collections/${encodeURIComponent(collection.slug)}/download`,
+        download: "",
+        "data-focus-key": `library-${collection.slug}-download`,
+        "data-collection-mutation": "",
+      }, [iconNode("download"), element("span", { text: "Download" })]);
+      download.addEventListener("click", (event) => {
+        if (mutation.pending) event.preventDefault();
+      });
       const removeButton = element("button", {
         type: "button",
         className: "button button-secondary library-delete",
@@ -257,7 +270,7 @@ export function createLibraryScreen({
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
           : null,
-        element("div", { className: "library-row-actions" }, [primary, removeButton]),
+        element("div", { className: "library-row-actions" }, [primary, download, removeButton]),
       ]);
       return element("li", { className: "library-row", "aria-labelledby": titleId }, [collectionCover(collection), body]);
     }
