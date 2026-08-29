@@ -155,7 +155,7 @@ def test_picked_playlist_numbers_reach_yt_dlp(isolated_library, fake_download):
     command = recorded[0]
     assert "--yes-playlist" in command
     assert "--no-playlist" not in command
-    assert command[command.index("--playlist-items") + 1] == "1,3-5"
+    assert command[command.index("--playlist-items") + 1] == "1,3:5"
 
 
 def test_a_playlist_keeps_videos_that_have_no_chapters(isolated_library, fake_download):

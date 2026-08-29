@@ -164,8 +164,10 @@ def _player_client_args() -> list[str]:
 def _playlist_items_spec(items: list[int]) -> str:
     """Compact picked entry numbers into yt-dlp's --playlist-items grammar.
 
-    [1, 3, 4, 5] becomes "1,3-5", which keeps the argument short on a long
-    playlist where the user unticked only a handful of entries.
+    [1, 3, 4, 5] becomes "1,3:5", which keeps the argument short on a long
+    playlist where the user unticked only a handful of entries. START:STOP is
+    the current range syntax and includes both ends; START-STOP means the same
+    but survives only as a backward-compatible spelling.
     """
     ordered = sorted({int(item) for item in items if int(item) > 0})
     spans: list[str] = []
@@ -185,7 +187,7 @@ def _playlist_items_spec(items: list[int]) -> str:
 
 
 def _span(start: int, end: int) -> str:
-    return str(start) if start == end else f"{start}-{end}"
+    return str(start) if start == end else f"{start}:{end}"
 
 
 def playlist_preview(url: str) -> dict[str, Any]:
