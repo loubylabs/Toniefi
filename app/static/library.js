@@ -95,6 +95,14 @@ function collectionCover(collection) {
   });
 }
 
+function humanSeconds(seconds) {
+  const whole = Math.max(0, Math.round(Number(seconds) || 0));
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+  return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+}
+
 function stageLabel(stage) {
   return stage === "forged" ? "Forge complete" : stage === "extracted" ? "Extracted" : stage || "Local";
 }
@@ -124,6 +132,7 @@ export function createLibraryScreen({
     let collections = refresh.snapshot.collections || [];
     let jobs = refresh.snapshot.jobs || [];
     let query = "";
+    const selection = createSelectionState();
     const root = element("section", { className: "library-screen", "aria-labelledby": "library-title" });
     const titleGroup = element("div", {}, [
       element("h1", { id: "library-title", text: "Library" }),
@@ -151,6 +160,18 @@ export function createLibraryScreen({
     const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
     const summary = element("p", { className: "library-summary", role: "status", "aria-live": "polite" });
     const list = element("ul", { className: "library-list" });
+    const sendBar = element("section", {
+      className: "library-send-bar",
+      "aria-labelledby": "library-send-title",
+      hidden: true,
+    });
+    let tonies = null;
+    let toniesError = "";
+    let selections = [];
+    let attempt = null;
+    let operationKey = "";
+    let signature = "";
+    let sending = false;
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -272,6 +293,27 @@ export function createLibraryScreen({
           removeButton.focus({ preventScroll: true });
         }
       });
+      const selectable = preparation.state === "ready";
+      const tickId = `library-select-${collection.slug}`;
+      const tick = selectable
+        ? element("input", {
+          id: tickId,
+          type: "checkbox",
+          className: "library-select",
+          checked: selection.has(collection.slug),
+          "data-focus-key": `library-${collection.slug}-select`,
+        })
+        : null;
+      if (tick) {
+        tick.addEventListener("change", () => {
+          selection.toggle(collection.slug);
+          if (selection.size() === 1 && tonies === null) loadTargets(`library-${collection.slug}-select`);
+          render({ focusKey: `library-${collection.slug}-select` });
+        });
+      }
+      const tickCell = element("div", { className: "library-select-cell" }, tick
+        ? [tick, element("label", { for: tickId, className: "visually-hidden", text: `Select ${collection.title || collection.slug} to send` })]
+        : []);
       const facts = element("ul", { className: "collection-facts", "aria-label": "Collection facts" }, [
         element("li", { text: `${collection.track_count || 0} ${collection.track_count === 1 ? "chapter" : "chapters"}` }),
         element("li", { text: collection.total_duration || "No duration yet" }),
@@ -294,7 +336,7 @@ export function createLibraryScreen({
           : null,
         element("div", { className: "library-row-actions" }, [primary, removeButton]),
       ]);
-      return element("li", { className: "library-row", "aria-labelledby": titleId }, [collectionCover(collection), body]);
+      return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
     }
 
     function render({ focusKey = "" } = {}) {
@@ -332,8 +374,195 @@ export function createLibraryScreen({
         summary.textContent = `${shown.length} of ${collections.length} ${collections.length === 1 ? "collection" : "collections"}`;
         replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown)));
       }
+      renderSendBar();
       mutation.sync();
       restoreFocus(token, { root, fallback: search });
+    }
+
+    function limitSeconds() {
+      return sendCapacityLimit(refresh.snapshot.status || {});
+    }
+
+    // The caller says where focus belongs when the fetch settles, because the
+    // first tick on a row loads targets too: restoring to the refresh button
+    // there would take focus off the checkbox the operator just used.
+    async function loadTargets(focusKey = "library-send-refresh") {
+      toniesError = "";
+      try {
+        tonies = await request("/api/tonies", { signal });
+      } catch (error) {
+        tonies = null;
+        toniesError = error.message;
+      }
+      rebindTargets(selections, tonies);
+      // The chapter precondition inside the payload changed, so the key that
+      // identified the old payload must not identify this one.
+      operationKey = "";
+      attempt = null;
+      if (active && !signal?.aborted) render({ focusKey });
+    }
+
+    // Focus is NOT handled here. `render` already wraps the whole screen in
+    // rememberFocus(root) / restoreFocus, and the bar lives inside `root`, so
+    // a second focus dance nested inside that one would remember a focused
+    // element the outer render is about to detach. Every control in the bar
+    // therefore calls `render({ focusKey })`, never `renderSendBar()` directly.
+    function renderSendBar() {
+      if (!active || signal?.aborted) return;
+      const picked = selection.ordered(collections);
+      sendBar.hidden = picked.length === 0;
+      if (!picked.length) {
+        replace(sendBar);
+        selections = [];
+        attempt = null;
+        operationKey = "";
+        signature = "";
+        return;
+      }
+      const groups = packSelection(picked, limitSeconds());
+      const nextSignature = membershipSignature(groups);
+      if (nextSignature !== signature) {
+        // Membership, order, fingerprint or grouping changed, so this is a new
+        // operation. Targets clear with it: a Tonie chosen for one set of
+        // chapters was never chosen for a different set, and preselecting it
+        // for the new set would be the automatic assignment the design forbids.
+        signature = nextSignature;
+        selections = groups.map(() => ({ tonie: null, replaceExisting: false }));
+        operationKey = "";
+        attempt = null;
+      }
+      const totalSeconds = groups.reduce((sum, group) => sum + group.seconds, 0);
+      const heading = element("div", { className: "screen-heading" }, [
+        element("h2", {
+          id: "library-send-title",
+          text: `${picked.length} ${picked.length === 1 ? "story" : "stories"} selected · ${humanSeconds(totalSeconds)}`,
+        }),
+        element("button", { type: "button", className: "button button-secondary library-send-refresh", "data-focus-key": "library-send-refresh" }, [
+          iconNode("refresh"), element("span", { text: "Refresh targets" }),
+        ]),
+      ]);
+      heading.querySelector("button").addEventListener("click", () => loadTargets());
+
+      const groupNodes = groups.map((group, index) => {
+        const chosen = selections[index];
+        const picker = element("select", {
+          className: "library-send-target",
+          "aria-label": `Creative Tonie for group ${group.index}`,
+          "data-focus-key": `library-send-target-${group.index}`,
+        });
+        // No preselected target. Sending without an explicit choice would be an
+        // automatic assignment, and a Tonie write has no undo.
+        picker.append(element("option", { value: "", text: "Choose a Creative Tonie" }));
+        for (const tonie of tonies || []) {
+          const capacity = tonieCapacity(tonie, group.seconds, chosen.replaceExisting, limitSeconds());
+          picker.append(element("option", {
+            value: `${tonie.householdId}/${tonie.id}`,
+            text: `${targetLabel(tonie)} · ${tonie.time_free} free${capacity.fits ? "" : " · does not fit"}`,
+            selected: chosen.tonie ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === `${tonie.householdId}/${tonie.id}` : false,
+          }));
+        }
+        picker.addEventListener("change", () => {
+          chosen.tonie = (tonies || []).find((tonie) => `${tonie.householdId}/${tonie.id}` === picker.value) || null;
+          operationKey = "";
+          attempt = null;
+          render({ focusKey: `library-send-target-${group.index}` });
+        });
+
+        const appendInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "append", checked: !chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-append` });
+        const replaceInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "replace", checked: chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-replace` });
+        appendInput.addEventListener("change", () => { chosen.replaceExisting = false; operationKey = ""; attempt = null; render({ focusKey: `library-send-effect-${group.index}-append` }); });
+        replaceInput.addEventListener("change", () => { chosen.replaceExisting = true; operationKey = ""; attempt = null; render({ focusKey: `library-send-effect-${group.index}-replace` }); });
+
+        const membership = element("ol", { className: "library-send-membership" }, group.entries.map((entry) => (
+          element("li", {}, [
+            element("span", { text: entry.collectionTitle }),
+            element("span", { text: entry.title }),
+            element("span", { text: entry.duration || "" }),
+          ])
+        )));
+
+        return element("li", { className: "library-send-group" }, [
+          element("h3", { text: groups.length === 1 ? "Chapters to send" : `Group ${group.index}` }),
+          membership,
+          element("div", { className: "library-send-target-field" }, [
+            element("span", { className: "visually-hidden", text: `Group ${group.index} target` }),
+            picker,
+          ]),
+          element("fieldset", { className: "library-send-effect" }, [
+            element("legend", { text: `What group ${group.index} does to that Tonie` }),
+            element("label", {}, [appendInput, element("span", { text: "Append to the back" })]),
+            element("label", {}, [replaceInput, element("span", { text: "Replace everything" })]),
+          ]),
+        ]);
+      });
+
+      const problems = tonies ? selectionProblems(groups, selections, limitSeconds()) : ["Creative Tonies are not loaded yet."];
+      const validation = element("p", { className: "library-send-validation", role: "status" },
+        problems.length ? [element("span", { text: problems[0] })] : []);
+      if (toniesError) {
+        replace(validation, element("span", { text: `Creative Tonies could not load. ${toniesError}` }));
+      }
+
+      const send = element("button", {
+        type: "button",
+        className: "button button-primary library-send-submit",
+        disabled: sending || problems.length > 0,
+        "data-focus-key": "library-send-submit",
+      }, [iconNode("tonie"), element("span", { text: `Send ${picked.length} ${picked.length === 1 ? "story" : "stories"}` })]);
+      send.addEventListener("click", () => submitSend(groups, picked));
+
+      const cancel = element("button", {
+        type: "button",
+        className: "button button-secondary library-send-clear",
+        text: "Clear selection",
+        disabled: sending,
+        "data-focus-key": "library-send-clear",
+      });
+      cancel.addEventListener("click", () => {
+        selection.clear();
+        render({ focusKey: "library-search" });
+      });
+
+      replace(sendBar,
+        heading,
+        element("ol", { className: "library-send-groups" }, groupNodes),
+        validation,
+        element("div", { className: "library-send-actions" }, [cancel, send]),
+      );
+    }
+
+    async function submitSend(groups, picked) {
+      if (sending) return;
+      if (!operationKey) operationKey = newOperationKey();
+      const payload = buildPushBatchPayload(groups, selections, operationKey);
+      const replacing = selections.filter((choice) => choice.replaceExisting);
+      attempt = createSendAttempt({
+        payload,
+        request,
+        signal,
+        setPending: (pending) => { sending = pending; render({ focusKey: "library-send-submit" }); },
+        confirm: () => showConfirmDialog({
+          title: "Replace chapters on a Creative Tonie?",
+          message: `${replacing.map((choice) => targetLabel(choice.tonie)).join(", ")} will lose every chapter currently stored, and this cannot be undone. Your local library is not touched.`,
+          confirmLabel: "Replace and send",
+          destructive: true,
+        }),
+        onReceipt: async () => {
+          selection.clear();
+          operationKey = "";
+          attempt = null;
+          notify(`${picked.length} ${picked.length === 1 ? "story is" : "stories are"} queued to send.`, { kind: "success" });
+          announce("Creative Tonie send queued.");
+          await refresh.request();
+          render({ focusKey: "library-search" });
+        },
+        onFailure: (error) => {
+          notify(`${error.message} The selection is unchanged. Fix the problem and send again.`, { kind: "failure", timeout: 0 });
+        },
+      });
+      // Only a replace is irreversible, so only a replace is worth a dialog.
+      if (replacing.length) await attempt.submit();
+      else await attempt.retry();
     }
 
     function onRefresh(snapshot) {
@@ -379,7 +608,7 @@ export function createLibraryScreen({
       }
     });
 
-    root.append(header, searchField, stale, summary, list);
+    root.append(header, searchField, stale, summary, list, sendBar);
     replace(workspace, root);
     render();
     const unsubscribe = refresh.subscribe(onRefresh);
