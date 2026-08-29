@@ -469,8 +469,11 @@ export function createLibraryScreen({
           picker.append(element("option", {
             value: `${tonie.householdId}/${tonie.id}`,
             // The number printed here is the one the fit check ran against, so
-            // an option can never read "1h 30m free · does not fit". The API's
-            // time_free counts the raw Tonie limit, not the usable one.
+            // an option can never read "1h 30m free · does not fit". That has
+            // to come from tonieCapacity, not the tonie's own time_free:
+            // replaceExisting frees the whole usable limit, not the usable
+            // limit minus what is already present, and time_free does not
+            // know which effect is chosen.
             text: `${tonieLabel(tonie)} · ${humanDuration(capacity.availableSeconds)} free${capacity.fits ? "" : " · does not fit"}`,
             selected: chosen.tonie ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === `${tonie.householdId}/${tonie.id}` : false,
           }));

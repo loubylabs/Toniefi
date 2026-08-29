@@ -8,7 +8,7 @@
 
 ## Summary
 
-TonieFi will become a batch-first preparation workspace for one household. A user can submit several audiobook links, let every source extract and Forge independently, review completed collections, and deliberately choose which Creative Tonies receive them. The interface will replace the current five-step wizard with a persistent application shell based on the approved Command Desk composition.
+TonieFi will become a batch-first preparation workspace for one household. A user can submit several audiobook links, let every source extract and Forge independently, and then select finished collections in the Library to send to their Creative Tonies. The interface will replace the current five-step wizard with a persistent application shell based on the approved Command Desk composition.
 
 The visual system translates a contemporary library workroom into an operational web interface. A deep bottle-green service index anchors navigation. A cool utility-paper intake tray owns batch entry. A live work cart keeps background state visible. Full-color cover jackets make collections recognizable. Stamped labels communicate state without depending on color alone.
 
@@ -20,9 +20,9 @@ The visual system translates a contemporary library workroom into an operational
 - Normalize perceived loudness to −16 LUFS with a −1.5 dBTP ceiling.
 - Preserve chapter markers, clean titles, and split oversized tracks by default.
 - Keep successful sources moving when another source fails.
-- Stop every prepared collection at review before any Tonie Cloud write.
-- Make background progress, failures, retries, and review readiness visible across navigation.
-- Give collection review, library management, Creative Tonie management, activity, and account settings clear homes.
+- Land every prepared collection in the Library, where nothing reaches a Creative Tonie without an explicit selection and an explicit Send.
+- Make background progress, failures, and retries visible across navigation, with every finished collection visible in the Library.
+- Give the Library, Creative Tonie management, activity, and account settings clear homes.
 - Work with keyboard, touch, narrow screens, reduced motion, and high zoom.
 
 ## Non-goals
@@ -36,7 +36,7 @@ The visual system translates a contemporary library workroom into an operational
 
 ## Product principles
 
-1. Automation handles repeatable preparation. Human attention stays on review, assignment, and destructive actions.
+1. Automation handles repeatable preparation. Human attention stays on selection, assignment, and destructive actions.
 2. Each collection keeps its own identity, progress, failure, and recovery path.
 3. The next safe action remains visible.
 4. TonieFi describes unsupported APIs, stored credentials, destructive writes, and errors plainly.

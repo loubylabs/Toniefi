@@ -630,8 +630,10 @@ test("an option never advertises free space the fit check will refuse", async ()
   oversized.tracks = [{ name: "long.mp3", title: "Long", seconds: 5371, duration: "1h 30m" }];
   const screen = mountLibrary({
     collections: [oversized],
-    // time_free is the raw Tonie limit, one headroom above the usable limit
-    // the fit check runs against.
+    // time_free is set deliberately stale here, one headroom above what the
+    // fit check itself computes from limitSeconds() and secondsPresent, so
+    // this test can prove the picker's printed figure never just trusts the
+    // tonie's own snapshot.
     tonies: [{ ...blueTonie(), time_free: "1h 30m", seconds_present: 0 }],
     limitSeconds: 5370,
   });

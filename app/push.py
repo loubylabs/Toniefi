@@ -192,7 +192,7 @@ def describe_tonie(tonie: dict[str, Any]) -> dict[str, Any]:
     seconds = float(tonie.get("secondsPresent") or 0)
     tonie["seconds_present"] = seconds
     tonie["time_used"] = audio.human_duration(seconds)
-    tonie["seconds_free"] = max(0, config.TONIE_LIMIT_SECONDS - seconds)
+    tonie["seconds_free"] = max(0, config.usable_limit() - seconds)
     tonie["time_free"] = audio.human_duration(tonie["seconds_free"])
     return tonie
 

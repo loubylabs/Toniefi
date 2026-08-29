@@ -32,20 +32,24 @@ def test_chapter_still_transcoding_shows_no_duration():
     assert result["chapters"][0]["transcoding"] is True
 
 
-def test_free_time_is_the_tonie_limit_minus_what_is_present():
+def test_free_time_is_the_usable_limit_minus_what_is_present(monkeypatch):
+    # A non-zero headroom, distinct from the raw limit, so this test would
+    # fail if describe_tonie ever regressed to TONIE_LIMIT_SECONDS.
+    monkeypatch.setattr(config, "TONIE_HEADROOM_SECONDS", 30)
     result = describe_tonie({"id": "t1", "secondsPresent": 60.0, "chapters": []})
     assert result["seconds_present"] == 60.0
     assert result["time_used"] == "1m 00s"
-    # Read the limit rather than hard-coding 5400: TONIE_LIMIT_SECONDS is an
-    # env var, so a machine that sets it would fail a literal here.
-    assert result["seconds_free"] == config.TONIE_LIMIT_SECONDS - 60.0
+    # Read the limit rather than hard-coding 5370: usable_limit() derives
+    # from env vars, so a machine that sets them would fail a literal here.
+    assert result["seconds_free"] == config.usable_limit() - 60.0
     assert result["time_free"] == audio.human_duration(
-        config.TONIE_LIMIT_SECONDS - 60.0)
+        config.usable_limit() - 60.0)
 
 
-def test_free_time_never_goes_negative():
+def test_free_time_never_goes_negative(monkeypatch):
+    monkeypatch.setattr(config, "TONIE_HEADROOM_SECONDS", 30)
     result = describe_tonie(
-        {"id": "t1", "secondsPresent": config.TONIE_LIMIT_SECONDS + 1.0,
+        {"id": "t1", "secondsPresent": config.usable_limit() + 1.0,
          "chapters": []})
     assert result["seconds_free"] == 0
 
