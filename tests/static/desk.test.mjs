@@ -146,8 +146,8 @@ test("buildPreparePayload creates the exact safe-default request for a valid bat
 
   assert.deepEqual(payload, {
     sources: [
-      { url: "https://example.com/one", playlist_items: [] },
-      { url: "https://example.com/two", playlist_items: [] },
+      { url: "https://example.com/one", playlist_items: null },
+      { url: "https://example.com/two", playlist_items: null },
     ],
     options: {
       use_chapters: true,
@@ -597,7 +597,8 @@ test("a link that names a playlist is offered for picking", () => {
 
 test("the pick label says how much of a playlist is chosen", () => {
   assert.equal(playlistPickLabel({}), "Pick videos");
-  assert.equal(playlistPickLabel({ total: 12, picked: [] }), "Pick videos");
+  assert.equal(playlistPickLabel({ total: 12, picked: null }), "Pick videos");
+  assert.equal(playlistPickLabel({ total: 12, picked: [] }), "No videos picked");
   assert.equal(playlistPickLabel({ total: 12, picked: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }), "All 12 videos");
   assert.equal(playlistPickLabel({ total: 12, picked: [1, 3, 5] }), "3 of 12 videos");
   assert.equal(playlistPickLabel({ total: 12, picked: [4] }), "1 of 12 videos");
@@ -611,8 +612,31 @@ test("prepare payload carries the picked playlist numbers", () => {
 
   assert.deepEqual(payload.sources, [
     { url: "https://www.youtube.com/playlist?list=PL1", playlist_items: [1, 3] },
-    { url: "https://example.test/story", playlist_items: [] },
+    { url: "https://example.test/story", playlist_items: null },
   ]);
+});
+
+test("a row nobody picked from sends no pick, not an empty one", () => {
+  // The two used to share the empty list, and the download read that as "the
+  // link speaks for itself". A bare playlist link ignores --no-playlist, so
+  // unticking every entry brought every entry.
+  const payload = buildPreparePayload([{ value: "https://www.youtube.com/playlist?list=PL1" }]);
+
+  assert.equal(payload.sources[0].playlist_items, null);
+});
+
+test("a playlist row with every entry unticked blocks the whole batch", () => {
+  const parsed = parseSourceLines([
+    { value: "https://www.youtube.com/playlist?list=PL1", picked: [] },
+    { value: "https://example.test/story" },
+  ]);
+
+  assert.equal(parsed.valid, false);
+  assert.match(parsed.rows[0].error, /Pick at least one video/);
+  assert.equal(parsed.rows[1].error, "");
+  assert.throws(() => buildPreparePayload([
+    { value: "https://www.youtube.com/playlist?list=PL1", picked: [] },
+  ]), /Fix every source/);
 });
 
 test("an expanded playlist picker scrolls inside its own bounded region", () => {
