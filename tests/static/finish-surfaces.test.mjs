@@ -331,8 +331,8 @@ test("Settings facts derive usable headroom and tool status from server truth", 
     tools: { ffmpeg: true, ffprobe: false },
   }), {
     limit: "1h 30m",
-    usable: "1h 29m",
-    headroom: "0m 30s",
+    usable: "1h 29m 30s",
+    headroom: "30s",
     libraryPath: "/library",
     tools: [
       { name: "ffmpeg", available: true },

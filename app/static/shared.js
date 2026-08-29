@@ -41,15 +41,31 @@ export function element(tagName, attributes = {}, children = []) {
 }
 
 export function humanDuration(seconds) {
-  // The one duration format in the product. It matches `human_duration` in
-  // app/audio.py, which is what the server already sends for every duration
-  // the screens display, so a locally computed one reads the same.
+  // Media durations, shown beside values the server formatted, so this matches
+  // `human_duration` in app/audio.py exactly and drops seconds at the hour
+  // scale the same way it does.
   const total = Math.max(0, Math.round(Number(seconds) || 0));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const rest = total % 60;
   if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
   return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+}
+
+
+export function exactDuration(seconds) {
+  // Config figures the reader is meant to subtract, so this never drops a
+  // unit the way humanDuration does at the hour scale. A limit of 1h 30m, a
+  // usable 1h 29m 30s and a headroom of 30s have to agree on screen.
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  if (rest || !parts.length) parts.push(`${rest}s`);
+  return parts.join(" ");
 }
 
 

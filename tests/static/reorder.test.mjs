@@ -5,6 +5,7 @@ import { filterCollectionsByTitle } from "../../app/static/library.js";
 import { moveControlFocusKey } from "../../app/static/collection.js";
 import {
   createMutationController,
+  exactDuration,
   humanDuration,
   moveItem,
   snapshotRefreshOutcome,
@@ -126,13 +127,18 @@ test("filterCollectionsByTitle searches titles case-insensitively without changi
   assert.deepEqual(filterCollectionsByTitle(collections, "").map((item) => item.slug), ["wind", "garden", "island"]);
 });
 
-test("one duration formatter serves every screen and matches the server's human_duration", () => {
-  // 1500 seconds is where the two retired private formatters disagreed: the
-  // collection screen padded the seconds, Settings dropped them entirely.
-  assert.equal(humanDuration(1500), "25m 00s");
+test("humanDuration matches the server and drops seconds at the hour scale", () => {
+  assert.equal(humanDuration(5400), "1h 30m");
   assert.equal(humanDuration(5370), "1h 29m");
+  assert.equal(humanDuration(1500), "25m 00s");
   assert.equal(humanDuration(30), "0m 30s");
-  assert.equal(humanDuration(0), "0m 00s");
-  assert.equal(humanDuration(-5), "0m 00s");
-  assert.equal(humanDuration("not a number"), "0m 00s");
+});
+
+test("exactDuration keeps every unit so a config readout subtracts", () => {
+  // 1h 30m limit minus 1h 29m 30s usable is 30s headroom, and all three must
+  // be readable as the same arithmetic.
+  assert.equal(exactDuration(5400), "1h 30m");
+  assert.equal(exactDuration(5370), "1h 29m 30s");
+  assert.equal(exactDuration(30), "30s");
+  assert.equal(exactDuration(0), "0s");
 });

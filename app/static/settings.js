@@ -3,7 +3,7 @@ import { icon } from "./icons.js";
 import {
   announce,
   element,
-  humanDuration,
+  exactDuration,
   notify,
   replace,
   setBusy,
@@ -58,9 +58,9 @@ export function settingsFacts(status = {}) {
   const limit = Number(status.tonie_limit_seconds || 0);
   const usable = Number(status.usable_limit_seconds || 0);
   return {
-    limit: status.tonie_limit_human || humanDuration(limit),
-    usable: humanDuration(usable),
-    headroom: humanDuration(Math.max(0, limit - usable)),
+    limit: status.tonie_limit_human || exactDuration(limit),
+    usable: exactDuration(usable),
+    headroom: exactDuration(Math.max(0, limit - usable)),
     libraryPath: status.library_dir || "Unavailable",
     tools: Object.entries(status.tools || {}).map(([name, available]) => ({
       name,
