@@ -778,6 +778,10 @@ def _decorate(slug: str, path: Path, manifest: dict[str, Any]) -> dict[str, Any]
     for track in manifest["tracks"]:
         track["duration"] = audio.human_duration(track.get("seconds", 0))
         track["oversized"] = track.get("seconds", 0) > limit
+    # Computed last, so it covers the decorated track list the caller will
+    # actually send. Both the index and the detail route go through here, so a
+    # collection fingerprints identically wherever it is read.
+    manifest["manifest_fingerprint"] = manifest_fingerprint(manifest)
     return manifest
 
 

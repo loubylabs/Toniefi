@@ -330,7 +330,6 @@ def get_collection(slug: str, refresh: bool = False) -> dict[str, Any]:
     if not manifest:
         raise fail(404, f"No collection named {slug}.")
     manifest["plan"] = library.plan(slug)
-    manifest["manifest_fingerprint"] = library.manifest_fingerprint(manifest)
     return manifest
 
 

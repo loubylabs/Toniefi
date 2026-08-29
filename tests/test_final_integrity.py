@@ -1330,3 +1330,27 @@ def test_incomplete_saved_pair_never_builds_a_cloud_client(isolated, monkeypatch
 
     with pytest.raises(tonies.AuthError, match="incomplete"):
         push.client_from_settings()
+
+
+def test_collection_index_carries_the_same_fingerprint_as_the_detail_route(isolated):
+    """The Library sends from the index, so the index must fingerprint identically.
+
+    A bar that sent a fingerprint the detail route would not recognise would
+    fail every confirmed send with a 409 that no reselection could clear.
+    """
+    slug = library.create("Night Stories")
+    path = config.LIBRARY_DIR / slug
+    (path / "one.mp3").write_bytes(b"one.mp3")
+    manifest_path = path / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["stage"] = "forged"
+    manifest["tracks"] = [
+        {"name": "one.mp3", "title": "One", "seconds": 1000, "size": 7, "mtime": 1},
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    indexed = next(entry for entry in library.list_all() if entry["slug"] == slug)
+    detail = library.get(slug)
+
+    assert indexed["manifest_fingerprint"] == library.manifest_fingerprint(detail)
+    assert len(indexed["manifest_fingerprint"]) == 64
