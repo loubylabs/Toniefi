@@ -238,3 +238,41 @@ test("route request and refresh scopes carry one mounted signal and silence subs
   assert.equal(unsubscribed, 1);
   assert.deepEqual(notifications, []);
 });
+
+test("the phone navigation shows the active job count too", () => {
+  // The badge markup lived only in the desktop sidebar, which is hidden below
+  // 759.98px, so a phone showed no sign at all that a send was running.
+  const originalDocument = globalThis.document;
+  const document = new TestDocument();
+  const made = {};
+  for (const id of [
+    "activityStatus", "activityCount",
+    "mobileActivityStatus", "mobileActivityCount", "mobileMoreStatus",
+  ]) {
+    const node = document.createElement("span");
+    node.id = id;
+    node.hidden = true;
+    made[id] = node;
+    document.body.append(node);
+  }
+  globalThis.document = document;
+  try {
+    updateShell({
+      status: null,
+      jobs: [{ status: "running" }, { status: "queued" }, { status: "done" }],
+      stale: [],
+      errors: {},
+    });
+    assert.equal(made.mobileActivityCount.textContent, "2");
+    assert.equal(made.mobileActivityStatus.hidden, false);
+    assert.equal(made.mobileActivityStatus.getAttribute("aria-label"), "2 jobs active");
+    assert.equal(made.mobileMoreStatus.hidden, false);
+    assert.equal(made.activityCount.textContent, "2");
+
+    updateShell({ status: null, jobs: [], stale: [], errors: {} });
+    assert.equal(made.mobileActivityStatus.hidden, true);
+    assert.equal(made.mobileMoreStatus.hidden, true);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});

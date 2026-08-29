@@ -335,9 +335,18 @@ export function createLibraryScreen({
           render({ focusKey: `library-${collection.slug}-select` });
         });
       }
-      const tickCell = element("div", { className: "library-select-cell" }, tick
-        ? [tick, element("label", { for: tickId, className: "visually-hidden", text: `Select ${collection.title || collection.slug} to send` })]
-        : []);
+      // A label, not a div, and bound to the checkbox: the 20x20 box on its own
+      // failed WCAG 2.2 AA 2.5.8, and the visually hidden label gave it no
+      // target to grow into. The whole cell is now the hit area.
+      const tickCell = tick
+        ? element("label", {
+          className: "library-select-cell",
+          for: tickId,
+        }, [tick, element("span", {
+          className: "visually-hidden",
+          text: `Select ${collection.title || collection.slug} to send`,
+        })])
+        : element("div", { className: "library-select-cell" });
       const facts = element("ul", { className: "collection-facts", "aria-label": "Collection facts" }, [
         element("li", { text: `${collection.track_count || 0} ${collection.track_count === 1 ? "chapter" : "chapters"}` }),
         element("li", { text: collection.total_duration || "No duration yet" }),

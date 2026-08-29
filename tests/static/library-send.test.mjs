@@ -39,6 +39,33 @@ function targetChecked(screen, group = 1) {
     .map((input) => Boolean(input.checked));
 }
 
+// The cap now lives in the base rule, because it is needed at every width and
+// stating it twice is exactly how the desktop bar went uncapped. This reads a
+// rule from outside any media query.
+function baseDeclarations(selector) {
+  const styles = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  let depth = 0;
+  let top = "";
+  for (const character of styles) {
+    if (character === "{") depth += 1;
+    if (depth === 0) top += character;
+    else if (depth === 1 && character !== "{") top += character;
+    if (character === "}") depth -= 1;
+    if (depth === 0 && character === "}") top += character;
+  }
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const body = styles
+    .replace(/@media[^{]*\{(?:[^{}]|\{[^{}]*\})*\}/g, "")
+    .match(new RegExp(`(?:^|\\})\\s*${escaped}\\s*\\{([^{}]*)\\}`))?.[1];
+  if (!body) return {};
+  return Object.fromEntries(body.split(";").flatMap((declaration) => {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) return [];
+    return [[declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim()]];
+  }));
+}
+
 function phoneDeclarations(selector) {
   const styles = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "");
@@ -238,7 +265,11 @@ test("only a forged row offers a labelled tick box", async () => {
     const label = screen.dom.workspace.querySelectorAll("label")
       .find((item) => item.getAttribute("for") === "library-select-night-story");
     assert.equal(label.textContent, "Select Night Story to send");
-    assert.equal(label.className, "visually-hidden");
+    // The label IS the cell now, so the whole 44px cell is the hit target.
+    // The wording stays hidden; only the box is visible.
+    assert.equal(label.className, "library-select-cell");
+    assert.equal(label.getAttribute("for"), "library-select-night-story");
+    assert.equal(label.querySelector("span").className, "visually-hidden");
     assert.equal(screen.node(".library-send-bar").hidden, true);
   } finally {
     screen.stop();
@@ -1173,18 +1204,22 @@ test("the phone send bar leaves the collections behind it on screen", () => {
   // so the last of Send sat behind it. A bar that tall is also pinned against
   // the top of its containing block, where the sticky bottom offset has no
   // room left to lift it clear.
-  const bar = phoneDeclarations(".library-send-bar");
-
-  assert.equal(bar["max-height"], "55svh");
-  assert.equal(bar.bottom, "calc(4.5rem + env(safe-area-inset-bottom))");
+  // The cap is stated once, in the base rule, so it now protects the desktop
+  // bar too. Measured there at 1440x900 before this: 1469px tall.
+  assert.equal(baseDeclarations(".library-send-bar")["max-height"], "min(55svh, 34rem)");
+  // Only the offset that clears the fixed phone navigation is phone-specific.
+  assert.equal(
+    phoneDeclarations(".library-send-bar").bottom,
+    "calc(4.5rem + env(safe-area-inset-bottom))",
+  );
 });
 
 test("only the chapter list gives way when the phone send bar runs out of room", () => {
   // The target field and the send buttons are the point of the bar, so the
   // list of what is being sent is the one part allowed to shrink and scroll.
-  assert.equal(phoneDeclarations(".library-send-bar > *").flex, "0 0 auto");
+  assert.equal(baseDeclarations(".library-send-bar > *").flex, "0 0 auto");
 
-  const groups = phoneDeclarations(".library-send-groups");
+  const groups = baseDeclarations(".library-send-groups,\n.library-receipt");
 
   assert.equal(groups.flex, "1 1 auto");
   assert.equal(groups["min-height"], "0");
