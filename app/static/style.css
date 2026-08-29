@@ -2149,6 +2149,23 @@ img.collection-detail-cover {
   flex: 0 0 auto;
 }
 
+.tonie-detail-bulk {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tonie-select-all-field {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.tonie-chapter-select {
+  flex: none;
+}
+
 .tonie-chapter-list {
   display: grid;
   gap: var(--space-2);
@@ -2159,7 +2176,7 @@ img.collection-detail-cover {
   min-width: 0;
   min-height: 4.75rem;
   padding: var(--space-2) var(--space-3);
-  grid-template-columns: 1.5rem 2rem minmax(10rem, 1fr) auto auto;
+  grid-template-columns: 1.75rem 1.5rem 2rem minmax(10rem, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
   border: var(--rule-thin);
@@ -2211,7 +2228,7 @@ img.collection-detail-cover {
 }
 
 .tonie-move svg,
-.tonie-remove svg,
+.tonie-remove-selected svg,
 .tonie-clear svg {
   width: 1.1rem;
   height: 1.1rem;
@@ -3090,26 +3107,26 @@ img.collection-detail-cover {
     width: 100%;
   }
 
+  .tonie-detail-bulk {
+    width: 100%;
+  }
+
+  .tonie-detail-bulk .button {
+    flex: 1;
+  }
+
   .tonie-chapter-row {
-    grid-template-columns: 1.25rem 1.5rem minmax(0, 1fr);
+    grid-template-columns: 1.25rem 1.25rem 1.5rem minmax(0, 1fr);
     align-items: start;
   }
 
-  .tonie-chapter-actions,
-  .tonie-remove {
-    grid-column: 3;
-  }
-
   .tonie-chapter-actions {
+    grid-column: 4;
     justify-content: flex-start;
   }
 
   .tonie-chapter-title input {
     min-height: 44px;
-  }
-
-  .tonie-remove {
-    width: 100%;
   }
 
   .activity-row {
