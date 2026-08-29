@@ -5,10 +5,10 @@ import json
 import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import unquote_to_bytes, urlparse
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -127,6 +127,18 @@ class PrepareOptions(RequestModel):
 class PrepareBatch(RequestModel):
     sources: list[PrepareSource]
     options: PrepareOptions = Field(default_factory=PrepareOptions)
+
+
+class UploadPrepare(RequestModel):
+    """The multipart intake form, declared so it is refused the same way.
+
+    A form is a request body like any other, and the base class is what makes
+    a stray field a 422 here rather than something the server drops in silence.
+    """
+
+    files: list[UploadFile]
+    title: str = ""
+    options: str = "{}"
 
 
 class LibrivoxImport(RequestModel):
@@ -267,13 +279,10 @@ def librivox_import(body: LibrivoxImport) -> dict[str, Any]:
 
 
 @app.post("/api/uploads/prepare")
-async def prepare_uploads(
-    files: list[UploadFile] = File(...),
-    title: str = Form(""),
-    options: str = Form("{}"),
-) -> dict[str, Any]:
+async def prepare_uploads(body: Annotated[UploadPrepare, Form()]) -> dict[str, Any]:
+    files, title = body.files, body.title
     try:
-        forge_options = PrepareOptions.model_validate(json.loads(options)).model_dump()
+        forge_options = PrepareOptions.model_validate(json.loads(body.options)).model_dump()
     except (json.JSONDecodeError, ValidationError) as exc:
         raise fail(400, "Upload options are invalid.") from exc
     if not files:

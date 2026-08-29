@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import nullcontext
+from typing import get_args
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app import config, db, jobs, library, main, push
 
@@ -172,14 +175,55 @@ def test_a_batch_carrying_the_retired_single_collection_fields_is_refused(isolat
     assert db.jobs_for_refresh() == []
 
 
-def test_a_retired_field_inside_one_assignment_source_is_refused(isolated):
+def test_a_retired_field_on_an_assignment_is_refused(isolated):
+    """One request, one retired field, so nothing else can answer for it.
+
+    Combining both levels in a single body lets either validation root break
+    while the other keeps the test green.
+    """
     body = batch_body(isolated)
     body["assignments"][0]["files"] = ["one.mp3"]
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 422
+    assert db.jobs_for_refresh() == []
+
+
+def test_a_retired_field_on_an_assignment_source_is_refused(isolated):
+    body = batch_body(isolated)
     body["assignments"][0]["sources"][0]["group_index"] = 1
 
     response = TestClient(main.app).post("/api/push/batch", json=body)
 
     assert response.status_code == 422
+    assert db.jobs_for_refresh() == []
+
+
+def test_two_assignments_naming_one_creative_tonie_are_refused(isolated):
+    """A Tonie written twice in one batch loses whichever group lands first.
+
+    Both assignments are otherwise valid, so nothing but the duplicate-target
+    check stands between this body and two jobs aimed at the same Tonie.
+    """
+    body = batch_body(isolated)
+    second = second_collection("Dawn Stories", [("dawn.mp3", "Dawn", 900)])
+    body["assignments"].append({
+        "household_id": "house-1",
+        "tonie_id": "tonie-1",
+        "replace": False,
+        "remote_chapters": [],
+        "sources": [{
+            "slug": second,
+            "manifest_fingerprint": library.get(second)["manifest_fingerprint"],
+            "files": ["dawn.mp3"],
+        }],
+    })
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Each capacity group needs a different Creative Tonie."
     assert db.jobs_for_refresh() == []
 
 
@@ -265,17 +309,67 @@ def test_each_batch_refusal_names_its_own_cause_and_the_library(isolated):
 
 
 
+def _reachable_models(annotation: object) -> list[type[BaseModel]]:
+    """Every pydantic model one route body can validate, nesting included."""
+    found: list[type[BaseModel]] = []
+    queue = [annotation]
+    while queue:
+        current = queue.pop()
+        if isinstance(current, type) and issubclass(current, BaseModel):
+            if current in found:
+                continue
+            found.append(current)
+            queue.extend(field.annotation for field in current.model_fields.values())
+            continue
+        queue.extend(get_args(current))
+    return found
+
+
 def test_every_request_body_this_application_accepts_forbids_extra_fields():
-    """One rule, checked structurally, so a new model cannot quietly opt out."""
-    models = [
-        value for value in vars(main).values()
-        if isinstance(value, type)
-        and issubclass(value, main.BaseModel)
-        and value not in {main.BaseModel, main.RequestModel}
+    """The routes, not the module globals, because the routes are what accepts.
+
+    Reading vars(main) checked the models this file happens to declare and
+    missed everything FastAPI generates, which is how the multipart form on
+    /api/uploads/prepare accepted unknown fields while this test reported PASS.
+    Walking each route body's own nesting keeps the models inside an
+    assignment covered, which the module scan did reach.
+    """
+    accepted = [
+        (route.path, sorted(route.methods), model)
+        for route in main.app.routes
+        if isinstance(route, APIRoute) and route.body_field is not None
+        for model in _reachable_models(route.body_field.type_)
     ]
 
-    assert models
-    assert [model.__name__ for model in models if model.model_config.get("extra") != "forbid"] == []
+    assert accepted
+    # The generated multipart model is the one that hid, so its route is named
+    # here: dropping out of this enumeration has to be a failure, not silence.
+    assert "/api/uploads/prepare" in [path for path, _, _ in accepted]
+    assert main.PushSource in [model for _, _, model in accepted]
+    assert [
+        (path, methods, model.__name__)
+        for path, methods, model in accepted
+        if model.model_config.get("extra") != "forbid"
+    ] == []
+
+
+def test_the_multipart_upload_form_refuses_an_unknown_field(isolated):
+    """The structural rule, proved against the wire on the route that broke it.
+
+    A form is still a request body, and a caller nobody migrated is still
+    wrong. Accepting the field and dropping it is how that caller stays wrong
+    without anyone finding out.
+    """
+    response = TestClient(main.app).post(
+        "/api/uploads/prepare",
+        files=[("files", ("story.mp3", b"story", "audio/mpeg"))],
+        data={"title": "Night Stories", "options": "{}", "group_index": "1"},
+    )
+
+    assert response.status_code == 422
+    assert [error["loc"] for error in response.json()["detail"]] == [["body", "group_index"]]
+    assert db.jobs_for_refresh() == []
+    assert list(config.upload_stage_dir().iterdir()) == []
 
 
 def test_old_single_push_endpoint_is_retired(isolated):
