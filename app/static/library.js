@@ -623,8 +623,18 @@ export function createLibraryScreen({
         signal,
         setPending: (pending) => { sending = pending; render({ focusKey: "library-send-submit" }); },
         confirm: () => showConfirmDialog({
-          title: "Replace chapters on a Creative Tonie?",
-          message: `${replacing.map((choice) => tonieLabel(choice.tonie)).join(", ")} will lose every chapter currently stored, and this cannot be undone. Your local library is not touched.`,
+          title: replacing.length === 1
+            ? "Replace chapters on a Creative Tonie?"
+            : `Replace chapters on ${replacing.length} Creative Tonies?`,
+          message: "Every chapter currently stored on these Creative Tonies will be lost, and this cannot be undone. Your local library is not touched.",
+          // The names alone could not answer this question: the Tonie Cloud
+          // ships every Creative Tonie called "Creative Tonie", so two boxes
+          // in one household read identically. The figure is the difference.
+          subject: replacing.map((choice) => ({
+            imageUrl: choice.tonie.imageUrl,
+            name: tonieLabel(choice.tonie),
+            detail: `${choice.tonie.chapter_count || 0} chapters will be replaced`,
+          })),
           confirmLabel: "Replace and send",
           destructive: true,
         }),

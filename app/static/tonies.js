@@ -103,6 +103,17 @@ function iconNode(name, className = "") {
 }
 
 
+export function tonieSubject(tonie, detail) {
+  // What a no-undo dialog has to carry: the figure, its name, and what this
+  // particular action will do to it.
+  return {
+    imageUrl: tonie.imageUrl,
+    name: tonieLabel(tonie),
+    detail,
+  };
+}
+
+
 function tonieKey(tonie) {
   return `${tonie.householdId}:${tonie.id}`;
 }
@@ -364,6 +375,7 @@ export function createToniesScreen({ request = api } = {}) {
         const confirmed = await showConfirmDialog({
           title: `Clear ${tonieLabel(tonie)}?`,
           message: `Clear all ${tonie.chapters.length} chapters from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          subject: tonieSubject(tonie, `${tonie.chapter_count || tonie.chapters.length} chapters will be cleared`),
           confirmLabel: "Clear every chapter",
           destructive: true,
         });
@@ -413,6 +425,7 @@ export function createToniesScreen({ request = api } = {}) {
         const confirmed = await showConfirmDialog({
           title: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"}?`,
           message: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"} from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          subject: tonieSubject(tonie, `${removing.size} of ${tonie.chapters.length} chapters will be removed`),
           confirmLabel: removing.size === 1 ? "Remove chapter" : `Remove ${removing.size} chapters`,
           destructive: true,
         });

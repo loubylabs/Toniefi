@@ -330,6 +330,10 @@ export function showConfirmDialog({
   confirmLabel,
   cancelLabel = "Cancel",
   destructive = false,
+  // One subject, or several. A destructive confirmation that only names its
+  // target cannot be answered when two Creative Tonies share a name, which is
+  // the state the Tonie Cloud ships them in.
+  subject = null,
 }) {
   const host = document.getElementById("dialogHost");
   if (!host) return Promise.resolve(false);
@@ -363,8 +367,23 @@ export function showConfirmDialog({
       finish(false);
     });
 
+    const subjects = subject ? (Array.isArray(subject) ? subject : [subject]) : [];
+    const subjectNode = subjects.length
+      ? element("ul", { className: "dialog-subjects" }, subjects.map((item) => (
+        element("li", {}, [
+          tonieJacket(item, "dialog-subject-jacket"),
+          element("div", {}, [
+            element("strong", { text: item.name || "Creative Tonie" }),
+            item.detail ? element("small", { text: item.detail }) : null,
+          ].filter(Boolean)),
+        ])
+      )))
+      : null;
+
     actions.append(cancel, confirm);
-    dialog.append(heading, copy, actions);
+    dialog.append(heading, copy);
+    if (subjectNode) dialog.append(subjectNode);
+    dialog.append(actions);
     host.append(dialog);
     dialog.showModal();
     cancel.focus();

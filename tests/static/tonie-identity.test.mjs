@@ -119,3 +119,43 @@ test("a blank name is refused in the browser and never reaches the network", asy
   harness.teardown();
   harness.dom.restore();
 });
+
+test("a destructive dialog shows the figure it is about to change", async () => {
+  const dom = installDom();
+  const { showConfirmDialog } = await import("../../app/static/shared.js");
+  const pending = showConfirmDialog({
+    title: "Clear this Tonie?",
+    message: "This cannot be undone.",
+    confirmLabel: "Clear",
+    destructive: true,
+    subject: { imageUrl: IMAGE, name: "Bedtime Bear", detail: "13 chapters" },
+  });
+  const dialog = dom.document.querySelectorAll("dialog")[0];
+  assert.ok(dialog.querySelectorAll("img").length, "the dialog should show the figure");
+  assert.match(dialog.textContent, /Bedtime Bear/);
+  assert.match(dialog.textContent, /13 chapters/);
+  await dialog.querySelectorAll("button")[0].dispatchEvent({ type: "click" });
+  assert.equal(await pending, false);
+  dom.restore();
+});
+
+test("the clear-all confirmation names and shows its Tonie", async () => {
+  const harness = mount({ tonies: [aTonie({ chapter_count: 2, chapters: [
+    { id: "c1", title: "One", duration: "1m 00s" },
+    { id: "c2", title: "Two", duration: "1m 00s" },
+  ] })] });
+  await flush();
+  await harness.dom.workspace.querySelectorAll("button")
+    .find((button) => button.className.includes("tonie-summary"))
+    .dispatchEvent({ type: "click" });
+  await flush();
+  const clear = harness.dom.workspace.querySelectorAll("button")
+    .find((button) => button.textContent.includes("Clear all chapters"));
+  clear.dispatchEvent({ type: "click" });
+  await flush();
+  const dialog = harness.dom.document.querySelectorAll("dialog")[0];
+  assert.ok(dialog.querySelectorAll("img").length, "a no-undo dialog must show the figure");
+  await dialog.querySelectorAll("button")[0].dispatchEvent({ type: "click" });
+  harness.teardown();
+  harness.dom.restore();
+});

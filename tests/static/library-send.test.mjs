@@ -292,7 +292,12 @@ test("replacing everything asks first and only then sends", async () => {
     const sending = screen.node(".library-send-submit").click();
     await flush();
     const dialog = screen.dom.document.getElementById("dialogHost").querySelector(".confirmation-dialog");
-    assert.match(dialog.textContent, /Blue Tonie · Home will lose every chapter currently stored/);
+    // The dialog now identifies its target by figure and name in a subject
+    // list rather than in prose, because two Creative Tonies with the same
+    // name read identically in a sentence.
+    assert.match(dialog.textContent, /will be lost, and this cannot be undone/);
+    assert.match(dialog.querySelector(".dialog-subjects").textContent, /Blue Tonie · Home/);
+    assert.ok(dialog.querySelector(".dialog-subject-jacket"), "the dialog must show the figure");
     assert.equal(screen.pushes.length, 0);
     await buttonWithText(dialog, "Replace and send").click();
     await sending;
