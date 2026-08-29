@@ -257,7 +257,7 @@ def test_prepare_run_forwards_the_picked_numbers_to_the_download(monkeypatch):
 
     prepare.run(
         {"url": "https://www.youtube.com/playlist?list=PL1", "playlist_items": [2, 4], "stage_id": "url-x"},
-        progress=lambda message: None,
+        progress=lambda message, percent=None: None,
         checkpoint=lambda payload: None,
     )
 

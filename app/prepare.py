@@ -15,7 +15,14 @@ DEFAULT_OPTIONS = {
     "split_oversized": True,
 }
 
-Progress = Callable[[str], None]
+Progress = Callable[..., None]
+"""A progress reporter: progress(message) or progress(message, percent).
+
+`percent` is a float 0-100 when the phase can measure itself, and None when it
+cannot. It is always passed through rather than remembered, so a phase with
+nothing to measure clears the last figure instead of leaving a full bar over
+work that is still running.
+"""
 Checkpoint = Callable[[dict[str, Any]], None]
 
 

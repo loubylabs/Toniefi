@@ -13,13 +13,20 @@ import httpx
 
 from . import audio, config, forge, library
 
-Progress = Callable[[str], None]
+Progress = Callable[..., None]
+"""A progress reporter: progress(message) or progress(message, percent).
+
+`percent` is a float 0-100 when the phase can measure itself, and None when it
+cannot. It is always passed through rather than remembered, so a phase with
+nothing to measure clears the last figure instead of leaving a full bar over
+work that is still running.
+"""
 
 LIBRIVOX_API = "https://librivox.org/api/feed/audiobooks/"
 USER_AGENT = "toniefi/1.0 (self-hosted personal library tool)"
 
 
-def _noop(_: str) -> None:
+def _noop(*_: Any, **__: Any) -> None:
     return None
 
 
@@ -119,7 +126,10 @@ def import_librivox(
                 filename = f"{position:03d}-{audio.slugify(label)}.mp3"
                 target = dest / filename
                 if not target.is_file():
-                    progress(f"Downloading {position}/{total}: {label}")
+                    progress(
+                        f"Downloading {position}/{total}: {label}",
+                        audio.step_percent(position - 1, total),
+                    )
                     _stream_download(client, section["listen_url"], target)
 
         # LibriVox section titles are already clean; keep them as the track titles.
@@ -333,7 +343,10 @@ def import_url(
                 # stutter the numbers back out as "001-001-002-intro.mp3".
                 track_title = _track_title(src.stem, from_chapter, offset, book_title)
                 name = f"{index:03d}-{audio.slugify(track_title)}.mp3"
-                progress(f"Storing {index}/{len(produced)}")
+                progress(
+                    f"Storing {index}/{len(produced)}",
+                    audio.step_percent(offset, len(produced)),
+                )
                 shutil.move(str(src), dest / name)
                 stored.append((name, track_title))
 

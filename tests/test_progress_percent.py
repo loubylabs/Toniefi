@@ -71,3 +71,13 @@ def test_present_passes_the_percentage_through(tmp_path, monkeypatch):
     job_id = db.create_job("push", "Send", {})
     db.update_job(job_id, status="running", progress_percent=42.0)
     assert jobs.present(db.get_job(job_id))["progress_percent"] == 42.0
+
+
+def test_step_percent_is_index_over_total():
+    from app import audio
+
+    assert audio.step_percent(0, 4) == 0.0
+    assert audio.step_percent(1, 4) == 25.0
+    assert audio.step_percent(4, 4) == 100.0
+    assert audio.step_percent(1, 0) is None
+    assert audio.step_percent(5, 4) == 100.0

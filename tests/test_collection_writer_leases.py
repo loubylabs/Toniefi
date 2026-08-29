@@ -206,7 +206,7 @@ def test_librivox_download_does_not_overlap_confirmed_push(isolated_writer, monk
         def stream(self, method, url):
             return Response()
 
-    def progress(message):
+    def progress(message, percent=None):
         if message.startswith("Downloading"):
             writer_ready.set()
             allow_writer.wait()
@@ -236,7 +236,7 @@ def test_url_audio_move_does_not_overlap_confirmed_push(isolated_writer, monkeyp
         (template.parent / "000-Story.mp3").write_bytes(b"url-audio")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    def progress(message):
+    def progress(message, percent=None):
         if message.startswith("Storing"):
             writer_ready.set()
             allow_writer.wait()
