@@ -161,11 +161,84 @@ def _player_client_args() -> list[str]:
             f"youtube:player_client={config.YTDLP_PLAYER_CLIENTS}"]
 
 
+def _playlist_items_spec(items: list[int]) -> str:
+    """Compact picked entry numbers into yt-dlp's --playlist-items grammar.
+
+    [1, 3, 4, 5] becomes "1,3:5", which keeps the argument short on a long
+    playlist where the user unticked only a handful of entries. START:STOP is
+    the current range syntax and includes both ends; START-STOP means the same
+    but survives only as a backward-compatible spelling.
+    """
+    ordered = sorted({int(item) for item in items if int(item) > 0})
+    spans: list[str] = []
+    start = previous = None
+    for number in ordered:
+        if start is None:
+            start = previous = number
+            continue
+        if number == previous + 1:
+            previous = number
+            continue
+        spans.append(_span(start, previous))
+        start = previous = number
+    if start is not None:
+        spans.append(_span(start, previous))
+    return ",".join(spans)
+
+
+def _span(start: int, end: int) -> str:
+    return str(start) if start == end else f"{start}:{end}"
+
+
+def playlist_preview(url: str) -> dict[str, Any]:
+    """List a playlist's entries without downloading any audio.
+
+    `--flat-playlist` asks the site for the index page only, so a hundred-video
+    playlist answers in a second and costs nothing. Entry numbers count every
+    position, including videos the site refuses to serve, because that is what
+    `--playlist-items` counts when the download runs.
+    """
+    if not shutil.which("yt-dlp"):
+        raise RuntimeError("yt-dlp is not installed in this container.")
+    cmd = [
+        "yt-dlp",
+        "--flat-playlist", "--dump-single-json",
+        "--no-warnings", "--ignore-no-formats-error",
+        *_player_client_args(),
+        url,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-3:]
+        raise RuntimeError(f"yt-dlp could not read that playlist: {' / '.join(tail) or 'unknown error'}")
+    try:
+        info = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as error:
+        raise RuntimeError("yt-dlp returned something that was not a playlist.") from error
+    return {
+        "title": info.get("title") or "",
+        "entries": [_preview_entry(index, entry)
+                    for index, entry in enumerate(info.get("entries") or [], start=1)],
+    }
+
+
+def _preview_entry(index: int, entry: dict[str, Any] | None) -> dict[str, Any]:
+    """A private or deleted video still holds its place in the numbering."""
+    entry = entry or {}
+    return {
+        "index": index,
+        "id": entry.get("id") or "",
+        "title": entry.get("title") or f"Video {index}",
+        "available": bool(entry.get("id")) and entry.get("title") not in ("[Private video]", "[Deleted video]"),
+    }
+
+
 def import_url(
     url: str,
     *,
     stage_id: str,
     use_chapters: bool = True,
+    playlist_items: list[int] | None = None,
     progress: Progress = _noop,
 ) -> dict[str, Any]:
     """Extract audio from a URL with yt-dlp, keeping metadata and cover art.
@@ -187,9 +260,16 @@ def import_url(
         chapters_dir = tmp / "chapters"
         progress("Fetching audio")
 
+        # Default to the one video the link points at. A bare playlist link is
+        # unaffected by --no-playlist, so it still brings every entry; a
+        # watch?v=...&list=... link no longer drags its whole playlist in
+        # behind it. Picking entries is what opts you into the playlist.
+        picked = _playlist_items_spec(playlist_items or [])
+        selection = (["--yes-playlist", "--playlist-items", picked]
+                     if picked else ["--no-playlist"])
         cmd = [
             "yt-dlp",
-            "--yes-playlist" if "list=" in url else "--no-playlist",
+            *selection,
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
             "--no-progress", "--newline", "--no-warnings",
@@ -198,8 +278,11 @@ def import_url(
         ]
         if use_chapters:
             # yt-dlp writes one file per chapter marker alongside the full file.
+            # The video number leads the name so that chapters from one video in
+            # a playlist never interleave with another video's.
             cmd += ["--split-chapters",
-                    "-o", f"chapter:{chapters_dir}/%(section_number)03d-%(section_title).60s.%(ext)s"]
+                    "-o", f"chapter:{chapters_dir}/%(playlist_index|0)03d-"
+                          "%(section_number)03d-%(section_title).60s.%(ext)s"]
         cmd.append(url)
 
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10800)
@@ -208,18 +291,15 @@ def import_url(
             raise RuntimeError(f"yt-dlp failed: {' / '.join(tail) or 'unknown error'}")
 
         info = _read_info_json(tmp)
-        # Prefer chapter files when the upload had real chapter markers --
-        # that is the difference between one 6-hour blob and 30 tracks.
-        chaptered = sorted(chapters_dir.glob("*.mp3")) if chapters_dir.is_dir() else []
-        produced = chaptered or sorted(
-            p for p in tmp.iterdir()
-            if p.is_file() and p.suffix.lower() in audio.AUDIO_EXTENSIONS
-        )
+        produced = _order_produced_audio(tmp, chapters_dir)
         if not produced:
             raise RuntimeError("yt-dlp produced no audio files.")
 
         uploader = info.get("uploader") or info.get("channel") or ""
-        book_title = forge.clean_title(info.get("title") or produced[0].stem)
+        # A playlist names itself; every video in it carries the playlist title
+        # alongside its own, so the collection is not named after video one.
+        book_title = forge.clean_title(
+            info.get("playlist_title") or info.get("title") or produced[0][0].stem)
 
         with library.collection_lease():
             stage = library.begin_collection_stage(
@@ -230,7 +310,7 @@ def import_url(
                     "url": info.get("webpage_url") or url,
                     "uploader": uploader,
                     "raw_title": info.get("title") or "",
-                    "from_chapters": bool(chaptered),
+                    "from_chapters": any(from_chapter for _, from_chapter in produced),
                 },
                 restart=True,
             )
@@ -238,12 +318,12 @@ def import_url(
             start = 1
 
             stored: list[tuple[str, str]] = []
-            for offset, src in enumerate(produced):
+            for offset, (src, from_chapter) in enumerate(produced):
                 index = start + offset
                 # Name the file from the cleaned title, not the raw stem. A chapter
-                # file arrives as "001-Intro", so slugifying the stem would stutter
-                # the index back out as "001-001-intro.mp3".
-                track_title = _track_title(src.stem, chaptered, offset, book_title)
+                # file arrives as "001-002-Intro", so slugifying the stem would
+                # stutter the numbers back out as "001-001-002-intro.mp3".
+                track_title = _track_title(src.stem, from_chapter, offset, book_title)
                 name = f"{index:03d}-{audio.slugify(track_title)}.mp3"
                 progress(f"Storing {index}/{len(produced)}")
                 shutil.move(str(src), dest / name)
@@ -279,18 +359,53 @@ def _pick_thumbnail(tmp: Path) -> Path | None:
     return None
 
 
-# Both of our yt-dlp output templates below prefix every file with an index:
-# "001-Intro" for a chapter, and "0-Title" for a single video, because the
-# playlist_index fallback renders as a bare 0. Strip exactly that one prefix
-# rather than letting clean_title guess at it, so a video genuinely called
-# "7-Zip Explained" keeps its 7 once our own "0-" is off the front.
+# Both of our yt-dlp output templates prefix every file with its playlist
+# number, which renders as a bare 0 for a lone video. A chapter file carries a
+# second number for the chapter itself: "001-002-Intro". Strip exactly those
+# prefixes rather than letting clean_title guess at them, so a video genuinely
+# called "7-Zip Explained" keeps its 7 once our own numbers are off the front.
 _OUR_INDEX_PREFIX = re.compile(r"^\d+-")
 
 
-def _track_title(stem: str, chaptered: list[Path], offset: int, book_title: str) -> str:
-    """Chapter files carry a real chapter name; single files fall back to the book."""
-    cleaned = forge.clean_title(_OUR_INDEX_PREFIX.sub("", stem, count=1))
-    if chaptered:
+def _order_produced_audio(tmp: Path, chapters_dir: Path) -> list[tuple[Path, bool]]:
+    """Pair each downloaded video with its chapters, in playlist order.
+
+    Chapter files win for a video that has chapter markers -- that is the
+    difference between one 6-hour blob and 30 tracks. A playlist can mix
+    chaptered and unchaptered videos, so the choice is made per video; an
+    unchaptered video keeps its whole file instead of vanishing because some
+    other video in the playlist happened to be chaptered.
+    """
+    chapters: dict[int, list[Path]] = {}
+    if chapters_dir.is_dir():
+        for path in sorted(chapters_dir.glob("*.mp3")):
+            chapters.setdefault(_leading_index(path.stem), []).append(path)
+    wholes: dict[int, list[Path]] = {}
+    for path in sorted(tmp.iterdir()):
+        if path.is_file() and path.suffix.lower() in audio.AUDIO_EXTENSIONS:
+            wholes.setdefault(_leading_index(path.stem), []).append(path)
+    ordered: list[tuple[Path, bool]] = []
+    for number in sorted(set(chapters) | set(wholes)):
+        if number in chapters:
+            ordered.extend((path, True) for path in chapters[number])
+        else:
+            ordered.extend((path, False) for path in wholes[number])
+    return ordered
+
+
+def _leading_index(stem: str) -> int:
+    """Both templates lead with the playlist number, 0 for a lone video."""
+    match = _OUR_INDEX_PREFIX.match(stem)
+    return int(match.group(0)[:-1]) if match else 0
+
+
+def _track_title(stem: str, from_chapter: bool, offset: int, book_title: str) -> str:
+    """Chapter files carry a real chapter name; whole videos fall back to the book."""
+    bare = _OUR_INDEX_PREFIX.sub("", stem, count=1)
+    if from_chapter:
+        bare = _OUR_INDEX_PREFIX.sub("", bare, count=1)
+    cleaned = forge.clean_title(bare)
+    if from_chapter:
         return cleaned or f"Chapter {offset + 1}"
     return cleaned or book_title
 
