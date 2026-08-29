@@ -40,6 +40,7 @@ CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
 
 FORGE_OPERATION_IDS_MIGRATION = "2026-08-28-forge-operation-ids"
 PUSH_BATCH_SOURCES_MIGRATION = "2026-08-29-push-batch-sources"
+EMPTY_PLAYLIST_PICKS_MIGRATION = "2026-08-29-empty-playlist-picks"
 
 
 def connect() -> sqlite3.Connection:
@@ -61,6 +62,7 @@ def init() -> None:
             conn.execute("BEGIN IMMEDIATE")
             _migrate_forge_operation_ids(conn)
             _migrate_push_batch_sources(conn)
+            _migrate_empty_playlist_picks(conn)
             conn.commit()
         except BaseException:
             conn.rollback()
@@ -142,6 +144,46 @@ def _migrate_push_batch_sources(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
         (PUSH_BATCH_SOURCES_MIGRATION, time.time()),
+    )
+
+
+def _migrate_empty_playlist_picks(conn: sqlite3.Connection) -> None:
+    """Drop the empty pick every prepare job queued before picking existed.
+
+    The old Desk sent `playlist_items: []` for every source, whether or not
+    anybody had opened the picker, and the download read that as "no pick, let
+    the link speak for itself". The same empty list now means "picked nothing",
+    which the download refuses, so an older job claimed or retried after an
+    upgrade would die on a pick its user never made.
+
+    Removing the key restores exactly what that payload used to do. A list that
+    names entries is a pick somebody made and is carried through untouched.
+    """
+    applied = conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE name=?",
+        (EMPTY_PLAYLIST_PICKS_MIGRATION,),
+    ).fetchone()
+    if applied:
+        return
+    rows = conn.execute("SELECT id,payload FROM jobs WHERE kind='prepare_url'").fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        picked = payload.get("playlist_items")
+        if not isinstance(picked, list) or picked:
+            continue
+        payload.pop("playlist_items")
+        conn.execute(
+            "UPDATE jobs SET payload=? WHERE id=?",
+            (json.dumps(payload), row["id"]),
+        )
+    conn.execute(
+        "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
+        (EMPTY_PLAYLIST_PICKS_MIGRATION, time.time()),
     )
 
 

@@ -1437,3 +1437,68 @@ def test_collection_index_carries_the_same_fingerprint_as_the_detail_route(isola
 
     assert indexed["manifest_fingerprint"] == library.manifest_fingerprint(detail)
     assert len(indexed["manifest_fingerprint"]) == 64
+
+
+def test_init_clears_the_empty_playlist_pick_every_older_prepare_job_carries(isolated):
+    """The old Desk sent playlist_items: [] for every source, picked or not.
+
+    It meant "nobody picked", and the download read it that way. The same list
+    now means "picked nothing", which the download refuses, so an older job
+    retried after an upgrade would die on a pick its user never made. Dropping
+    the key restores exactly what that payload used to do.
+    """
+    legacy = {
+        "url": "https://www.youtube.com/watch?v=aaa",
+        "playlist_items": [],
+        "options": {"use_chapters": True},
+    }
+    conn = db.connect()
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE name=?",
+        (db.EMPTY_PLAYLIST_PICKS_MIGRATION,),
+    )
+    cursor = conn.execute(
+        "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+        "VALUES('prepare_url','queued',?,?,?,?)",
+        ("Prepare a story", json.dumps(legacy), 1.0, 1.0),
+    )
+    conn.commit()
+    job_id = int(cursor.lastrowid)
+
+    db.init()
+    db.init()
+    claimed = db.claim_job()
+
+    assert claimed["id"] == job_id
+    assert "playlist_items" not in claimed["payload"]
+    assert claimed["payload"]["url"] == legacy["url"]
+    assert claimed["payload"]["options"] == legacy["options"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schema_migrations WHERE name=?",
+        (db.EMPTY_PLAYLIST_PICKS_MIGRATION,),
+    ).fetchone()[0] == 1
+
+
+def test_init_leaves_a_playlist_pick_that_names_entries_alone(isolated):
+    """A real pick is the one thing the empty list was never able to be."""
+    conn = db.connect()
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE name=?",
+        (db.EMPTY_PLAYLIST_PICKS_MIGRATION,),
+    )
+    cursor = conn.execute(
+        "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+        "VALUES('prepare_url','queued',?,?,?,?)",
+        ("Prepare a playlist", json.dumps({
+            "url": "https://www.youtube.com/playlist?list=PL1",
+            "playlist_items": [1, 3],
+        }), 1.0, 1.0),
+    )
+    conn.commit()
+    job_id = int(cursor.lastrowid)
+
+    db.init()
+    claimed = db.claim_job()
+
+    assert claimed["id"] == job_id
+    assert claimed["payload"]["playlist_items"] == [1, 3]
