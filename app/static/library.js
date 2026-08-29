@@ -1,6 +1,18 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
 import {
+  buildPushBatchPayload,
+  createSendAttempt,
+  membershipSignature,
+  newOperationKey,
+  packSelection,
+  rebindTargets,
+  selectionProblems,
+  sendCapacityLimit,
+  targetLabel,
+  tonieCapacity,
+} from "./send.js";
+import {
   announce,
   createMutationController,
   element,
@@ -17,6 +29,29 @@ export function filterCollectionsByTitle(collections, query) {
   const needle = String(query || "").trim().toLocaleLowerCase();
   if (!needle) return collections.slice();
   return collections.filter((collection) => String(collection.title || "").toLocaleLowerCase().includes(needle));
+}
+
+export function selectableCollections(collections, jobs = []) {
+  // Only a forged collection can be sent, and forgePreparationState is the one
+  // place that decides what "ready" means.
+  return collections.filter((collection) => forgePreparationState(collection, jobs).state === "ready");
+}
+
+export function createSelectionState() {
+  // A set of slugs, never an array of collections. The send order is the
+  // Library's own order, resolved at read time, so nothing depends on the
+  // order the operator happened to tick.
+  const chosen = new Set();
+  return {
+    has: (slug) => chosen.has(slug),
+    size: () => chosen.size,
+    toggle(slug) {
+      if (chosen.has(slug)) chosen.delete(slug);
+      else chosen.add(slug);
+    },
+    clear() { chosen.clear(); },
+    ordered: (collections) => collections.filter((collection) => chosen.has(collection.slug)),
+  };
 }
 
 export async function rescanCollections({ collections, request, refresh, signal = null }) {
