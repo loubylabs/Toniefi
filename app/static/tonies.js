@@ -125,6 +125,7 @@ export function createToniesScreen({ request = api } = {}) {
       type: "button",
       className: "button button-secondary",
       "data-tonie-control": "",
+      "data-focus-key": "tonie-refresh",
     }, [iconNode("refresh"), element("span", { text: "Refresh Tonies" })]);
     const header = element("div", { className: "screen-heading" }, [
       element("div", {}, [
@@ -214,6 +215,7 @@ export function createToniesScreen({ request = api } = {}) {
         title: "Move up",
         disabled: index === 0,
         "data-tonie-control": "",
+        "data-tonie-disabled": index === 0 ? "" : null,
         "data-focus-key": `tonie-${chapter.id}-up`,
       }, [iconNode("arrowUp")]);
       const down = element("button", {
@@ -223,6 +225,7 @@ export function createToniesScreen({ request = api } = {}) {
         title: "Move down",
         disabled: index === tonie.chapters.length - 1,
         "data-tonie-control": "",
+        "data-tonie-disabled": index === tonie.chapters.length - 1 ? "" : null,
         "data-focus-key": `tonie-${chapter.id}-down`,
       }, [iconNode("arrowDown")]);
       const tickId = `tonie-${tonie.id}-select-${chapter.id}`;
@@ -297,25 +300,31 @@ export function createToniesScreen({ request = api } = {}) {
       const chapters = element("ol", { className: "tonie-chapter-list" });
       tonie.chapters.forEach((chapter, index) => chapters.append(chapterRow(tonie, chapter, index)));
 
+      const selectedCount = tonie.chapters.filter((chapter) => selectedChapters.has(chapter.id)).length;
+      const allTicked = tonie.chapters.length > 0 && selectedCount === tonie.chapters.length;
       const selectAll = element("input", {
         id: `tonie-${tonie.id}-select-all`,
         type: "checkbox",
         className: "tonie-select-all",
-        checked: tonie.chapters.length > 0 && tonie.chapters.every((chapter) => selectedChapters.has(chapter.id)),
+        checked: allTicked,
         "data-tonie-control": "",
         "data-focus-key": `tonie-${tonie.id}-select-all`,
       });
+      // indeterminate has no reflected attribute, only the IDL property, so a
+      // partial selection has to be set imperatively on every render or it
+      // looks identical to no selection at all.
+      selectAll.indeterminate = selectedCount > 0 && !allTicked;
       selectAll.addEventListener("change", () => {
         if (selectAll.checked) tonie.chapters.forEach((chapter) => selectedChapters.add(chapter.id));
         else tonie.chapters.forEach((chapter) => selectedChapters.delete(chapter.id));
         render({ focusKey: `tonie-${tonie.id}-select-all` });
       });
-      const selectedCount = tonie.chapters.filter((chapter) => selectedChapters.has(chapter.id)).length;
       const removeSelected = element("button", {
         type: "button",
         className: "button button-danger tonie-remove-selected",
         disabled: selectedCount === 0,
         "data-tonie-control": "",
+        "data-tonie-disabled": selectedCount === 0 ? "" : null,
         "data-focus-key": `tonie-${tonie.id}-remove-selected`,
       }, [
         iconNode("trash"),
@@ -323,6 +332,10 @@ export function createToniesScreen({ request = api } = {}) {
       ]);
       removeSelected.addEventListener("click", async () => {
         const removing = new Set(tonie.chapters.filter((chapter) => selectedChapters.has(chapter.id)).map((chapter) => chapter.id));
+        // disabled is the visible guard, but a control's disabled state is
+        // one render-cycle bug away from being wrong (it just was). A write
+        // to a Tonie is not undoable, so it gets its own guard too.
+        if (removing.size === 0) return;
         const confirmed = await showConfirmDialog({
           title: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"}?`,
           message: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"} from "${tonie.name || "this Tonie"}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
@@ -446,11 +459,14 @@ export function createToniesScreen({ request = api } = {}) {
         replace(list, ...tonies.map(tonieRow));
       }
       root.querySelectorAll("[data-tonie-control]").forEach((control) => {
-        // A pending save disables everything. Otherwise a control keeps
-        // whatever it was just built with (a boundary Move button, or the
-        // bulk Remove button at a zero selection) instead of this sweep
-        // force-enabling it back.
-        control.disabled = mutation.pending || control.disabled;
+        // A pending save disables everything. Otherwise a control's disabled
+        // state comes only from data-tonie-disabled, set at build time by
+        // whichever boundary rule created it (a Move button at the edge of
+        // the list, or Remove selected at zero ticked). Never from the
+        // control's own previous .disabled: refreshButton lives in header,
+        // which this render() never rebuilds, so reading its prior state
+        // back would let one save's disabling accumulate and never clear.
+        control.disabled = mutation.pending || control.hasAttribute("data-tonie-disabled");
         if (control.hasAttribute("draggable")) control.draggable = !mutation.pending;
       });
       root.querySelectorAll("[data-tonie-summary]").forEach((control) => { control.disabled = mutation.pending; });

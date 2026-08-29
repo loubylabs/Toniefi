@@ -8,6 +8,7 @@ import {
   exactDuration,
   humanDuration,
   moveItem,
+  restoreFocus,
   snapshotRefreshOutcome,
 } from "../../app/static/shared.js";
 import { rescanCollections } from "../../app/static/library.js";
@@ -141,4 +142,40 @@ test("exactDuration keeps every unit so a config readout subtracts", () => {
   assert.equal(exactDuration(5370), "1h 29m 30s");
   assert.equal(exactDuration(30), "30s");
   assert.equal(exactDuration(0), "0s");
+});
+
+test("restoreFocus skips a resolved target that is disabled and uses the fallback instead", () => {
+  // A control can be found by its remembered focus key and still be the
+  // wrong place to land: a boundary Move button, or a bulk action button at
+  // zero selected, are both disabled by design. Focusing a disabled control
+  // is a no-op in a real browser, which strands keyboard focus; this is the
+  // deliberate fallback for that case, not a workaround for a test harness.
+  const disabledTarget = {
+    disabled: true,
+    getAttribute: (name) => (name === "data-focus-key" ? "boundary" : null),
+    focus() { this.focused = true; },
+  };
+  const fallback = { disabled: false, focus() { this.focused = true; } };
+  const root = { querySelectorAll: (selector) => (selector === "[data-focus-key]" ? [disabledTarget] : []) };
+
+  const restored = restoreFocus({ key: "boundary" }, { root, fallback });
+
+  assert.equal(restored, true);
+  assert.equal(disabledTarget.focused, undefined);
+  assert.equal(fallback.focused, true);
+});
+
+test("restoreFocus focuses the resolved target directly when it is not disabled", () => {
+  const target = {
+    disabled: false,
+    getAttribute: (name) => (name === "data-focus-key" ? "boundary" : null),
+    focus() { this.focused = true; },
+  };
+  const fallback = { disabled: false, focus() { this.focused = true; } };
+  const root = { querySelectorAll: (selector) => (selector === "[data-focus-key]" ? [target] : []) };
+
+  restoreFocus({ key: "boundary" }, { root, fallback });
+
+  assert.equal(target.focused, true);
+  assert.equal(fallback.focused, undefined);
 });

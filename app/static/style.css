@@ -2163,7 +2163,8 @@ img.collection-detail-cover {
 }
 
 .tonie-chapter-select {
-  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
 }
 
 .tonie-chapter-list {
@@ -3116,8 +3117,13 @@ img.collection-detail-cover {
   }
 
   .tonie-chapter-row {
-    grid-template-columns: 1.25rem 1.25rem 1.5rem minmax(0, 1fr);
+    grid-template-columns: 44px 1.25rem 1.5rem minmax(0, 1fr);
     align-items: start;
+  }
+
+  .tonie-chapter-select {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .tonie-chapter-actions {

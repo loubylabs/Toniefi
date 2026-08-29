@@ -177,6 +177,10 @@ class MiniElement {
   }
 
   focus() {
+    // A disabled element cannot take focus in a real browser. Tests that
+    // want to prove a disabled control stays inert must not be able to
+    // fake success by focusing it anyway.
+    if (this.disabled) return;
     this.ownerDocument.activeElement = this;
   }
 

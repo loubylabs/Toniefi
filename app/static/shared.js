@@ -145,6 +145,10 @@ export function restoreFocus(token, { root = document, fallback = null } = {}) {
   if (token?.id) target = document.getElementById(token.id);
   if (!target && token?.key) target = matchingAttribute(root, "data-focus-key", token.key);
   if (!target && token?.name) target = matchingAttribute(root, "name", token.name);
+  // A disabled element cannot take focus. Treat it the same as no match at
+  // all rather than calling focus() on it, which is a no-op in a real
+  // browser and would silently strand focus on nothing.
+  if (target?.disabled) target = null;
   if (!target) target = fallback;
   if (!target || typeof target.focus !== "function") return false;
   target.focus({ preventScroll: true });

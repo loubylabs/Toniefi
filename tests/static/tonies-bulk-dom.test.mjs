@@ -148,9 +148,14 @@ test("ticking two chapters then Select all removes every chapter in one confirme
 
     // Nothing is left, so the empty state renders and there is no bulk
     // control left to carry the remembered focus key. It falls back to the
-    // one focusable, visible landmark: Refresh Tonies.
+    // one focusable, visible landmark: Refresh Tonies. Compared by focus key,
+    // not by node identity: an assert.equal that ever has to fail on two
+    // richly cross-linked DOM-like objects (mini-dom's ownerDocument/
+    // parentNode back-references) makes node:assert's diff builder explode
+    // combinatorially rather than fail cleanly. See the note at the bottom
+    // of this file.
     assert.equal(screen.node(".tonie-remove-selected"), null);
-    assert.equal(screen.dom.document.activeElement, buttonWithText(screen.dom.workspace, "Refresh Tonies"));
+    assert.equal(screen.focusKey(), "tonie-refresh");
     assert.match(screen.node(".tonie-empty").textContent, /Select stories in the Library and send them here when you are ready\./);
   } finally {
     screen.stop();
@@ -227,3 +232,142 @@ test("no per-row remove control exists anywhere in the rendered chapter list", a
     screen.stop();
   }
 });
+
+test("a completed chapter save re-enables Refresh Tonies without re-enabling a boundary Move button", async () => {
+  // Reproduces the fix-round-1 regression: refreshButton lives in header and
+  // is never rebuilt by render(), so a disabling scheme that reads a
+  // control's own prior .disabled would let one save's "everything disabled"
+  // pass accumulate on it forever. This drives an ordinary title save
+  // (nothing to do with the bulk button) and checks both directions: the
+  // control that must re-enable, and the one that must stay disabled.
+  const screen = mountTonies([chapter("c1", "One"), chapter("c2", "Two")]);
+  try {
+    await flush();
+    await screen.openDetail();
+
+    const refreshBefore = buttonWithText(screen.dom.workspace, "Refresh Tonies");
+    assert.equal(refreshBefore.disabled, false);
+    const moveUpBefore = screen.nodes(".tonie-move").find((button) => button.getAttribute("aria-label") === "Move One up");
+    assert.equal(moveUpBefore.disabled, true);
+
+    const title = screen.node("#tonie-t1-chapter-c1");
+    title.value = "One renamed";
+    await title.dispatchEvent({ type: "change" });
+    await flush();
+
+    assert.equal(screen.puts.length, 1);
+    assert.equal(buttonWithText(screen.dom.workspace, "Refresh Tonies").disabled, false);
+    const moveUpAfter = screen.nodes(".tonie-move").find((button) => button.getAttribute("aria-label") === "Move One renamed up");
+    assert.equal(moveUpAfter.disabled, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("focus never lands on a disabled control; it falls back instead", async () => {
+  const screen = mountTonies([chapter("c1", "One"), chapter("c2", "Two"), chapter("c3", "Three")]);
+  try {
+    await flush();
+    await screen.openDetail();
+
+    await screen.tick(`#${screen.nodes(".tonie-chapter-select")[0].id}`);
+    await screen.tick(`#${screen.nodes(".tonie-chapter-select")[1].id}`);
+
+    const clicking = screen.node(".tonie-remove-selected").click();
+    await flush();
+    const dialog = screen.dom.document.getElementById("dialogHost").querySelector(".confirmation-dialog");
+    await buttonWithText(dialog, "Remove 2 chapters").click();
+    await clicking;
+    await flush();
+
+    // One chapter survives, so the bulk button is rebuilt disabled (nothing
+    // ticked on the new list) at the same focus key the click handler had
+    // just focused. restoreFocus must not call .focus() on it; it must fall
+    // back to Refresh Tonies instead. Asserted by focus key, not node
+    // identity: see the note at the bottom of this file for why a failing
+    // assert.equal on two mini-dom nodes must be avoided, not just tolerated.
+    const survivor = screen.node(".tonie-remove-selected");
+    assert.equal(survivor.disabled, true);
+    assert.notEqual(screen.focusKey(), "tonie-t1-remove-selected");
+    assert.equal(screen.focusKey(), "tonie-refresh");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("Select all shows indeterminate for a partial selection, and never for none or all", async () => {
+  const screen = mountTonies([chapter("c1", "One"), chapter("c2", "Two")]);
+  try {
+    await flush();
+    await screen.openDetail();
+
+    assert.equal(screen.node(".tonie-select-all").indeterminate, false);
+    assert.equal(screen.node(".tonie-select-all").checked, false);
+
+    await screen.tick(`#${screen.nodes(".tonie-chapter-select")[0].id}`);
+    assert.equal(screen.node(".tonie-select-all").indeterminate, true);
+    assert.equal(screen.node(".tonie-select-all").checked, false);
+
+    await screen.tick(`#${screen.nodes(".tonie-chapter-select")[1].id}`);
+    assert.equal(screen.node(".tonie-select-all").indeterminate, false);
+    assert.equal(screen.node(".tonie-select-all").checked, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a stray click on the Remove button with nothing ticked opens no dialog and sends nothing", async () => {
+  // disabled is supposed to prevent this, but finding 1 proved the disabling
+  // machinery can fail silently. This drives the click handler directly,
+  // the way a real click would if disabled were ever wrong again, and checks
+  // the handler's own guard rather than trusting the attribute.
+  const screen = mountTonies([chapter("c1", "One"), chapter("c2", "Two")]);
+  try {
+    await flush();
+    await screen.openDetail();
+
+    const removeSelected = screen.node(".tonie-remove-selected");
+    assert.equal(removeSelected.disabled, true);
+    await removeSelected.click();
+    await flush();
+
+    assert.equal(screen.dom.document.getElementById("dialogHost").childNodes.length, 0);
+    assert.equal(screen.puts.length, 0);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("mini-dom's focus() will not move activeElement onto a disabled element", async () => {
+  // Asserted against null, never against the button itself: a failing
+  // assert.equal/.notEqual on two mini-dom element objects makes
+  // node:assert's diff builder walk their circular ownerDocument /
+  // parentNode graph and never return, hanging the run instead of failing
+  // it. See the note at the bottom of this file.
+  const dom = installDom();
+  const button = dom.document.createElement("button");
+  button.disabled = true;
+  dom.workspace.append(button);
+  button.focus();
+  assert.equal(dom.document.activeElement, null);
+  dom.restore();
+});
+
+// A note on the assertion style above and in "focus never lands on a
+// disabled control...": node:assert's failure-message builder inspects
+// `actual` and `expected` in full before it can report a mismatch. A
+// mini-dom MiniElement carries an `ownerDocument` back-reference, and
+// `ownerDocument.body` reaches back into every element in the tree, so two
+// elements that are NOT the same node still share a large, densely
+// interconnected DAG. util.inspect's cycle guard only catches an object
+// appearing as its own ancestor; it does not memoize a shared node reached
+// by more than one path, so a failing comparison here can make the
+// diff builder revisit the same subtrees many times over and never finish,
+// turning a real regression into a hang instead of a failing test. Verified
+// with a standalone script outside node:test: an assert.equal(activeElement,
+// wrongNode) that is actually false hangs at multiple minutes and 100%+ CPU
+// with no output, while the same comparison written as
+// assert.equal(focusKey-or-other-primitive, ...) fails in under a
+// millisecond. Compare focus by data-focus-key (a string) or by a boolean
+// (assert.ok(a === b)), never by asserting equality of two element
+// references that might not be equal.
