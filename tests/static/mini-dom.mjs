@@ -24,7 +24,25 @@ function matches(node, selector) {
 class MiniElement {
   constructor(tagName, ownerDocument) {
     this.tagName = tagName.toUpperCase();
-    this.ownerDocument = ownerDocument;
+    // Every node holds this back-reference so it can reach the document, and
+    // the document holds `body` right back, so the whole tree is reachable
+    // from any single node. A failing assert.equal() on two nodes hands both
+    // to util.inspect to build its diff, and util.inspect's cycle guard only
+    // remembers nodes already open on the CURRENT path, not nodes visited
+    // earlier anywhere else in the same call. Left enumerable, ownerDocument
+    // gives that walk a way back into the whole tree from every node in it,
+    // so the same shared subtrees get freshly re-walked over and over and
+    // the process hangs. Non-enumerable keeps `el.ownerDocument` reading
+    // exactly as before; it only stops enumeration (util.inspect's default
+    // property walk, JSON.stringify, Object.keys, {...el}) from following
+    // it, which is the one thing that was turning a failed comparison into
+    // a hang instead of a message.
+    Object.defineProperty(this, "ownerDocument", {
+      value: ownerDocument,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
     this.attributes = new Map();
     this.childNodes = [];
     this.parentNode = null;
