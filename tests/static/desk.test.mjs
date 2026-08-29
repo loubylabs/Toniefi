@@ -354,6 +354,19 @@ test("buildWorkCartItems merges preparation jobs with collection facts and keeps
     hasCover: item.hasCover,
   })), [
     {
+      // The running send now leads the cart. It used to be excluded by
+      // DESK_JOB_KINDS, which is exactly why a transfer was invisible here.
+      key: "job-12",
+      phase: "sending",
+      title: "Send elsewhere",
+      source: "Send elsewhere",
+      slug: "",
+      canRetry: false,
+      trackCount: 0,
+      duration: "",
+      hasCover: false,
+    },
+    {
       key: "job-14",
       phase: "failed",
       title: "Failed Book",
@@ -660,4 +673,47 @@ test("a null percentage is not a measured zero", () => {
     mode: "determinate",
     percent: 0,
   });
+});
+
+test("a running send appears in the work cart with a real percentage", () => {
+  const items = buildWorkCartItems([
+    {
+      id: 9,
+      kind: "push",
+      status: "running",
+      phase: "sending",
+      progress: "Uploading 7/30: Whale Shark Rescue",
+      progress_percent: 22.5,
+      payload: { household_id: "h1", tonie_id: "t1", sources: [{ slug: "sleepy-sophie" }] },
+      label: "Send Sleepy Sophie to a Creative Tonie",
+    },
+  ], []);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].phase, "sending");
+  assert.equal(items[0].progressMode, "determinate");
+  assert.equal(items[0].progressPercent, 22.5);
+  assert.equal(items[0].progress, "Uploading 7/30: Whale Shark Rescue");
+});
+
+test("a send never hides its own collection's row", () => {
+  const collection = {
+    slug: "sleepy-sophie",
+    title: "Sleepy Sophie",
+    stage: "forged",
+    track_count: 1,
+    total_duration: "6m 19s",
+  };
+  const items = buildWorkCartItems([
+    {
+      id: 9,
+      kind: "push",
+      status: "running",
+      phase: "sending",
+      progress: "Uploading 1/1: Sleepy Sophie",
+      progress_percent: 5,
+      payload: { household_id: "h1", tonie_id: "t1", sources: [{ slug: "sleepy-sophie" }] },
+      label: "Send Sleepy Sophie to a Creative Tonie",
+    },
+  ], [collection]);
+  assert.deepEqual(items.map((item) => item.kind).sort(), ["collection", "push"]);
 });

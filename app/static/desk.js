@@ -12,7 +12,9 @@ import {
 } from "./shared.js";
 
 const MAX_SOURCES = 50;
-const DESK_JOB_KINDS = new Set(["prepare_url", "librivox", "upload_prepare", "forge"]);
+// A send belongs here more than anything else does: it is the only job kind
+// with no undo, and it was the one kind the cart refused to show.
+const DESK_JOB_KINDS = new Set(["prepare_url", "librivox", "upload_prepare", "forge", "push"]);
 
 export const DEFAULT_FORGE_OPTIONS = Object.freeze({
   use_chapters: true,
@@ -227,6 +229,14 @@ function jobSlug(job) {
 }
 
 function workPhase(job, collection) {
+  if (job.kind === "push") {
+    // A send has no local collection stage to read, so its phase is its own
+    // status and nothing else.
+    if (job.status === "failed") return "failed";
+    if (job.status === "queued") return "queued";
+    if (job.status === "running") return "sending";
+    return "sent";
+  }
   if (job.status === "queued") return "queued";
   if (job.status === "running") {
     if (job.phase === "forging" || job.kind === "forge") return "forging";
@@ -242,6 +252,10 @@ function workPhase(job, collection) {
 
 function workRelevance(job, collection) {
   if (job.status === "queued" || job.status === "running") return "active";
+  // A finished send has no collection of its own to open, and the collection
+  // it sent is still in the Library. It ages out into history like any other
+  // completed job rather than claiming a permanent row.
+  if (job.kind === "push") return "history";
   if (collection?.stage === "forged") return "collection";
   if (job.status === "failed" && job.retryable && collection?.stage === "extracted") {
     return "recovery";
@@ -269,8 +283,10 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
     if (slug && represented.has(slug)) continue;
     const collection = slug ? collectionBySlug.get(slug) : null;
     if (workRelevance(job, collection) === "collection") continue;
-    if (job.status === "done" && collection?.stage !== "forged") continue;
-    if (slug) represented.add(slug);
+    if (job.kind !== "push" && job.status === "done" && collection?.stage !== "forged") continue;
+    // A push must not claim the slug, or sending a collection would hide the
+    // collection's own row: the one thing the operator needs to still see.
+    if (slug && job.kind !== "push") represented.add(slug);
     const phase = workPhase(job, collection);
     const workProgress = truthfulWorkProgress(job);
     items.push({
@@ -327,6 +343,8 @@ function phaseDetails(phase) {
     extracting: { label: "Extracting", icon: "arrowDown" },
     forging: { label: "Forging", icon: "forge" },
     ready: { label: "Ready to send", icon: "check" },
+    sending: { label: "Sending", icon: "tonie" },
+    sent: { label: "Sent", icon: "check" },
     failed: { label: "Failed", icon: "alert" },
   }[phase] || { label: "Queued", icon: "clock" };
 }
@@ -447,7 +465,9 @@ function workCartRow(item, { request, requestRefresh, navigate, signal }) {
     body.append(element("p", { className: "work-cart-error", text: item.error || "Preparation stopped before this collection was ready." }));
   } else {
     body.append(progress);
-    if (item.phase !== "ready") {
+    // A finished row shows no meter. "sent" is terminal in the same way
+    // "ready" is, and a full bar over completed work is noise.
+    if (item.phase !== "ready" && item.phase !== "sent") {
       const progressAttributes = item.progressMode === "determinate"
         ? {
           role: "progressbar",
