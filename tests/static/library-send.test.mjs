@@ -79,9 +79,6 @@ const blueTonie = () => ({
   chapters: [{ id: "c1", title: "Old chapter" }],
 });
 
-// toniesQueue answers each /api/tonies call in turn, holding on the last entry,
-// so a test can move a Tonie underneath a chosen target. pushOutcomes answers
-// each POST /api/push/batch in turn: an Error rejects, anything else succeeds.
 const dawnStory = () => ({
   slug: "dawn-story",
   stage: "forged",
@@ -100,13 +97,24 @@ const filledTonie = () => ({
   chapters: [{ id: "c9", title: "Added from the phone" }],
 });
 
-function mountLibrary({ collections, tonies = [blueTonie()], toniesQueue = null, pushOutcomes = [] }) {
+// toniesQueue answers each /api/tonies call in turn, holding on the last entry,
+// so a test can move a Tonie underneath a chosen target. pushOutcomes answers
+// each POST /api/push/batch in turn: an Error rejects, anything else succeeds.
+// Either may hold a function, which is called for its answer instead, so a
+// test can hold one response open while a later one lands.
+function mountLibrary({
+  collections,
+  tonies = [blueTonie()],
+  toniesQueue = null,
+  pushOutcomes = [],
+  limitSeconds = 5400,
+}) {
   const dom = installDom();
   const controller = new AbortController();
   const pushes = [];
   let tonieCalls = 0;
   const refresh = {
-    snapshot: { status: { usable_limit_seconds: 5400 }, collections, jobs: [], stale: [], errors: {} },
+    snapshot: { status: { usable_limit_seconds: limitSeconds }, collections, jobs: [], stale: [], errors: {} },
     subscribe: () => () => {},
     request: async () => refresh.snapshot,
   };
@@ -115,11 +123,12 @@ function mountLibrary({ collections, tonies = [blueTonie()], toniesQueue = null,
       if (!toniesQueue) return tonies;
       const answer = toniesQueue[Math.min(tonieCalls, toniesQueue.length - 1)];
       tonieCalls += 1;
-      return answer;
+      return typeof answer === "function" ? answer() : answer;
     }
     if (url === "/api/push/batch") {
       pushes.push(JSON.parse(options.body));
       const outcome = pushOutcomes[pushes.length - 1];
+      if (typeof outcome === "function") return outcome();
       if (outcome instanceof Error) throw outcome;
       return { job_id: 7 };
     }
@@ -183,7 +192,7 @@ test("ticking a row opens the send bar, keeps focus on the tick and blocks a sen
       screen.node(".library-send-target").childNodes.map((option) => option.getAttribute("value")),
       ["", "h1/t1"],
     );
-    assert.match(screen.node(".library-send-target").textContent, /Blue Tonie · Home · 90m 00s free/);
+    assert.match(screen.node(".library-send-target").textContent, /Blue Tonie · Home · 1h 30m free/);
     assert.deepEqual(
       screen.node(".library-send-membership").childNodes.map((item) => item.textContent),
       ["Night StoryOne10m 00s", "Night StoryTwo15m 00s"],
@@ -472,6 +481,169 @@ test("the bar speaks each new problem once, and says nothing on an unrelated ren
     await picker.dispatchEvent({ type: "change" });
     await flush();
     assert.equal(screen.dom.spoken.length, 2);
+  } finally {
+    screen.stop();
+  }
+});
+
+const staleTarget = () => ({
+  id: "t9",
+  householdId: "h1",
+  householdName: "Home",
+  name: "Stale Target",
+  time_free: "90m 00s",
+  seconds_present: 0,
+  chapters: [{ id: "s1", title: "Stale chapter" }],
+});
+
+const freshTarget = () => ({
+  id: "t8",
+  householdId: "h1",
+  householdName: "Home",
+  name: "Fresh Target",
+  time_free: "80m 00s",
+  seconds_present: 600,
+  chapters: [{ id: "f1", title: "Fresh chapter" }],
+});
+
+test("a send in flight freezes the selection instead of discarding a late tick", async () => {
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const screen = mountLibrary({
+    collections: [nightStory(), dawnStory()],
+    pushOutcomes: [async () => { await gate; return { job_id: 7 }; }],
+  });
+  try {
+    await flush();
+    await screen.dom.workspace.querySelectorAll(".library-select")[0].dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    const sending = screen.node(".library-send-submit").click();
+    await flush();
+
+    // Every row checkbox is frozen for the duration, the same as Send and Clear.
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-select").map((tick) => tick.disabled),
+      [true, true],
+    );
+    assert.equal(screen.node(".library-send-submit").disabled, true);
+    assert.equal(screen.node(".library-send-clear").disabled, true);
+
+    // A change forced through anyway must not reach the selection.
+    const second = screen.dom.workspace.querySelectorAll(".library-select")[1];
+    second.checked = true;
+    await second.dispatchEvent({ type: "change" });
+    await flush();
+    assert.match(screen.node(".library-send-bar").textContent, /1 story selected/);
+    assert.equal(screen.node(".library-send-groups").childNodes.length, 1);
+    assert.equal(screen.node(".library-send-membership").childNodes.length, 2);
+
+    release();
+    await sending;
+    await flush();
+
+    assert.equal(screen.pushes.length, 1);
+    assert.deepEqual(
+      screen.pushes[0].assignments[0].sources,
+      [{ slug: "night-story", manifest_fingerprint: "f-night", files: ["01.mp3", "02.mp3"] }],
+    );
+    assert.equal(screen.node(".library-send-bar").hidden, true);
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-select").map((tick) => [tick.checked, tick.disabled]),
+      [[false, false], [false, false]],
+    );
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a slow first target read cannot overwrite what Refresh targets already showed", async () => {
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [async () => { await gate; return [staleTarget()]; }, () => [freshTarget()]],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    assert.match(screen.node(".library-send-validation").textContent, /Creative Tonies are not loaded yet/);
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+    assert.match(screen.node(".library-send-target").textContent, /Fresh Target · Home · 1h 20m free/);
+
+    // The automatic read finally answers, with an obsolete free space and an
+    // obsolete remote_chapters precondition. It is not the newest, so it lands
+    // nowhere.
+    release();
+    await flush();
+    await flush();
+
+    const picker = screen.node(".library-send-target");
+    assert.match(picker.textContent, /Fresh Target · Home · 1h 20m free/);
+    assert.doesNotMatch(picker.textContent, /Stale Target/);
+    assert.deepEqual(picker.childNodes.map((option) => option.getAttribute("value")), ["", "h1/t8"]);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("retrying an unchanged selection reuses the operation key the refused send used", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    pushOutcomes: [new Error("The Tonie Cloud refused the batch.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+    // Nothing about the selection moved, so the second attempt is the same
+    // operation and the server has to be able to recognise it as one.
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    assert.equal(typeof screen.pushes[0].operation_key, "string");
+    assert.ok(screen.pushes[0].operation_key.length > 0);
+    assert.equal(screen.pushes[1].operation_key, screen.pushes[0].operation_key);
+    assert.deepEqual(screen.pushes[1].assignments, screen.pushes[0].assignments);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("an option never advertises free space the fit check will refuse", async () => {
+  const oversized = nightStory();
+  oversized.tracks = [{ name: "long.mp3", title: "Long", seconds: 5371, duration: "1h 30m" }];
+  const screen = mountLibrary({
+    collections: [oversized],
+    // time_free is the raw Tonie limit, one headroom above the usable limit
+    // the fit check runs against.
+    tonies: [{ ...blueTonie(), time_free: "1h 30m", seconds_present: 0 }],
+    limitSeconds: 5370,
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+
+    const picker = screen.node(".library-send-target");
+    assert.match(picker.textContent, /Blue Tonie · Home · 1h 29m free · does not fit/);
+    assert.doesNotMatch(picker.textContent, /1h 30m/);
+    assert.equal(screen.node(".library-send-submit").disabled, true);
   } finally {
     screen.stop();
   }

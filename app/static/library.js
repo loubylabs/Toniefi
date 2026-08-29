@@ -165,6 +165,7 @@ export function createLibraryScreen({
     let signature = "";
     let sending = false;
     let announcedProblem = "";
+    let targetsToken = 0;
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -294,11 +295,19 @@ export function createLibraryScreen({
           type: "checkbox",
           className: "library-select",
           checked: selection.has(collection.slug),
+          // The whole selection freezes for the duration of a send, the same
+          // way Send and Clear already do. The payload was built from the ticks
+          // as they stood, and the receipt clears every tick, so a story ticked
+          // mid-flight would be neither sent nor kept.
+          disabled: sending,
           "data-focus-key": `library-${collection.slug}-select`,
         })
         : null;
       if (tick) {
         tick.addEventListener("change", () => {
+          // disabled is the visible guard, and a stale render is one bug away
+          // from leaving it wrong, so the freeze gets its own guard too.
+          if (sending) return;
           selection.toggle(collection.slug);
           if (selection.size() === 1 && tonies === null) loadTargets(`library-${collection.slug}-select`);
           render({ focusKey: `library-${collection.slug}-select` });
@@ -382,13 +391,22 @@ export function createLibraryScreen({
     // first tick on a row loads targets too: restoring to the refresh button
     // there would take focus off the checkbox the operator just used.
     async function loadTargets(focusKey = "library-send-refresh") {
-      toniesError = "";
+      // Two reads can be in flight at once, because Refresh targets stays live
+      // while the automatic first load is still running. Only the newest answer
+      // may land: an older one carries obsolete free space AND an obsolete
+      // remote_chapters precondition, which would go straight into the payload.
+      const token = targetsToken + 1;
+      targetsToken = token;
+      let loaded = null;
+      let failure = "";
       try {
-        tonies = await request("/api/tonies", { signal });
+        loaded = await request("/api/tonies", { signal });
       } catch (error) {
-        tonies = null;
-        toniesError = error.message;
+        failure = error.message;
       }
+      if (token !== targetsToken) return;
+      tonies = loaded;
+      toniesError = failure;
       rebindTargets(selections, tonies);
       // The chapter precondition inside the payload changed, so the key that
       // identified the old payload must not identify this one.
@@ -450,7 +468,10 @@ export function createLibraryScreen({
           const capacity = tonieCapacity(tonie, group.seconds, chosen.replaceExisting, limitSeconds());
           picker.append(element("option", {
             value: `${tonie.householdId}/${tonie.id}`,
-            text: `${targetLabel(tonie)} · ${tonie.time_free} free${capacity.fits ? "" : " · does not fit"}`,
+            // The number printed here is the one the fit check ran against, so
+            // an option can never read "1h 30m free · does not fit". The API's
+            // time_free counts the raw Tonie limit, not the usable one.
+            text: `${targetLabel(tonie)} · ${humanDuration(capacity.availableSeconds)} free${capacity.fits ? "" : " · does not fit"}`,
             selected: chosen.tonie ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === `${tonie.householdId}/${tonie.id}` : false,
           }));
         }
