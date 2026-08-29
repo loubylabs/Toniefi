@@ -185,8 +185,12 @@ export function uploadPolicyText(status) {
 }
 
 export function truthfulWorkProgress(job) {
-  const value = Number(job?.progress_percent);
-  if (Number.isFinite(value) && value >= 0 && value <= 100) {
+  const reported = job?.progress_percent;
+  // Number(null) is 0, not NaN, so a null column would otherwise render as a
+  // determinate bar sitting at 0%: a measured figure where there is none.
+  // Absent has to be rejected before the range check, not by it.
+  const value = Number(reported);
+  if (reported != null && Number.isFinite(value) && value >= 0 && value <= 100) {
     return { mode: "determinate", percent: value };
   }
   return { mode: "indeterminate", percent: null };

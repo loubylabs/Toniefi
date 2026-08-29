@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
+import { activeSendsByTonie, sendJobView, tonieJobKey } from "./send.js";
 import {
   announce,
   element,
@@ -130,7 +131,7 @@ export function chapterDrafts(list) {
 }
 
 
-export function createToniesScreen({ request = api } = {}) {
+export function createToniesScreen({ request = api, refresh = null } = {}) {
   return function renderToniesScreen({ workspace, signal }) {
     let active = true;
     let tonies = [];
@@ -141,6 +142,11 @@ export function createToniesScreen({ request = api } = {}) {
     // Keyed by chapter id and cleared on every reload, so a tick that predates
     // a remote change can never reach a write.
     const selectedChapters = new Set();
+    // The jobs the refresh coordinator last published. A send names its target
+    // in its own payload, so this is everything needed to put a running
+    // transfer on the row it is transferring to.
+    let jobs = [];
+    let sendingKeys = new Set();
 
     const root = element("section", { className: "tonies-screen", "aria-labelledby": "tonies-title" });
     const refreshButton = element("button", {
@@ -468,6 +474,44 @@ export function createToniesScreen({ request = api } = {}) {
       return detail;
     }
 
+    function sendPanel(tonie) {
+      const entries = activeSendsByTonie(jobs).get(tonieJobKey(tonie.householdId, tonie.id)) || [];
+      if (!entries.length) return null;
+      const rows = entries.map((job) => {
+        const view = sendJobView(job);
+        const meterAttributes = view.mode === "determinate"
+          ? {
+            role: "progressbar",
+            "aria-label": `Send to ${tonie.name || "this Creative Tonie"}`,
+            "aria-valuemin": "0",
+            "aria-valuemax": "100",
+            "aria-valuenow": String(Math.round(view.percent)),
+            style: `--work-progress:${view.percent}%`,
+          }
+          : { "aria-label": `${view.label}, progress amount is not available` };
+        return element("li", { className: "tonie-send-row" }, [
+          element("div", { className: "tonie-send-row-head" }, [
+            element("span", { className: "status-stamp", "data-status": view.phase, text: view.label }),
+            view.mode === "determinate"
+              ? element("span", { className: "tonie-send-percent", text: `${Math.round(view.percent)}%` })
+              : null,
+          ].filter(Boolean)),
+          element("p", { className: "tonie-send-message", text: view.message }),
+          element("span", {
+            className: "work-cart-progress-track",
+            "data-mode": view.mode,
+            ...meterAttributes,
+          }, [element("span", { className: "work-cart-progress-fill" })]),
+        ]);
+      });
+      return element("div", { className: "tonie-send-panel", role: "status", "aria-live": "polite" }, [
+        element("h3", {
+          text: entries.length === 1 ? "Sending to this Tonie" : `${entries.length} sends to this Tonie`,
+        }),
+        element("ol", {}, rows),
+      ]);
+    }
+
     function tonieRow(tonie) {
       const key = tonieKey(tonie);
       const open = key === openKey;
@@ -495,6 +539,11 @@ export function createToniesScreen({ request = api } = {}) {
         render({ focusKey: `tonie-${key}-summary` });
       });
       const children = [button];
+      // Shown whether or not the row is expanded: a transfer is the reason to
+      // look at this screen, and hiding it behind a disclosure is what left
+      // the operator with nothing to watch.
+      const sending = sendPanel(tonie);
+      if (sending) children.push(sending);
       if (open) children.push(tonieDetail(tonie));
       return element("li", { className: "tonie-row", "data-open": String(open) }, children);
     }
@@ -561,6 +610,20 @@ export function createToniesScreen({ request = api } = {}) {
       restoreFocus(token, { root, fallback: refreshButton });
     }
 
+    function onRefresh(snapshot) {
+      if (!active || signal?.aborted) return;
+      if (snapshot.stale?.includes("jobs")) return;
+      jobs = snapshot.jobs || [];
+      const nextKeys = new Set(activeSendsByTonie(jobs).keys());
+      // A send that has left the active set has finished or failed, and this
+      // Tonie's chapter count and free space are now wrong. Re-read once,
+      // rather than leaving stale figures beside a bar that just filled.
+      const finished = [...sendingKeys].some((key) => !nextKeys.has(key));
+      sendingKeys = nextKeys;
+      render();
+      if (finished) load().catch(() => {});
+    }
+
     refreshButton.addEventListener("click", async () => {
       refreshButton.disabled = true;
       try {
@@ -578,9 +641,12 @@ export function createToniesScreen({ request = api } = {}) {
     load().catch((error) => {
       if (active && !signal?.aborted) notify(error.message, { kind: "failure", timeout: 0 });
     });
+    const unsubscribe = refresh ? refresh.subscribe(onRefresh) : () => {};
+    if (refresh) refresh.request();
     return () => {
       active = false;
       loadToken += 1;
+      unsubscribe();
     };
   };
 }

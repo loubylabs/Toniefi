@@ -647,3 +647,17 @@ test("an expanded playlist picker scrolls inside its own bounded region", () => 
   assert.equal(picker["overflow-y"], "auto");
   assert.equal(picker["overscroll-behavior"], "contain");
 });
+
+test("a null percentage is not a measured zero", () => {
+  // Number(null) is 0, so an unguarded check would draw a solid 0% bar for
+  // every job the worker has not reported a figure for.
+  assert.deepEqual(truthfulWorkProgress({ progress_percent: null }), {
+    mode: "indeterminate",
+    percent: null,
+  });
+  assert.deepEqual(truthfulWorkProgress({}), { mode: "indeterminate", percent: null });
+  assert.deepEqual(truthfulWorkProgress({ progress_percent: 0 }), {
+    mode: "determinate",
+    percent: 0,
+  });
+});

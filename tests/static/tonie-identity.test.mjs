@@ -159,3 +159,72 @@ test("the clear-all confirmation names and shows its Tonie", async () => {
   harness.teardown();
   harness.dom.restore();
 });
+
+function mountWithJobs(tonies, jobs) {
+  const dom = installDom();
+  const controller = new AbortController();
+  const listeners = new Set();
+  const refresh = {
+    snapshot: { jobs, stale: [], errors: {} },
+    request: () => {
+      for (const listener of listeners) listener(refresh.snapshot);
+      return Promise.resolve(refresh.snapshot);
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const request = async (url) => {
+    if (url === "/api/tonies") return tonies;
+    throw new Error(`unexpected request ${url}`);
+  };
+  const teardown = createToniesScreen({ request, refresh })({
+    workspace: dom.workspace,
+    signal: controller.signal,
+  });
+  return { dom, teardown, refresh };
+}
+
+test("a running send appears on the Tonie it is sending to, and nowhere else", async () => {
+  const target = aTonie({ id: "t1", name: "Bedtime Bear" });
+  const other = aTonie({ id: "t2", name: "Morning Bear", imageUrl: "" });
+  const harness = mountWithJobs([target, other], [{
+    id: 7,
+    kind: "push",
+    status: "running",
+    phase: "sending",
+    progress: "Uploading 7/30: Whale Shark Rescue",
+    progress_percent: 22.5,
+    payload: { household_id: "h1", tonie_id: "t1" },
+  }]);
+  await flush();
+  const panels = harness.dom.workspace.querySelectorAll(".tonie-send-panel");
+  assert.equal(panels.length, 1, "only the target Tonie gets a panel");
+  assert.match(panels[0].textContent, /Uploading 7\/30: Whale Shark Rescue/);
+  assert.match(panels[0].textContent, /23%/);
+  const meter = panels[0].querySelector(".work-cart-progress-track");
+  assert.equal(meter.getAttribute("data-mode"), "determinate");
+  assert.equal(meter.getAttribute("aria-valuenow"), "23");
+  harness.teardown();
+  harness.dom.restore();
+});
+
+test("a send with no measurable phase shows an indeterminate meter, not zero", async () => {
+  const harness = mountWithJobs([aTonie()], [{
+    id: 8,
+    kind: "push",
+    status: "running",
+    phase: "sending",
+    progress: "Signing in to myTonies",
+    progress_percent: null,
+    payload: { household_id: "h1", tonie_id: "t1" },
+  }]);
+  await flush();
+  const meter = harness.dom.workspace.querySelector(".work-cart-progress-track");
+  assert.equal(meter.getAttribute("data-mode"), "indeterminate");
+  assert.equal(meter.getAttribute("aria-valuenow"), null);
+  assert.ok(!harness.dom.workspace.querySelector(".tonie-send-percent"));
+  harness.teardown();
+  harness.dom.restore();
+});

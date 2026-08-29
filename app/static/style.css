@@ -615,12 +615,14 @@ textarea::placeholder {
 }
 
 .status-stamp[data-status="ready"],
+.status-stamp[data-status="sent"],
 .status-stamp[data-status="success"] {
   color: var(--success);
 }
 
 .status-stamp[data-status="queued"],
-.status-stamp[data-status="extracting"] {
+.status-stamp[data-status="extracting"],
+.status-stamp[data-status="sending"] {
   color: var(--info);
 }
 
@@ -3571,4 +3573,53 @@ img.collection-detail-cover {
   display: block;
   color: var(--ink-muted);
   font-size: var(--type-xs);
+}
+
+
+/* ------------------------------------------------- live send on a Tonie row */
+
+.tonie-send-panel {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--rule);
+  background: var(--paper-muted);
+}
+
+.tonie-send-panel h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tonie-send-panel ol {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tonie-send-row-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tonie-send-percent {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.tonie-send-message {
+  margin: var(--space-2) 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+/* A send fills the same meter Forge does, in the information ink its stamp
+   uses, so the two phases stay tellable apart at a glance. */
+.tonie-send-row .work-cart-progress-fill {
+  background: var(--info);
 }
