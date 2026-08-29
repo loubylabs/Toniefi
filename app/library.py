@@ -26,7 +26,7 @@ import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import uuid4
 
 from . import audio, config
@@ -958,7 +958,7 @@ def _archive_track_name(index: int, track: dict[str, Any], source: Path) -> str:
     return f"{index:03d}-{audio.slugify(title)}{source.suffix.lower()}"
 
 
-def download_entries(slug: str) -> list[tuple[Path, str]]:
+def download_entries(slug: str) -> list[tuple[Path | bytes, str]]:
     """Pair every file of one collection with its name inside a download.
 
     Track ORDER lives in the manifest, not in the filenames, so a collection
@@ -966,16 +966,23 @@ def download_entries(slug: str) -> list[tuple[Path, str]]:
     from the manifest: whoever unpacks the archive hears the reviewed order,
     not the order the files happened to be written in.
 
+    The manifest is therefore rewritten rather than copied. Renaming the audio
+    and shipping the original `collection.json` beside it would hand out an
+    archive whose own index names files it does not contain, which is worse
+    than shipping no index at all.
+
     A track the manifest lists but disk no longer holds is skipped rather than
     raised on. A manifest can outlive a file, and one missing chapter is no
-    reason to refuse the rest of the story.
+    reason to refuse the rest of the story. Such a track leaves the archived
+    manifest too, so the index keeps describing exactly what is in the archive.
     """
     with _manifest_lock:
-        manifest = get(slug)
-        if manifest is None:
+        if get(slug) is None:
             raise FileNotFoundError(f"No such collection: {slug}")
         base = _public_collection_path(slug)
-        entries: list[tuple[Path, str]] = []
+        manifest = _read_manifest(base)
+        entries: list[tuple[Path | bytes, str]] = []
+        archived_tracks: list[dict[str, Any]] = []
         for track in manifest.get("tracks", []):
             name = track.get("name")
             if not isinstance(name, str) or not name:
@@ -983,13 +990,42 @@ def download_entries(slug: str) -> list[tuple[Path, str]]:
             source = base / name
             if source.parent != base or not source.is_file():
                 continue
-            entries.append((source, _archive_track_name(len(entries) + 1, track, source)))
+            member = _archive_track_name(len(entries) + 1, track, source)
+            entries.append((source, member))
+            archived_tracks.append({**track, "name": member})
         cover = find_cover(base)
         if cover:
             entries.append((base / cover, cover))
-        if (base / MANIFEST).is_file():
-            entries.append((base / MANIFEST, MANIFEST))
+        archived = {**manifest, "tracks": archived_tracks}
+        if cover:
+            archived["cover"] = cover
+        else:
+            archived.pop("cover", None)
+        entries.append((json.dumps(archived, indent=2).encode("utf-8"), MANIFEST))
         return entries
+
+
+def open_download(slug: str) -> list[tuple[BinaryIO | bytes, str]]:
+    """Open every file of one collection at once, so a download is a snapshot.
+
+    Opening under the manifest lock is what keeps an accepted download honest.
+    A delete landing mid-stream unlinks the folder, but an already-open file
+    still reads to its end, so the browser never receives a truncated archive
+    that only looks like a complete one.
+
+    Ownership of the handles passes to the caller, which is `archive.stream`.
+    """
+    with _manifest_lock:
+        members: list[tuple[BinaryIO | bytes, str]] = []
+        try:
+            for source, name in download_entries(slug):
+                members.append((source if isinstance(source, bytes) else source.open("rb"), name))
+        except BaseException:
+            for handle, _ in members:
+                if not isinstance(handle, bytes):
+                    handle.close()
+            raise
+        return members
 
 
 def next_index(path: Path) -> int:

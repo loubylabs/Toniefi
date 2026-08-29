@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import zipfile
 from urllib.parse import quote
 
@@ -198,7 +199,7 @@ def test_stream_emits_the_archive_in_chunks_rather_than_one_buffer(isolated):
     slug = make_collection()
     (config.LIBRARY_DIR / slug / "001-chapter.mp3").write_bytes(b"x" * (3 * archive.CHUNK_BYTES))
 
-    chunks = list(archive.stream(library.download_entries(slug)))
+    chunks = list(archive.stream(library.open_download(slug)))
 
     assert len(chunks) > 3
     assert zipfile.ZipFile(io.BytesIO(b"".join(chunks))).testzip() is None
@@ -217,14 +218,89 @@ def test_download_entries_names_every_member_from_the_manifest(isolated):
 
     entries = library.download_entries(slug)
 
-    assert entries == [
+    assert [(source, name) for source, name in entries if not isinstance(source, bytes)] == [
         (path / "001-chapter.mp3", "001-the-boy-who-would-not-grow-up.mp3"),
         (path / "002-chapter.mp3", "002-the-shadow.mp3"),
         (path / "cover.jpg", "cover.jpg"),
-        (path / library.MANIFEST, library.MANIFEST),
     ]
+    generated, name = entries[-1]
+    assert name == library.MANIFEST
+    assert isinstance(generated, bytes)
 
 
 def test_download_entries_rejects_a_missing_collection(isolated):
     with pytest.raises(FileNotFoundError):
         library.download_entries("never-prepared")
+
+
+def test_archived_manifest_names_the_files_the_archive_actually_holds(isolated):
+    """An index naming files the archive lacks is worse than shipping no index."""
+    slug = make_collection()
+    library.reorder(slug, ["002-chapter.mp3", "001-chapter.mp3"])
+
+    _, bundle = fetch_archive(slug)
+
+    archived = json.loads(bundle.read("collection.json"))
+    assert [track["name"] for track in archived["tracks"]] == [
+        "001-the-shadow.mp3",
+        "002-the-boy-who-would-not-grow-up.mp3",
+    ]
+    assert set(track["name"] for track in archived["tracks"]) <= set(bundle.namelist())
+    assert [track["title"] for track in archived["tracks"]] == ["The Shadow", "The Boy Who Would Not Grow Up"]
+
+
+def test_archived_manifest_drops_a_track_the_archive_could_not_carry(isolated):
+    slug = make_collection()
+    (config.LIBRARY_DIR / slug / "001-chapter.mp3").unlink()
+
+    _, bundle = fetch_archive(slug)
+
+    archived = json.loads(bundle.read("collection.json"))
+    assert [track["name"] for track in archived["tracks"]] == ["001-the-shadow.mp3"]
+
+
+def test_archived_manifest_forgets_a_cover_the_collection_does_not_have(isolated):
+    slug = make_collection(cover=None)
+    path = config.LIBRARY_DIR / slug / library.MANIFEST
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["cover"] = "cover.jpg"
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    _, bundle = fetch_archive(slug)
+
+    assert "cover" not in json.loads(bundle.read("collection.json"))
+
+
+def test_archive_accepts_a_file_stamped_before_the_zip_epoch(isolated):
+    """A hand-copied file can carry a 1970 mtime. Zip cannot hold one."""
+    slug = make_collection()
+    target = config.LIBRARY_DIR / slug / "001-chapter.mp3"
+    os.utime(target, (0, 0))
+
+    _, bundle = fetch_archive(slug)
+
+    assert bundle.read("001-the-boy-who-would-not-grow-up.mp3") == b"audio for The Boy Who Would Not Grow Up"
+    assert bundle.getinfo("001-the-boy-who-would-not-grow-up.mp3").date_time == archive.ZIP_EPOCH
+
+
+def test_an_accepted_download_survives_the_collection_being_deleted(isolated):
+    """Delete unlinks the folder. An already-open download still completes."""
+    slug = make_collection()
+    members = library.open_download(slug)
+
+    library.delete(slug)
+    bundle = zipfile.ZipFile(io.BytesIO(b"".join(archive.stream(members))))
+
+    assert not (config.LIBRARY_DIR / slug).exists()
+    assert bundle.testzip() is None
+    assert bundle.read("002-the-shadow.mp3") == b"audio for The Shadow"
+
+
+def test_streaming_closes_every_handle_it_was_handed(isolated):
+    slug = make_collection()
+    members = library.open_download(slug)
+    handles = [source for source, _ in members if not isinstance(source, bytes)]
+
+    list(archive.stream(members))
+
+    assert handles and all(handle.closed for handle in handles)
