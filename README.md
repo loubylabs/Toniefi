@@ -104,7 +104,7 @@ Open <http://127.0.0.1:8080>. `Ctrl-C` stops it. Override the port with `PORT=90
 
 `run-local.sh` creates `.venv/`, installs or upgrades dependencies, creates the local directories, and starts the server. Run only one TonieFi process against a SQLite database at a time.
 
-You can prepare and review collections without a myTonies account. Creative Tonie reads and confirmed sends require one.
+You can prepare and organise collections without a myTonies account. Creative Tonie reads and confirmed sends require one.
 
 ## API examples
 

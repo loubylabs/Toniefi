@@ -115,7 +115,7 @@
       "kind": "card",
       "refersTo": "paper-record",
       "description": "Reusable raised record for shelf, library, Tonie, activity, and settings content.",
-      "html": "<article class=\"ds-paper-record\"><span class=\"ds-record-label\">12 chapters</span><h3>The Wind in the Willows</h3><p>Forge complete and ready for review.</p></article>",
+      "html": "<article class=\"ds-paper-record\"><span class=\"ds-record-label\">12 chapters</span><h3>The Wind in the Willows</h3><p>Forge complete and ready to send.</p></article>",
       "css": ".ds-paper-record { padding: 1rem; border: 1px solid var(--rule); border-radius: var(--radius); background: rgba(255,255,255,.88); box-shadow: 0 .35rem .9rem rgba(11,42,32,.08), 0 .1rem .25rem rgba(11,42,32,.06); color: var(--ink); font-family: \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; } .ds-paper-record h3 { margin: .5rem 0 0; font-size: 1.25rem; line-height: 1.15; letter-spacing: -.025em; } .ds-paper-record p { margin: .5rem 0 0; color: var(--ink-muted); } .ds-record-label { color: var(--ink-muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; } .ds-paper-record:hover { border-color: var(--bookcloth-muted); } .ds-paper-record:focus-visible { outline: .1875rem solid var(--focus); outline-offset: .1875rem; }"
     },
     {

@@ -13,14 +13,14 @@ Full responsive web application shell and its primary workflows. Mode: Operate.
 
 ## Audience and job
 
-A single-household user prepares several audiobook sources, monitors independent background processing, reviews each resulting collection, and deliberately assigns ready audio to Creative Tonies.
+A single-household user prepares several audiobook sources, monitors independent background processing, opens each resulting collection, and deliberately assigns ready audio to Creative Tonies.
 
 ## Primary tasks
 
 - Add several YouTube links at once, with one resulting collection per link.
 - See extraction and Forge progress without remaining on the page.
 - Resolve failures without blocking successful collections.
-- Review covers, chapters, loudness processing, duration, and multi-Tonie packing.
+- Inspect covers, chapters, loudness processing, duration, and multi-Tonie packing.
 - Manage the connected myTonies account and Creative Tonie contents safely.
 
 ## Chosen direction

@@ -1,6 +1,6 @@
 ---
 name: TonieFi Circulation Desk
-description: A contemporary library workroom for preparing, reviewing, and assigning story collections.
+description: A contemporary library workroom for preparing, organising, and sending story collections.
 colors:
   bookcloth: "#12372b"
   bookcloth-deep: "#0b2a20"
