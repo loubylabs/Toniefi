@@ -75,18 +75,37 @@ def batch_body(slug: str) -> dict:
     manifest = library.get(slug)
     return {
         "operation_key": "send-night-stories-001",
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "assignments": [{
             "household_id": "house-1",
             "tonie_id": "tonie-1",
-            "files": ["one.mp3", "two.mp3"],
             "replace": False,
             "remote_chapters": [
                 {"id": "remote-a", "title": "Already there"},
             ],
+            "sources": [{
+                "slug": slug,
+                "manifest_fingerprint": manifest["manifest_fingerprint"],
+                "files": ["one.mp3", "two.mp3"],
+            }],
         }],
     }
+
+
+def second_collection(title: str, tracks: list[tuple[str, str, int]]) -> str:
+    """A second forged collection, so a batch can carry more than one slug."""
+    slug = library.create(title)
+    path = config.LIBRARY_DIR / slug
+    for name, _, _ in tracks:
+        (path / name).write_bytes(name.encode())
+    manifest_path = path / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["stage"] = "forged"
+    manifest["tracks"] = [
+        {"name": name, "title": track_title, "seconds": seconds, "size": len(name), "mtime": 1}
+        for name, track_title, seconds in tracks
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return slug
 
 
 def test_batch_enqueue_is_atomic_and_idempotent(isolated):
@@ -102,8 +121,9 @@ def test_batch_enqueue_is_atomic_and_idempotent(isolated):
     assert first.json()["operation_key"] == body["operation_key"]
     assert len(first.json()["job_ids"]) == 1
     stored = db.get_job(first.json()["job_ids"][0])
-    assert stored["payload"]["files"] == ["one.mp3", "two.mp3"]
-    assert stored["payload"]["manifest_fingerprint"] == body["manifest_fingerprint"]
+    source = stored["payload"]["sources"][0]
+    assert source["files"] == ["one.mp3", "two.mp3"]
+    assert source["manifest_fingerprint"] == body["assignments"][0]["sources"][0]["manifest_fingerprint"]
     assert stored["payload"]["remote_chapters"] == body["assignments"][0]["remote_chapters"]
     assert len(db.jobs_for_refresh()) == 1
 
@@ -181,9 +201,7 @@ def test_worker_fails_stale_remote_before_replace_or_upload(isolated, monkeypatc
     cloud = StubCloud()
     cloud.chapters[0]["title"] = "Changed elsewhere"
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
-    payload["replace"] = True
+    payload = {**body["assignments"][0], "replace": True}
 
     with pytest.raises(push.StalePush, match="Tonie changed"):
         push.push_confirmed(payload)
@@ -197,8 +215,7 @@ def test_worker_fails_stale_local_fingerprint_before_cloud_access(isolated, monk
     library.rename_track(isolated, "one.mp3", "Changed locally")
     cloud = StubCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
 
     with pytest.raises(push.StalePush, match="collection changed"):
         push.push_confirmed(payload)
@@ -211,8 +228,7 @@ def test_worker_revalidates_append_capacity_from_fresh_remote_read(isolated, mon
     cloud = StubCloud()
     cloud.chapters = [{"id": "remote-a", "title": "Already there", "seconds": 4000}]
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
 
     with pytest.raises(push.StalePush, match="no longer has enough free space"):
         push.push_confirmed(payload)
@@ -224,8 +240,7 @@ def test_worker_uses_exact_confirmed_files_and_titles(isolated, monkeypatch):
     body = batch_body(isolated)
     cloud = StubCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
 
     result = push.push_confirmed(payload)
 
@@ -240,8 +255,7 @@ def test_worker_dispatch_has_no_group_index_resolution(isolated, monkeypatch):
     body = batch_body(isolated)
     cloud = StubCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
     job = {"id": db.create_job("push", "Send", payload), "kind": "push", "payload": payload}
 
     jobs._handle(job)
@@ -318,12 +332,7 @@ def test_two_push_workers_serialize_one_tonie_from_read_through_upload(isolated,
     monkeypatch.setattr(push, "_target_locks", {
         ("house-1", "tonie-1"): ObservableRLock(second_contended),
     })
-    payload = {
-        **body["assignments"][0],
-        "slug": isolated,
-        "manifest_fingerprint": body["manifest_fingerprint"],
-        "replace": True,
-    }
+    payload = {**body["assignments"][0], "replace": True}
 
     def run_push():
         try:
@@ -389,12 +398,7 @@ def test_chapter_write_waits_for_confirmed_push_final_read(
     monkeypatch.setattr(push, "_target_locks", {
         ("house-1", "tonie-1"): ObservableRLock(chapter_contended),
     })
-    payload = {
-        **body["assignments"][0],
-        "slug": isolated,
-        "manifest_fingerprint": body["manifest_fingerprint"],
-        "replace": True,
-    }
+    payload = {**body["assignments"][0], "replace": True}
 
     def run(target):
         try:
@@ -456,12 +460,7 @@ def test_collection_lease_blocks_local_mutation_from_remote_read_through_upload(
     cloud = PausedCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
     monkeypatch.setattr(library, "_manifest_lock", ObservableRLock(mutation_contended))
-    payload = {
-        **body["assignments"][0],
-        "slug": isolated,
-        "manifest_fingerprint": body["manifest_fingerprint"],
-        "replace": True,
-    }
+    payload = {**body["assignments"][0], "replace": True}
 
     def run_push():
         try:
@@ -522,3 +521,157 @@ def test_failed_prepare_job_remains_explicitly_retryable(isolated):
     db.update_job(job_id, status="failed", error="network")
 
     assert jobs.present(db.get_job(job_id))["retryable"] is True
+
+
+def test_two_collections_send_to_one_tonie_as_one_job(isolated):
+    """The whole point of the change: one Tonie, several stories, one action."""
+    client = TestClient(main.app)
+    other = second_collection("Sea Tales", [("three.mp3", "Three", 500)])
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"].append({
+        "slug": other,
+        "manifest_fingerprint": library.get(other)["manifest_fingerprint"],
+        "files": ["three.mp3"],
+    })
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 200
+    job_ids = response.json()["job_ids"]
+    assert len(job_ids) == 1
+    stored = db.get_job(job_ids[0])
+    assert [source["slug"] for source in stored["payload"]["sources"]] == [isolated, other]
+
+
+def test_a_partial_collection_is_refused(isolated):
+    """Sending half a story is never what the operator confirmed."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_a_duplicated_track_is_refused(isolated):
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"][0]["files"] = ["one.mp3", "one.mp3", "two.mp3"]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_tracks_out_of_manifest_order_are_refused(isolated):
+    """Manifest order is the reviewed order, so the payload cannot restate it."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"][0]["files"] = ["two.mp3", "one.mp3"]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_interleaved_collections_are_refused(isolated):
+    """A1, B1, A2 is an order no capacity plan produces."""
+    client = TestClient(main.app)
+    other = second_collection("Sea Tales", [("three.mp3", "Three", 500)])
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"] = [
+        {"slug": isolated, "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"], "files": ["one.mp3"]},
+        {"slug": other, "manifest_fingerprint": library.get(other)["manifest_fingerprint"], "files": ["three.mp3"]},
+        {"slug": isolated, "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"], "files": ["two.mp3"]},
+    ]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_one_collection_split_across_two_tonies_is_accepted(isolated, monkeypatch):
+    """A collection over the usable limit legitimately spans two assignments."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"] = [
+        {
+            "household_id": "house-1",
+            "tonie_id": "tonie-1",
+            "replace": False,
+            "remote_chapters": [],
+            "sources": [{
+                "slug": isolated,
+                "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"],
+                "files": ["one.mp3"],
+            }],
+        },
+        {
+            "household_id": "house-1",
+            "tonie_id": "tonie-2",
+            "replace": False,
+            "remote_chapters": [],
+            "sources": [{
+                "slug": isolated,
+                "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"],
+                "files": ["two.mp3"],
+            }],
+        },
+    ]
+    # Each track is 1000s; a 1500s usable limit puts them in separate groups.
+    monkeypatch.setattr(config, "TONIE_LIMIT_SECONDS", 1500)
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 200
+    assert len(response.json()["job_ids"]) == 2
+
+
+def test_a_selection_that_overflows_one_tonie_is_refused(isolated, monkeypatch):
+    """Two collections that do not pack into one group cannot claim they do."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    monkeypatch.setattr(config, "TONIE_LIMIT_SECONDS", 1500)
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_worker_uploads_tracks_from_two_collections(isolated, monkeypatch):
+    """Each track resolves through its own slug, or the second story 404s."""
+    other = second_collection("Sea Tales", [("three.mp3", "Three", 500)])
+    payload = {
+        "household_id": "house-1",
+        "tonie_id": "tonie-1",
+        "replace": False,
+        "remote_chapters": [],
+        "sources": [
+            {"slug": isolated, "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"], "files": ["one.mp3", "two.mp3"]},
+            {"slug": other, "manifest_fingerprint": library.get(other)["manifest_fingerprint"], "files": ["three.mp3"]},
+        ],
+    }
+    uploaded: list[str] = []
+
+    class FakeClient:
+        def check_login(self): return None
+        def get_tonie(self, *_): return {"chapters": [], "secondsPresent": 0, "name": "Emily"}
+        def upload_file(self, path):
+            uploaded.append(path.name)
+            return f"file-{path.name}"
+        def add_chapter(self, *_): return None
+        def clear_tonie(self, *_): return None
+        def close(self): return None
+
+    monkeypatch.setattr(push, "client_from_settings", lambda: FakeClient())
+
+    result = push.push_confirmed(payload)
+
+    assert uploaded == ["one.mp3", "two.mp3", "three.mp3"]
+    assert result["chapters"] == 0

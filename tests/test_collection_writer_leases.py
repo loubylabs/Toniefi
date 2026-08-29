@@ -83,13 +83,15 @@ def isolated_writer(monkeypatch, tmp_path):
 def confirmed_payload(slug: str) -> dict:
     manifest = library.get(slug)
     return {
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "household_id": "house-1",
         "tonie_id": "tonie-1",
-        "files": ["one.mp3", "two.mp3"],
         "replace": True,
         "remote_chapters": [{"id": "remote-a", "title": "Existing"}],
+        "sources": [{
+            "slug": slug,
+            "manifest_fingerprint": manifest["manifest_fingerprint"],
+            "files": ["one.mp3", "two.mp3"],
+        }],
     }
 
 

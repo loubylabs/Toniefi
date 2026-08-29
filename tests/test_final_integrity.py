@@ -505,14 +505,16 @@ def request_with_invalid_collection_slug(client, route, slug, encoded_slug):
             "/api/push/batch",
             content=json.dumps({
                 "operation_key": "invalid-public-collection-slug",
-                "slug": slug,
-                "manifest_fingerprint": "0" * 64,
                 "assignments": [{
                     "household_id": "house-1",
                     "tonie_id": "tonie-1",
-                    "files": ["one.mp3"],
                     "replace": True,
                     "remote_chapters": [],
+                    "sources": [{
+                        "slug": slug,
+                        "manifest_fingerprint": "0" * 64,
+                        "files": ["one.mp3"],
+                    }],
                 }],
             }),
             headers={"content-type": "application/json"},
@@ -587,15 +589,17 @@ def test_push_validates_hidden_slug_before_receipts_and_duplicate_targets(
     assignment = {
         "household_id": "house-1",
         "tonie_id": "tonie-1",
-        "files": ["one.mp3"],
         "replace": True,
         "remote_chapters": [],
+        "sources": [{
+            "slug": stage.path.name,
+            "manifest_fingerprint": "0" * 64,
+            "files": ["one.mp3"],
+        }],
     }
     assignments = [assignment, dict(assignment)] if duplicate_targets else [assignment]
     body = {
         "operation_key": "invalid-slug-existing-receipt",
-        "slug": stage.path.name,
-        "manifest_fingerprint": "0" * 64,
         "assignments": assignments,
     }
     if matching_receipt:
@@ -606,11 +610,7 @@ def test_push_validates_hidden_slug_before_receipts_and_duplicate_targets(
         db.create_idempotent_jobs(
             body["operation_key"],
             digest,
-            [("push", "Stored invalid fixture", {
-                **assignment,
-                "slug": stage.path.name,
-                "manifest_fingerprint": body["manifest_fingerprint"],
-            })],
+            [("push", "Stored invalid fixture", assignment)],
         )
     before_tree = library_tree_snapshot()
     before_jobs = db.jobs_for_history()
@@ -1169,14 +1169,16 @@ def test_push_batch_rejects_an_extracted_collection(isolated):
     manifest = library.get(slug)
     body = {
         "operation_key": "extracted-collection",
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "assignments": [{
             "household_id": "house-1",
             "tonie_id": "tonie-1",
-            "files": ["one.mp3", "two.mp3"],
             "replace": True,
             "remote_chapters": [],
+            "sources": [{
+                "slug": slug,
+                "manifest_fingerprint": manifest["manifest_fingerprint"],
+                "files": ["one.mp3", "two.mp3"],
+            }],
         }],
     }
 
@@ -1191,13 +1193,15 @@ def test_push_worker_rejects_extracted_collection_before_cloud_access(isolated, 
     slug = make_collection(stage="extracted")
     manifest = library.get(slug)
     payload = {
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "household_id": "house-1",
         "tonie_id": "tonie-1",
-        "files": ["one.mp3", "two.mp3"],
         "replace": True,
         "remote_chapters": [],
+        "sources": [{
+            "slug": slug,
+            "manifest_fingerprint": manifest["manifest_fingerprint"],
+            "files": ["one.mp3", "two.mp3"],
+        }],
     }
     monkeypatch.setattr(push, "client_from_settings", lambda: pytest.fail("cloud must stay untouched"))
 
@@ -1233,13 +1237,15 @@ def test_push_rejects_projection_above_usable_headroom(isolated, monkeypatch, re
 
     monkeypatch.setattr(push, "client_from_settings", Cloud)
     payload = {
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "household_id": "house-1",
         "tonie_id": "tonie-1",
-        "files": ["one.mp3", "two.mp3"],
         "replace": replace,
         "remote_chapters": [] if replace else [{"id": "old", "title": "Old"}],
+        "sources": [{
+            "slug": slug,
+            "manifest_fingerprint": manifest["manifest_fingerprint"],
+            "files": ["one.mp3", "two.mp3"],
+        }],
     }
 
     with pytest.raises((RuntimeError, push.StalePush), match="usable|space"):

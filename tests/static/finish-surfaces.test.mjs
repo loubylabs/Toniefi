@@ -7,7 +7,6 @@ import {
   createTonieMutation,
   tonieLoadView,
 } from "../../app/static/tonies.js";
-import { reviewCapacityLimit } from "../../app/static/review.js";
 import {
   activityAction,
   activityFacts,
@@ -111,11 +110,6 @@ test("Tonie chapter payload carries the title-aware canonical base", () => {
     ],
   });
 });
-
-test("Review assignment uses the server usable limit instead of raw capacity", () => {
-  assert.equal(reviewCapacityLimit({ tonie_limit_seconds: 5400, usable_limit_seconds: 5370 }), 5370);
-});
-
 
 test("Tonie mutation locks competing saves and reloads remote truth after failure", async () => {
   const pending = [];

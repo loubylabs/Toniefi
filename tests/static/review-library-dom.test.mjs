@@ -387,96 +387,6 @@ test("Desk renders forged truth instead of an obsolete failed Forge card", () =>
   }
 });
 
-test("focused Review owns assignment pending, failure, and recovered receipt DOM states", async () => {
-  const dom = installDom();
-  const controller = new AbortController();
-  const bodies = [];
-  let resolveRetry;
-  const collection = {
-    slug: "night-story",
-    title: "Night Story",
-    stage: "forged",
-    manifest_fingerprint: "f".repeat(64),
-    track_count: 1,
-    total_duration: "16m 40s",
-    tonies_needed: 1,
-    tracks: [{ name: "one.mp3", title: "One", seconds: 1000, duration: "16m 40s" }],
-    plan: [{ index: 1, seconds: 1000, duration: "16m 40s", tracks: [{ name: "one.mp3", title: "One", duration: "16m 40s" }] }],
-  };
-  const tonies = [{
-    householdId: "house-1",
-    householdName: "Home",
-    id: "tonie-1",
-    name: "Fox",
-    chapters: [{ id: "old-1", title: "Old" }],
-    chapter_count: 1,
-    seconds_present: 100,
-    seconds_free: 5300,
-    time_free: "1h 28m",
-  }];
-  const request = async (url, options = {}) => {
-    if (url === "/api/collections/night-story") return collection;
-    if (url === "/api/tonies") return tonies;
-    if (url === "/api/push/batch") {
-      bodies.push(options.body);
-      if (bodies.length === 1) throw new Error("response uncertain");
-      return new Promise((resolve) => { resolveRetry = resolve; });
-    }
-    throw new Error(`Unexpected request ${url}`);
-  };
-  const refresh = {
-    snapshot: { status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 } },
-    request: async () => ({ collections: [collection], stale: [], errors: {} }),
-    subscribe: () => () => {},
-  };
-
-  try {
-    createFocusedReview({
-      workspace: dom.workspace,
-      slug: collection.slug,
-      request,
-      refresh,
-      player: { play() {} },
-      signal: controller.signal,
-    });
-    await flush();
-    await buttonWithText(dom.workspace, "Choose Creative Tonies").click();
-    await flush();
-    const form = dom.workspace.querySelector(".assignment-form");
-    assert.match(form.querySelector("select").childNodes[1].textContent, /1h 27m free/);
-    form.querySelector("select").value = "house-1:tonie-1";
-    const firstSubmit = form.dispatchEvent({ type: "submit" });
-    await flush();
-    const assignment = dom.workspace.querySelector(".assignment-panel");
-    assert.equal(assignment.hasAttribute("data-assignment-pending"), true);
-    assert.equal(assignment.querySelectorAll("input, select, button").every((control) => control.disabled), true);
-    const repeatedSubmit = form.dispatchEvent({ type: "submit" });
-    await flush();
-    assert.equal(dom.document.getElementById("dialogHost").querySelectorAll("dialog").length, 1);
-    await repeatedSubmit;
-    await buttonWithText(dom.document.getElementById("dialogHost"), "Confirm").click();
-    await firstSubmit;
-    await flush();
-    assert.match(assignment.textContent, /response uncertain/);
-    assert.equal(bodies.length, 1);
-
-    const retry = buttonWithText(assignment, "Retry confirmed batch");
-    const retrying = retry.click();
-    await flush();
-    assert.equal(assignment.hasAttribute("data-assignment-pending"), true);
-    assert.equal(retry.disabled, true);
-    resolveRetry({ operation_key: "recovered", job_ids: [41] });
-    await retrying;
-    await flush();
-    assert.deepEqual(bodies, [bodies[0], bodies[0]]);
-    assert.doesNotMatch(assignment.textContent, /response uncertain/);
-    assert.match(assignment.textContent, /1 send is queued/);
-  } finally {
-    controller.abort();
-    dom.restore();
-  }
-});
-
 test("Library rerenders every mutation control disabled while Rescan is pending", async () => {
   const dom = installDom();
   const controller = new AbortController();
@@ -612,7 +522,7 @@ test("Library gives extracted collections one Finish preparation action and no r
   }
 });
 
-test("focused Review stage-gates assignment and offers the same Finish preparation route", async () => {
+test("focused Review stage-gates the capacity plan and offers the same Finish preparation route", async () => {
   const dom = installDom();
   const controller = new AbortController();
   const collection = {
@@ -666,7 +576,7 @@ test("focused Review stage-gates assignment and offers the same Finish preparati
     });
     await flush();
     assert.match(dom.workspace.textContent, /Forge incomplete/);
-    assert.equal(buttonWithText(dom.workspace, "Choose Creative Tonies"), undefined);
+    assert.equal(dom.workspace.querySelector(".capacity-plan"), null);
     const finish = buttonWithText(dom.workspace, "Finish preparation");
     assert.ok(finish);
     await finish.click();

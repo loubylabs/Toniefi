@@ -135,18 +135,25 @@ class ChapterRef(BaseModel):
     title: str = ""
 
 
+class PushSource(BaseModel):
+    slug: str
+    manifest_fingerprint: str = Field(min_length=64, max_length=64)
+    files: list[str] = Field(min_length=1)
+
+
 class PushAssignment(BaseModel):
     household_id: str
     tonie_id: str
-    files: list[str] = Field(min_length=1)
     replace: bool
     remote_chapters: list[ChapterRef]
+    # One assignment is one Creative Tonie, and a Tonie can hold chapters from
+    # several collections, so the collection identity lives here rather than on
+    # the batch.
+    sources: list[PushSource] = Field(min_length=1)
 
 
 class PushBatch(BaseModel):
     operation_key: str = Field(min_length=1, max_length=128)
-    slug: str
-    manifest_fingerprint: str = Field(min_length=64, max_length=64)
     assignments: list[PushAssignment] = Field(min_length=1, max_length=100)
 
 
@@ -408,10 +415,20 @@ def list_tonies() -> list[dict[str, Any]]:
     return [push.describe_tonie(tonie) for tonie in result]
 
 
+def _push_job_title(assignment: dict[str, Any]) -> str:
+    """Name a send by what it carries, since a batch is no longer one slug."""
+    slugs = {source["slug"] for source in assignment["sources"]}
+    if len(slugs) == 1:
+        return f"Send {next(iter(slugs))} to a Creative Tonie"
+    return f"Send {len(slugs)} collections to a Creative Tonie"
+
+
 @app.post("/api/push/batch")
 def push_batch(body: PushBatch) -> dict[str, Any]:
-    library.validate_public_collection_slug(body.slug)
     assignments = [assignment.model_dump() for assignment in body.assignments]
+    for assignment in assignments:
+        for source in assignment["sources"]:
+            library.validate_public_collection_slug(source["slug"])
     targets = [(item["household_id"], item["tonie_id"]) for item in assignments]
     if len(targets) != len(set(targets)):
         raise fail(400, "Each capacity group needs a different Creative Tonie.")
@@ -423,13 +440,9 @@ def push_batch(body: PushBatch) -> dict[str, Any]:
         existing = db.existing_idempotent_jobs(body.operation_key, digest)
         if existing is not None:
             return {"operation_key": body.operation_key, "job_ids": existing}
-        push.validate_confirmed_groups(body.slug, body.manifest_fingerprint, assignments)
+        push.validate_confirmed_batch(assignments)
         entries = [
-            ("push", f"Send {body.slug} to a Tonie", {
-                **assignment,
-                "slug": body.slug,
-                "manifest_fingerprint": body.manifest_fingerprint,
-            })
+            ("push", _push_job_title(assignment), assignment)
             for assignment in assignments
         ]
         job_ids, _ = db.create_idempotent_jobs(body.operation_key, digest, entries)
