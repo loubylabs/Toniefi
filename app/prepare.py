@@ -37,6 +37,7 @@ def run(payload: dict[str, Any], *, progress: Progress, checkpoint: Checkpoint) 
             current["url"],
             stage_id=stage_id,
             use_chapters=options["use_chapters"],
+            playlist_items=current.get("playlist_items"),
             progress=lambda message: progress(f"extracting: {message}"),
         )
         current["slug"] = extracted["slug"]

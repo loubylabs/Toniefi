@@ -100,6 +100,13 @@ class ReorderRequest(BaseModel):
 
 class PrepareSource(BaseModel):
     url: str
+    # Which playlist entries to download, as the numbers the preview showed.
+    # Empty means the link speaks for itself: one video, or a whole playlist.
+    playlist_items: list[int] = Field(default_factory=list)
+
+
+class PlaylistPreviewRequest(BaseModel):
+    url: str
 
 
 class PrepareOptions(BaseModel):
@@ -223,12 +230,25 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
 
     options = body.options.model_dump()
     entries = [
-        ("prepare_url", url, {"url": url, "options": options})
-        for url in sources
+        ("prepare_url", source.url.strip(),
+         {"url": source.url.strip(), "playlist_items": source.playlist_items, "options": options})
+        for source in body.sources
     ]
     ids = jobs.enqueue_many(entries)
     created = [{"id": job_id, "url": url} for job_id, url in zip(ids, sources, strict=True)]
     return {"jobs": created}
+
+
+@app.post("/api/playlist/preview")
+def playlist_preview(body: PlaylistPreviewRequest) -> dict[str, Any]:
+    """List a playlist's entries so the desk can offer them for picking."""
+    url = body.url.strip()
+    if not valid_source_url(url):
+        raise fail(400, "Sources must use HTTP or HTTPS.")
+    try:
+        return ingest.playlist_preview(url)
+    except RuntimeError as exc:
+        raise fail(502, str(exc)) from exc
 
 
 @app.get("/api/librivox/search")

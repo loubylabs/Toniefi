@@ -264,8 +264,9 @@ def import_url(
         # unaffected by --no-playlist, so it still brings every entry; a
         # watch?v=...&list=... link no longer drags its whole playlist in
         # behind it. Picking entries is what opts you into the playlist.
-        selection = (["--yes-playlist", "--playlist-items", _playlist_items_spec(playlist_items)]
-                     if playlist_items else ["--no-playlist"])
+        picked = _playlist_items_spec(playlist_items or [])
+        selection = (["--yes-playlist", "--playlist-items", picked]
+                     if picked else ["--no-playlist"])
         cmd = [
             "yt-dlp",
             *selection,

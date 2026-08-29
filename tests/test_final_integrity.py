@@ -847,7 +847,7 @@ def test_url_job_retry_restarts_an_incomplete_hidden_extraction(
     monkeypatch.setattr(
         prepare.ingest,
         "import_url",
-        lambda url, *, stage_id, use_chapters, progress: calls.append((url, stage_id))
+        lambda url, *, stage_id, progress, **options: calls.append((url, stage_id))
         or {"slug": stage.slug, "stage": "extracted"},
     )
     monkeypatch.setattr(
@@ -900,7 +900,7 @@ def test_url_retry_after_publish_interruption_returns_exactly_one_collection(
     real_forge = forge.run_collection_stage
     interrupted = True
 
-    def import_url(url, *, stage_id, use_chapters, progress):
+    def import_url(url, *, stage_id, progress, **options):
         nonlocal imports
         imports += 1
         stage = library.begin_collection_stage(

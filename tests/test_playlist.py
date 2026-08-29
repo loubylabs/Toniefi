@@ -6,8 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
-from app import audio, config, db, ingest, library
+from app import audio, config, db, ingest, main, prepare
 
 
 @pytest.fixture
@@ -195,3 +196,83 @@ def test_a_playlist_is_named_after_the_playlist_not_its_first_video(isolated_lib
     )
 
     assert result["title"] == "Story Time"
+
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(main.app)
+
+
+def test_preview_route_lists_the_playlist(client, flat_playlist):
+    flat_playlist({
+        "_type": "playlist",
+        "title": "How Search Works",
+        "entries": [{"id": "aaa", "title": "First", "duration": 61}],
+    })
+
+    response = client.post("/api/playlist/preview", json={"url": "https://www.youtube.com/playlist?list=PL1"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "title": "How Search Works",
+        "entries": [{"index": 1, "id": "aaa", "title": "First", "duration": 61.0, "available": True}],
+    }
+
+
+def test_preview_route_refuses_a_url_that_is_not_http(client):
+    response = client.post("/api/playlist/preview", json={"url": "file:///etc/passwd"})
+
+    assert response.status_code == 400
+
+
+def test_preview_route_passes_on_what_yt_dlp_complained_about(client, flat_playlist):
+    flat_playlist({}, returncode=1, stderr="ERROR: playlist does not exist")
+
+    response = client.post("/api/playlist/preview", json={"url": "https://www.youtube.com/playlist?list=nope"})
+
+    assert response.status_code == 502
+    assert "playlist does not exist" in response.json()["detail"]
+
+
+def test_prepare_carries_the_picked_numbers_into_the_job(client, monkeypatch):
+    payloads = []
+    monkeypatch.setattr(main.jobs, "enqueue_many",
+                        lambda entries: payloads.extend(entry[2] for entry in entries) or ["job-1"])
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": "https://www.youtube.com/playlist?list=PL1", "playlist_items": [1, 3]}],
+    })
+
+    assert response.status_code == 200
+    assert payloads[0]["playlist_items"] == [1, 3]
+
+
+def test_prepare_run_forwards_the_picked_numbers_to_the_download(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(prepare.ingest, "import_url",
+                        lambda url, **kw: seen.update(kw) or {"slug": "alice"})
+    monkeypatch.setattr(prepare.forge, "run_collection_stage", lambda stage_id, **kw: {"slug": "alice"})
+    monkeypatch.setattr(prepare.library, "find_published_stage", lambda stage_id: None)
+    monkeypatch.setattr(prepare.library, "collection_stage", lambda stage_id: None)
+
+    prepare.run(
+        {"url": "https://www.youtube.com/playlist?list=PL1", "playlist_items": [2, 4], "stage_id": "url-x"},
+        progress=lambda message: None,
+        checkpoint=lambda payload: None,
+    )
+
+    assert seen["playlist_items"] == [2, 4]
+
+
+def test_numbers_that_are_all_rubbish_download_the_single_video(isolated_library, fake_download):
+    recorded = fake_download(["000-Only.mp3"])
+
+    ingest.import_url(
+        "https://www.youtube.com/watch?v=aaa&list=PL1",
+        stage_id="url-rubbish",
+        use_chapters=False,
+        playlist_items=[0, -3],
+    )
+
+    assert "--no-playlist" in recorded[0]
+    assert "--playlist-items" not in recorded[0]
