@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import nullcontext
+from typing import get_args
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app import config, db, jobs, library, main, push
 
@@ -75,18 +78,37 @@ def batch_body(slug: str) -> dict:
     manifest = library.get(slug)
     return {
         "operation_key": "send-night-stories-001",
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "assignments": [{
             "household_id": "house-1",
             "tonie_id": "tonie-1",
-            "files": ["one.mp3", "two.mp3"],
             "replace": False,
             "remote_chapters": [
                 {"id": "remote-a", "title": "Already there"},
             ],
+            "sources": [{
+                "slug": slug,
+                "manifest_fingerprint": manifest["manifest_fingerprint"],
+                "files": ["one.mp3", "two.mp3"],
+            }],
         }],
     }
+
+
+def second_collection(title: str, tracks: list[tuple[str, str, int]]) -> str:
+    """A second forged collection, so a batch can carry more than one slug."""
+    slug = library.create(title)
+    path = config.LIBRARY_DIR / slug
+    for name, _, _ in tracks:
+        (path / name).write_bytes(name.encode())
+    manifest_path = path / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["stage"] = "forged"
+    manifest["tracks"] = [
+        {"name": name, "title": track_title, "seconds": seconds, "size": len(name), "mtime": 1}
+        for name, track_title, seconds in tracks
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return slug
 
 
 def test_batch_enqueue_is_atomic_and_idempotent(isolated):
@@ -102,8 +124,9 @@ def test_batch_enqueue_is_atomic_and_idempotent(isolated):
     assert first.json()["operation_key"] == body["operation_key"]
     assert len(first.json()["job_ids"]) == 1
     stored = db.get_job(first.json()["job_ids"][0])
-    assert stored["payload"]["files"] == ["one.mp3", "two.mp3"]
-    assert stored["payload"]["manifest_fingerprint"] == body["manifest_fingerprint"]
+    source = stored["payload"]["sources"][0]
+    assert source["files"] == ["one.mp3", "two.mp3"]
+    assert source["manifest_fingerprint"] == body["assignments"][0]["sources"][0]["manifest_fingerprint"]
     assert stored["payload"]["remote_chapters"] == body["assignments"][0]["remote_chapters"]
     assert len(db.jobs_for_refresh()) == 1
 
@@ -130,6 +153,223 @@ def test_operation_key_reuse_with_different_payload_conflicts(isolated):
 
     assert conflict.status_code == 409
     assert len(db.jobs_for_refresh()) == 1
+
+
+@pytest.mark.parametrize("retired", [
+    {"slug": "night-stories"},
+    {"manifest_fingerprint": "f" * 64},
+    {"files": ["one.mp3"]},
+])
+def test_a_batch_carrying_the_retired_single_collection_fields_is_refused(isolated, retired):
+    """The previous shape is removed, not accepted beside the new one.
+
+    Accepted and discarded, an unmigrated caller keeps sending a collection the
+    server never reads, and every send silently carries the wrong one.
+    """
+    body = batch_body(isolated)
+    body.update(retired)
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 422
+    assert db.jobs_for_refresh() == []
+
+
+def test_a_retired_field_on_an_assignment_is_refused(isolated):
+    """One request, one retired field, so nothing else can answer for it.
+
+    Combining both levels in a single body lets either validation root break
+    while the other keeps the test green.
+    """
+    body = batch_body(isolated)
+    body["assignments"][0]["files"] = ["one.mp3"]
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 422
+    assert db.jobs_for_refresh() == []
+
+
+def test_a_retired_field_on_an_assignment_source_is_refused(isolated):
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"][0]["group_index"] = 1
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 422
+    assert db.jobs_for_refresh() == []
+
+
+def test_two_assignments_naming_one_creative_tonie_are_refused(isolated):
+    """A Tonie written twice in one batch loses whichever group lands first.
+
+    Both assignments are otherwise valid, so nothing but the duplicate-target
+    check stands between this body and two jobs aimed at the same Tonie.
+    """
+    body = batch_body(isolated)
+    second = second_collection("Dawn Stories", [("dawn.mp3", "Dawn", 900)])
+    body["assignments"].append({
+        "household_id": "house-1",
+        "tonie_id": "tonie-1",
+        "replace": False,
+        "remote_chapters": [],
+        "sources": [{
+            "slug": second,
+            "manifest_fingerprint": library.get(second)["manifest_fingerprint"],
+            "files": ["dawn.mp3"],
+        }],
+    })
+
+    response = TestClient(main.app).post("/api/push/batch", json=body)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Each capacity group needs a different Creative Tonie."
+    assert db.jobs_for_refresh() == []
+
+
+def test_each_batch_refusal_names_its_own_cause_and_the_library(isolated):
+    """Five preconditions, five messages, none of them naming a review step.
+
+    The operator reads one line and has to know which of these went wrong and
+    what to do next. A shared or vague message costs a send that cannot be
+    retried blindly, because a Tonie write has no undo.
+    """
+    client = TestClient(main.app)
+
+    missing = batch_body(isolated)
+    missing["assignments"][0]["sources"][0]["slug"] = "gone-story"
+
+    unforged_slug = second_collection("Half Made", [("half.mp3", "Half", 600)])
+    unforged = batch_body(isolated)
+    unforged["assignments"][0]["sources"] = [{
+        "slug": unforged_slug,
+        "manifest_fingerprint": library.get(unforged_slug)["manifest_fingerprint"],
+        "files": ["half.mp3"],
+    }]
+    manifest_path = config.LIBRARY_DIR / unforged_slug / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["stage"] = "extracted"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    fingerprint = batch_body(isolated)
+    fingerprint["assignments"][0]["sources"][0]["manifest_fingerprint"] = "a" * 64
+
+    files = batch_body(isolated)
+    files["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
+
+    # Both tracks fit one capacity group, so splitting them across two Tonies
+    # submits the right files against the wrong plan.
+    capacity = batch_body(isolated)
+    capacity["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
+    capacity["assignments"].append({
+        "household_id": "house-1",
+        "tonie_id": "tonie-2",
+        "replace": False,
+        "remote_chapters": [],
+        "sources": [{
+            "slug": isolated,
+            "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"],
+            "files": ["two.mp3"],
+        }],
+    })
+
+    details = {}
+    for name, body in (
+        ("missing", missing),
+        ("unforged", unforged),
+        ("fingerprint", fingerprint),
+        ("files", files),
+        ("capacity", capacity),
+    ):
+        body["operation_key"] = f"send-{name}"
+        response = client.post("/api/push/batch", json=body)
+        assert response.status_code == 409, (name, response.json())
+        details[name] = response.json()["detail"]
+
+    assert details["missing"] == "The collection changed because gone-story no longer exists."
+    assert details["unforged"] == (
+        "Forge is incomplete for a selected collection. "
+        "Finish preparation before sending it."
+    )
+    assert details["fingerprint"] == (
+        "A selected collection changed after confirmation. "
+        "Select the collections in the Library again and send."
+    )
+    assert details["files"] == (
+        "The confirmed audio files no longer match the selected collections. "
+        "Select them in the Library again and send."
+    )
+    assert details["capacity"] == (
+        "The confirmed files no longer fill the capacity groups this selection plans. "
+        "Select the collections in the Library again and send."
+    )
+    assert len(set(details.values())) == len(details)
+    assert db.jobs_for_refresh() == []
+
+
+
+
+def _reachable_models(annotation: object) -> list[type[BaseModel]]:
+    """Every pydantic model one route body can validate, nesting included."""
+    found: list[type[BaseModel]] = []
+    queue = [annotation]
+    while queue:
+        current = queue.pop()
+        if isinstance(current, type) and issubclass(current, BaseModel):
+            if current in found:
+                continue
+            found.append(current)
+            queue.extend(field.annotation for field in current.model_fields.values())
+            continue
+        queue.extend(get_args(current))
+    return found
+
+
+def test_every_request_body_this_application_accepts_forbids_extra_fields():
+    """The routes, not the module globals, because the routes are what accepts.
+
+    Reading vars(main) checked the models this file happens to declare and
+    missed everything FastAPI generates, which is how the multipart form on
+    /api/uploads/prepare accepted unknown fields while this test reported PASS.
+    Walking each route body's own nesting keeps the models inside an
+    assignment covered, which the module scan did reach.
+    """
+    accepted = [
+        (route.path, sorted(route.methods), model)
+        for route in main.app.routes
+        if isinstance(route, APIRoute) and route.body_field is not None
+        for model in _reachable_models(route.body_field.type_)
+    ]
+
+    assert accepted
+    # The generated multipart model is the one that hid, so its route is named
+    # here: dropping out of this enumeration has to be a failure, not silence.
+    assert "/api/uploads/prepare" in [path for path, _, _ in accepted]
+    assert main.PushSource in [model for _, _, model in accepted]
+    assert [
+        (path, methods, model.__name__)
+        for path, methods, model in accepted
+        if model.model_config.get("extra") != "forbid"
+    ] == []
+
+
+def test_the_multipart_upload_form_refuses_an_unknown_field(isolated):
+    """The structural rule, proved against the wire on the route that broke it.
+
+    A form is still a request body, and a caller nobody migrated is still
+    wrong. Accepting the field and dropping it is how that caller stays wrong
+    without anyone finding out.
+    """
+    response = TestClient(main.app).post(
+        "/api/uploads/prepare",
+        files=[("files", ("story.mp3", b"story", "audio/mpeg"))],
+        data={"title": "Night Stories", "options": "{}", "group_index": "1"},
+    )
+
+    assert response.status_code == 422
+    assert [error["loc"] for error in response.json()["detail"]] == [["body", "group_index"]]
+    assert db.jobs_for_refresh() == []
+    assert list(config.upload_stage_dir().iterdir()) == []
 
 
 def test_old_single_push_endpoint_is_retired(isolated):
@@ -181,9 +421,7 @@ def test_worker_fails_stale_remote_before_replace_or_upload(isolated, monkeypatc
     cloud = StubCloud()
     cloud.chapters[0]["title"] = "Changed elsewhere"
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
-    payload["replace"] = True
+    payload = {**body["assignments"][0], "replace": True}
 
     with pytest.raises(push.StalePush, match="Tonie changed"):
         push.push_confirmed(payload)
@@ -197,8 +435,7 @@ def test_worker_fails_stale_local_fingerprint_before_cloud_access(isolated, monk
     library.rename_track(isolated, "one.mp3", "Changed locally")
     cloud = StubCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
 
     with pytest.raises(push.StalePush, match="collection changed"):
         push.push_confirmed(payload)
@@ -211,8 +448,7 @@ def test_worker_revalidates_append_capacity_from_fresh_remote_read(isolated, mon
     cloud = StubCloud()
     cloud.chapters = [{"id": "remote-a", "title": "Already there", "seconds": 4000}]
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
 
     with pytest.raises(push.StalePush, match="no longer has enough free space"):
         push.push_confirmed(payload)
@@ -224,8 +460,7 @@ def test_worker_uses_exact_confirmed_files_and_titles(isolated, monkeypatch):
     body = batch_body(isolated)
     cloud = StubCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
 
     result = push.push_confirmed(payload)
 
@@ -240,8 +475,7 @@ def test_worker_dispatch_has_no_group_index_resolution(isolated, monkeypatch):
     body = batch_body(isolated)
     cloud = StubCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
-    payload = {**body["assignments"][0], "slug": isolated,
-               "manifest_fingerprint": body["manifest_fingerprint"]}
+    payload = body["assignments"][0]
     job = {"id": db.create_job("push", "Send", payload), "kind": "push", "payload": payload}
 
     jobs._handle(job)
@@ -318,12 +552,7 @@ def test_two_push_workers_serialize_one_tonie_from_read_through_upload(isolated,
     monkeypatch.setattr(push, "_target_locks", {
         ("house-1", "tonie-1"): ObservableRLock(second_contended),
     })
-    payload = {
-        **body["assignments"][0],
-        "slug": isolated,
-        "manifest_fingerprint": body["manifest_fingerprint"],
-        "replace": True,
-    }
+    payload = {**body["assignments"][0], "replace": True}
 
     def run_push():
         try:
@@ -389,12 +618,7 @@ def test_chapter_write_waits_for_confirmed_push_final_read(
     monkeypatch.setattr(push, "_target_locks", {
         ("house-1", "tonie-1"): ObservableRLock(chapter_contended),
     })
-    payload = {
-        **body["assignments"][0],
-        "slug": isolated,
-        "manifest_fingerprint": body["manifest_fingerprint"],
-        "replace": True,
-    }
+    payload = {**body["assignments"][0], "replace": True}
 
     def run(target):
         try:
@@ -456,12 +680,7 @@ def test_collection_lease_blocks_local_mutation_from_remote_read_through_upload(
     cloud = PausedCloud()
     monkeypatch.setattr(push, "client_from_settings", lambda: cloud)
     monkeypatch.setattr(library, "_manifest_lock", ObservableRLock(mutation_contended))
-    payload = {
-        **body["assignments"][0],
-        "slug": isolated,
-        "manifest_fingerprint": body["manifest_fingerprint"],
-        "replace": True,
-    }
+    payload = {**body["assignments"][0], "replace": True}
 
     def run_push():
         try:
@@ -503,7 +722,7 @@ def test_failed_push_job_cannot_be_cloned_by_generic_retry(isolated):
     response = client.post(f"/api/jobs/{job_id}/retry")
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Creative Tonie sends must be reviewed and confirmed again in Review."
+    assert response.json()["detail"] == "Creative Tonie sends must be selected and confirmed again in the Library."
     assert db.jobs_for_refresh()[0]["id"] == job_id
     assert db.get_job(job_id)["payload"] == original["payload"]
     assert jobs.present(db.get_job(job_id))["retryable"] is False
@@ -522,3 +741,157 @@ def test_failed_prepare_job_remains_explicitly_retryable(isolated):
     db.update_job(job_id, status="failed", error="network")
 
     assert jobs.present(db.get_job(job_id))["retryable"] is True
+
+
+def test_two_collections_send_to_one_tonie_as_one_job(isolated):
+    """The whole point of the change: one Tonie, several stories, one action."""
+    client = TestClient(main.app)
+    other = second_collection("Sea Tales", [("three.mp3", "Three", 500)])
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"].append({
+        "slug": other,
+        "manifest_fingerprint": library.get(other)["manifest_fingerprint"],
+        "files": ["three.mp3"],
+    })
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 200
+    job_ids = response.json()["job_ids"]
+    assert len(job_ids) == 1
+    stored = db.get_job(job_ids[0])
+    assert [source["slug"] for source in stored["payload"]["sources"]] == [isolated, other]
+
+
+def test_a_partial_collection_is_refused(isolated):
+    """Sending half a story is never what the operator confirmed."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_a_duplicated_track_is_refused(isolated):
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"][0]["files"] = ["one.mp3", "one.mp3", "two.mp3"]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_tracks_out_of_manifest_order_are_refused(isolated):
+    """The manifest already holds the order, so the payload cannot restate it."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"][0]["files"] = ["two.mp3", "one.mp3"]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_interleaved_collections_are_refused(isolated):
+    """A1, B1, A2 is an order no capacity plan produces."""
+    client = TestClient(main.app)
+    other = second_collection("Sea Tales", [("three.mp3", "Three", 500)])
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"] = [
+        {"slug": isolated, "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"], "files": ["one.mp3"]},
+        {"slug": other, "manifest_fingerprint": library.get(other)["manifest_fingerprint"], "files": ["three.mp3"]},
+        {"slug": isolated, "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"], "files": ["two.mp3"]},
+    ]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_one_collection_split_across_two_tonies_is_accepted(isolated, monkeypatch):
+    """A collection over the usable limit legitimately spans two assignments."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"] = [
+        {
+            "household_id": "house-1",
+            "tonie_id": "tonie-1",
+            "replace": False,
+            "remote_chapters": [],
+            "sources": [{
+                "slug": isolated,
+                "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"],
+                "files": ["one.mp3"],
+            }],
+        },
+        {
+            "household_id": "house-1",
+            "tonie_id": "tonie-2",
+            "replace": False,
+            "remote_chapters": [],
+            "sources": [{
+                "slug": isolated,
+                "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"],
+                "files": ["two.mp3"],
+            }],
+        },
+    ]
+    # Each track is 1000s; a 1500s usable limit puts them in separate groups.
+    monkeypatch.setattr(config, "TONIE_LIMIT_SECONDS", 1500)
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 200
+    assert len(response.json()["job_ids"]) == 2
+
+
+def test_a_selection_that_overflows_one_tonie_is_refused(isolated, monkeypatch):
+    """Two collections that do not pack into one group cannot claim they do."""
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    monkeypatch.setattr(config, "TONIE_LIMIT_SECONDS", 1500)
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_worker_uploads_tracks_from_two_collections(isolated, monkeypatch):
+    """Each track resolves through its own slug, or the second story 404s."""
+    other = second_collection("Sea Tales", [("three.mp3", "Three", 500)])
+    payload = {
+        "household_id": "house-1",
+        "tonie_id": "tonie-1",
+        "replace": False,
+        "remote_chapters": [],
+        "sources": [
+            {"slug": isolated, "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"], "files": ["one.mp3", "two.mp3"]},
+            {"slug": other, "manifest_fingerprint": library.get(other)["manifest_fingerprint"], "files": ["three.mp3"]},
+        ],
+    }
+    uploaded: list[str] = []
+
+    class FakeClient:
+        def check_login(self): return None
+        def get_tonie(self, *_): return {"chapters": [], "secondsPresent": 0, "name": "Emily"}
+        def upload_file(self, path):
+            uploaded.append(path.name)
+            return f"file-{path.name}"
+        def add_chapter(self, *_): return None
+        def clear_tonie(self, *_): return None
+        def close(self): return None
+
+    monkeypatch.setattr(push, "client_from_settings", lambda: FakeClient())
+
+    result = push.push_confirmed(payload)
+
+    assert uploaded == ["one.mp3", "two.mp3", "three.mp3"]
+    assert result["chapters"] == 0

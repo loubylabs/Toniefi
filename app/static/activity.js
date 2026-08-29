@@ -15,8 +15,12 @@ const PREPARATION_KINDS = new Set(["prepare_url", "upload_prepare", "librivox", 
 
 
 function resultSlug(job) {
-  const slug = job?.result?.slug || job?.payload?.slug || "";
-  return typeof slug === "string" ? slug : "";
+  const direct = job?.result?.slug || job?.payload?.slug || "";
+  if (typeof direct === "string" && direct) return direct;
+  // A push payload carries its collections under `sources`. One collection
+  // resolves to a link; several have no single collection to point at.
+  const slugs = new Set((job?.payload?.sources || []).map((source) => source?.slug).filter(Boolean));
+  return slugs.size === 1 ? [...slugs][0] : "";
 }
 
 
@@ -24,19 +28,19 @@ export function activityAction(job) {
   const slug = resultSlug(job);
   if (job.kind === "push" && job.status === "failed" && slug) {
     return {
-      kind: "review",
-      href: `/review/${encodeURIComponent(slug)}`,
-      label: "Review assignment",
-      guidance: "Creative Tonie sends must be reviewed and confirmed again.",
+      kind: "collection",
+      href: `/collection/${encodeURIComponent(slug)}`,
+      label: "Open collection",
+      guidance: "Select the collection in the Library and send it again.",
     };
   }
-  const reviewablePreparation = PREPARATION_KINDS.has(job.kind)
+  const completedPreparation = PREPARATION_KINDS.has(job.kind)
     && (job.kind !== "librivox" || job.collection_stage === "forged");
-  if (job.status === "done" && reviewablePreparation && slug) {
+  if (job.status === "done" && completedPreparation && slug) {
     return {
-      kind: "review",
-      href: `/review/${encodeURIComponent(slug)}`,
-      label: "Open review",
+      kind: "collection",
+      href: `/collection/${encodeURIComponent(slug)}`,
+      label: "Open collection",
       guidance: "",
     };
   }
@@ -76,7 +80,7 @@ function phaseLabel(phase) {
     queued: "Queued",
     extracting: "Extracting",
     forging: "Forging",
-    ready: "Ready to review",
+    ready: "Ready to send",
     running: "Running",
     failed: "Failed",
     done: "Finished",
@@ -146,13 +150,13 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       if (action.kind === "none") return null;
       const host = element("div", { className: "activity-action" });
       if (action.guidance) host.append(element("p", { text: action.guidance }));
-      if (action.kind === "review") {
+      if (action.kind === "collection") {
         host.append(element("a", {
           className: "button button-primary",
           href: action.href,
-          "data-route": "review",
-          "data-focus-key": `activity-${job.id}-review`,
-        }, [iconNode("review"), element("span", { text: action.label })]));
+          "data-route": "collection",
+          "data-focus-key": `activity-${job.id}-collection`,
+        }, [iconNode("library"), element("span", { text: action.label })]));
       } else {
         const retry = element("button", {
           type: "button",
@@ -216,7 +220,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
         replace(list, element("li", { className: "empty-state activity-empty" }, [
           iconNode("activity"),
           element("strong", { text: "Nothing has run yet" }),
-          element("p", { text: "Prepare a story on Desk. Its extraction, Forge, review, and send history will appear here." }),
+          element("p", { text: "Prepare a story on Desk. Its extraction, Forge, and send history will appear here." }),
           element("a", { href: "/", className: "button button-primary", "data-route": "desk" }, [
             iconNode("desk"), element("span", { text: "Go to Desk" }),
           ]),

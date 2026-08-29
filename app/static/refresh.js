@@ -196,14 +196,6 @@ export function updateShell(snapshot) {
     replace(summary, symbol, copy);
   }
 
-  const ready = snapshot.collections.filter((collection) => collection.stage === "forged").length;
-  const reviewCount = document.getElementById("reviewCount");
-  if (reviewCount) {
-    reviewCount.textContent = String(ready);
-    reviewCount.hidden = ready === 0;
-    reviewCount.setAttribute("aria-label", `${ready} ${ready === 1 ? "collection" : "collections"} ready`);
-  }
-
   const active = snapshot.jobs.filter((job) => job.status === "queued" || job.status === "running").length;
   const activityStatus = document.getElementById("activityStatus");
   const activityCount = document.getElementById("activityCount");

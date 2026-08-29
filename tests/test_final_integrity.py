@@ -322,6 +322,83 @@ def test_init_migrates_all_legacy_forge_jobs_once_for_claim_and_retry(isolated):
     ).fetchone()[0] == 1
 
 
+def test_init_migrates_a_queued_push_job_into_the_multi_collection_shape(isolated):
+    """A send queued before the upgrade must survive it, not kill the worker."""
+    slug = make_collection(stage="forged")
+    fingerprint = library.manifest_fingerprint(library.get(slug))
+    legacy = {
+        "household_id": "h1",
+        "tonie_id": "t1",
+        "replace": False,
+        "remote_chapters": [{"id": "c1", "title": "Old chapter"}],
+        "slug": slug,
+        "manifest_fingerprint": fingerprint,
+        "files": ["one.mp3", "two.mp3"],
+        "operation_key": "legacy-key",
+        "operation_digest": "legacy-digest",
+        "batch_position": 1,
+        "batch_size": 1,
+    }
+    conn = db.connect()
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE name=?",
+        (db.PUSH_BATCH_SOURCES_MIGRATION,),
+    )
+    cursor = conn.execute(
+        "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+        "VALUES('push','queued',?,?,?,?)",
+        (f"Send {slug} to a Tonie", json.dumps(legacy), 1.0, 1.0),
+    )
+    conn.commit()
+    job_id = int(cursor.lastrowid)
+
+    db.init()
+    db.init()
+    claimed = db.claim_job()
+    payload = claimed["payload"]
+
+    assert claimed["id"] == job_id
+    assert payload["sources"] == [{
+        "slug": slug,
+        "manifest_fingerprint": fingerprint,
+        "files": ["one.mp3", "two.mp3"],
+    }]
+    assert not {"slug", "manifest_fingerprint", "files"} & set(payload)
+    assert {key: payload[key] for key in legacy if key not in
+            {"slug", "manifest_fingerprint", "files"}} == {
+        key: value for key, value in legacy.items()
+        if key not in {"slug", "manifest_fingerprint", "files"}
+    }
+    # The worker path that raised KeyError('sources') before the migration.
+    assert [track["name"] for _, track in push.confirmed_tracks(payload)] == [
+        "one.mp3", "two.mp3",
+    ]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schema_migrations WHERE name=?",
+        (db.PUSH_BATCH_SOURCES_MIGRATION,),
+    ).fetchone()[0] == 1
+
+
+def test_init_leaves_an_unrecognisable_legacy_push_payload_alone(isolated):
+    """A payload with nothing to carry across keeps its own error, not one the
+    migration invented by guessing at a shape it never wrote."""
+    conn = db.connect()
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE name=?",
+        (db.PUSH_BATCH_SOURCES_MIGRATION,),
+    )
+    cursor = conn.execute(
+        "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
+        "VALUES('push','failed',?,?,?,?)",
+        ("Malformed send", json.dumps({"household_id": "h1"}), 1.0, 1.0),
+    )
+    conn.commit()
+
+    db.init()
+
+    assert db.get_job(int(cursor.lastrowid))["payload"] == {"household_id": "h1"}
+
+
 def test_generic_job_creation_cannot_bypass_canonical_forge_payloads(isolated):
     with pytest.raises(ValueError, match="create_forge_job_once"):
         db.create_job("forge", "Legacy bypass", {"slug": "legacy-bypass"})
@@ -505,14 +582,16 @@ def request_with_invalid_collection_slug(client, route, slug, encoded_slug):
             "/api/push/batch",
             content=json.dumps({
                 "operation_key": "invalid-public-collection-slug",
-                "slug": slug,
-                "manifest_fingerprint": "0" * 64,
                 "assignments": [{
                     "household_id": "house-1",
                     "tonie_id": "tonie-1",
-                    "files": ["one.mp3"],
                     "replace": True,
                     "remote_chapters": [],
+                    "sources": [{
+                        "slug": slug,
+                        "manifest_fingerprint": "0" * 64,
+                        "files": ["one.mp3"],
+                    }],
                 }],
             }),
             headers={"content-type": "application/json"},
@@ -587,15 +666,17 @@ def test_push_validates_hidden_slug_before_receipts_and_duplicate_targets(
     assignment = {
         "household_id": "house-1",
         "tonie_id": "tonie-1",
-        "files": ["one.mp3"],
         "replace": True,
         "remote_chapters": [],
+        "sources": [{
+            "slug": stage.path.name,
+            "manifest_fingerprint": "0" * 64,
+            "files": ["one.mp3"],
+        }],
     }
     assignments = [assignment, dict(assignment)] if duplicate_targets else [assignment]
     body = {
         "operation_key": "invalid-slug-existing-receipt",
-        "slug": stage.path.name,
-        "manifest_fingerprint": "0" * 64,
         "assignments": assignments,
     }
     if matching_receipt:
@@ -606,11 +687,7 @@ def test_push_validates_hidden_slug_before_receipts_and_duplicate_targets(
         db.create_idempotent_jobs(
             body["operation_key"],
             digest,
-            [("push", "Stored invalid fixture", {
-                **assignment,
-                "slug": stage.path.name,
-                "manifest_fingerprint": body["manifest_fingerprint"],
-            })],
+            [("push", "Stored invalid fixture", assignment)],
         )
     before_tree = library_tree_snapshot()
     before_jobs = db.jobs_for_history()
@@ -1169,14 +1246,16 @@ def test_push_batch_rejects_an_extracted_collection(isolated):
     manifest = library.get(slug)
     body = {
         "operation_key": "extracted-collection",
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "assignments": [{
             "household_id": "house-1",
             "tonie_id": "tonie-1",
-            "files": ["one.mp3", "two.mp3"],
             "replace": True,
             "remote_chapters": [],
+            "sources": [{
+                "slug": slug,
+                "manifest_fingerprint": manifest["manifest_fingerprint"],
+                "files": ["one.mp3", "two.mp3"],
+            }],
         }],
     }
 
@@ -1191,13 +1270,15 @@ def test_push_worker_rejects_extracted_collection_before_cloud_access(isolated, 
     slug = make_collection(stage="extracted")
     manifest = library.get(slug)
     payload = {
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "household_id": "house-1",
         "tonie_id": "tonie-1",
-        "files": ["one.mp3", "two.mp3"],
         "replace": True,
         "remote_chapters": [],
+        "sources": [{
+            "slug": slug,
+            "manifest_fingerprint": manifest["manifest_fingerprint"],
+            "files": ["one.mp3", "two.mp3"],
+        }],
     }
     monkeypatch.setattr(push, "client_from_settings", lambda: pytest.fail("cloud must stay untouched"))
 
@@ -1233,13 +1314,15 @@ def test_push_rejects_projection_above_usable_headroom(isolated, monkeypatch, re
 
     monkeypatch.setattr(push, "client_from_settings", Cloud)
     payload = {
-        "slug": slug,
-        "manifest_fingerprint": library.manifest_fingerprint(manifest),
         "household_id": "house-1",
         "tonie_id": "tonie-1",
-        "files": ["one.mp3", "two.mp3"],
         "replace": replace,
         "remote_chapters": [] if replace else [{"id": "old", "title": "Old"}],
+        "sources": [{
+            "slug": slug,
+            "manifest_fingerprint": manifest["manifest_fingerprint"],
+            "files": ["one.mp3", "two.mp3"],
+        }],
     }
 
     with pytest.raises((RuntimeError, push.StalePush), match="usable|space"):
@@ -1330,3 +1413,27 @@ def test_incomplete_saved_pair_never_builds_a_cloud_client(isolated, monkeypatch
 
     with pytest.raises(tonies.AuthError, match="incomplete"):
         push.client_from_settings()
+
+
+def test_collection_index_carries_the_same_fingerprint_as_the_detail_route(isolated):
+    """The Library sends from the index, so the index must fingerprint identically.
+
+    A bar that sent a fingerprint the detail route would not recognise would
+    fail every confirmed send with a 409 that no reselection could clear.
+    """
+    slug = library.create("Night Stories")
+    path = config.LIBRARY_DIR / slug
+    (path / "one.mp3").write_bytes(b"one.mp3")
+    manifest_path = path / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["stage"] = "forged"
+    manifest["tracks"] = [
+        {"name": "one.mp3", "title": "One", "seconds": 1000, "size": 7, "mtime": 1},
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    indexed = next(entry for entry in library.list_all() if entry["slug"] == slug)
+    detail = library.get(slug)
+
+    assert indexed["manifest_fingerprint"] == library.manifest_fingerprint(detail)
+    assert len(indexed["manifest_fingerprint"]) == 64

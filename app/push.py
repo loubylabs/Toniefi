@@ -192,7 +192,7 @@ def describe_tonie(tonie: dict[str, Any]) -> dict[str, Any]:
     seconds = float(tonie.get("secondsPresent") or 0)
     tonie["seconds_present"] = seconds
     tonie["time_used"] = audio.human_duration(seconds)
-    tonie["seconds_free"] = max(0, config.TONIE_LIMIT_SECONDS - seconds)
+    tonie["seconds_free"] = max(0, config.usable_limit() - seconds)
     tonie["time_free"] = audio.human_duration(tonie["seconds_free"])
     return tonie
 
@@ -305,39 +305,124 @@ def _noop(_: str) -> None:
     return None
 
 
-def confirmed_tracks(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    slug = payload["slug"]
-    manifest = library.get(slug)
-    if not manifest:
-        raise StalePush(f"The collection changed because {slug} no longer exists.")
-    if manifest.get("stage") != "forged":
-        raise StalePush("Forge is incomplete for this collection. Finish preparation before sending it.")
-    if library.manifest_fingerprint(manifest) != payload["manifest_fingerprint"]:
-        raise StalePush("The local collection changed after confirmation. Review it again.")
-    names = payload.get("files") or []
-    by_name = {track["name"]: track for track in manifest["tracks"]}
-    if len(names) != len(set(names)) or any(name not in by_name for name in names):
-        raise StalePush("The confirmed audio files no longer match this collection.")
-    tracks = [by_name[name] for name in names]
-    for track in tracks:
-        try:
-            library.track_path(slug, track["name"])
-        except ValueError as exc:
-            raise StalePush("A confirmed audio file is no longer available.") from exc
-    return manifest, tracks
+def _flatten(assignment: dict[str, Any]) -> list[tuple[str, str]]:
+    """One assignment's confirmed files as ordered (slug, name) pairs.
+
+    An assignment has no `files` field of its own: its file list is its sources
+    flattened in source order, then file order. Every comparison below uses
+    this one definition.
+    """
+    return [
+        (source["slug"], name)
+        for source in assignment["sources"]
+        for name in source["files"]
+    ]
 
 
-def validate_confirmed_groups(slug: str, fingerprint: str, assignments: list[dict[str, Any]]) -> None:
-    manifest = library.get(slug)
-    if manifest and manifest.get("stage") != "forged":
-        raise StalePush("Forge is incomplete for this collection. Finish preparation before assignment.")
-    if not manifest or library.manifest_fingerprint(manifest) != fingerprint:
-        raise StalePush("The local collection changed after review. Review it again.")
-    planned = [[track["name"] for track in group.as_dict()["tracks"]]
-               for group in library.plan_groups(manifest["tracks"])]
-    received = [assignment.get("files") or [] for assignment in assignments]
-    if received != planned:
-        raise StalePush("The confirmed files do not match the reviewed capacity plan.")
+def validate_confirmed_batch(
+    assignments: list[dict[str, Any]],
+) -> list[list[tuple[str, dict[str, Any]]]]:
+    """Check a whole confirmed batch, and resolve it to tracks per assignment.
+
+    The expected track sequence is built from the manifests on disk, never from
+    the submitted file order. Planning from what the browser sent would let a
+    payload naming half a collection, or naming it backwards, define its own
+    correctness and pass.
+    """
+    submitted = [_flatten(assignment) for assignment in assignments]
+
+    # Load each manifest once, remembering the order its slug first appears.
+    # That order is what the expected sequence is built in.
+    manifests: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for flat in submitted:
+        for slug, _ in flat:
+            if slug in manifests:
+                continue
+            manifest = library.get(slug)
+            if not manifest:
+                raise StalePush(f"The collection changed because {slug} no longer exists.")
+            if manifest.get("stage") != "forged":
+                raise StalePush(
+                    "Forge is incomplete for a selected collection. "
+                    "Finish preparation before sending it."
+                )
+            manifests[slug] = manifest
+            order.append(slug)
+
+    for assignment in assignments:
+        for source in assignment["sources"]:
+            if library.manifest_fingerprint(manifests[source["slug"]]) != source["manifest_fingerprint"]:
+                raise StalePush(
+                    "A selected collection changed after confirmation. "
+                    "Select the collections in the Library again and send."
+                )
+
+    expected = [
+        (slug, track)
+        for slug in order
+        for track in manifests[slug]["tracks"]
+    ]
+    # One comparison covers omission, duplication, a foreign name, a reordered
+    # collection and interleaving, because `expected` is whole collections in
+    # first-appearance order and nothing else can equal it.
+    if [pair for flat in submitted for pair in flat] != [
+        (slug, track["name"]) for slug, track in expected
+    ]:
+        raise StalePush(
+            "The confirmed audio files no longer match the selected collections. "
+            "Select them in the Library again and send."
+        )
+
+    groups = library.plan_groups([track for _, track in expected])
+    if [len(group.tracks) for group in groups] != [len(flat) for flat in submitted]:
+        raise StalePush(
+            "The confirmed files no longer fill the capacity groups this selection plans. "
+            "Select the collections in the Library again and send."
+        )
+
+    resolved: list[list[tuple[str, dict[str, Any]]]] = []
+    cursor = 0
+    for flat in submitted:
+        resolved.append(expected[cursor:cursor + len(flat)])
+        cursor += len(flat)
+    return resolved
+
+
+def confirmed_tracks(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Resolve one assignment's confirmed files, revalidating local truth.
+
+    The worker runs long after the route validated the batch, and it holds only
+    its own assignment, so it re-checks what it can see: every source is still
+    forged, still fingerprints the same, and still has the files on disk.
+    """
+    resolved: list[tuple[str, dict[str, Any]]] = []
+    for source in payload["sources"]:
+        slug = source["slug"]
+        manifest = library.get(slug)
+        if not manifest:
+            raise StalePush(f"The collection changed because {slug} no longer exists.")
+        if manifest.get("stage") != "forged":
+            raise StalePush(
+                "Forge is incomplete for this collection. "
+                "Finish preparation before sending it."
+            )
+        if library.manifest_fingerprint(manifest) != source["manifest_fingerprint"]:
+            raise StalePush(
+                "The local collection changed after confirmation. "
+                "Select it in the Library again and send."
+            )
+        names = source["files"]
+        by_name = {track["name"]: track for track in manifest["tracks"]}
+        if len(names) != len(set(names)) or any(name not in by_name for name in names):
+            raise StalePush("The confirmed audio files no longer match this collection.")
+        for name in names:
+            try:
+                library.track_path(slug, name)
+            except ValueError as exc:
+                raise StalePush("A confirmed audio file is no longer available.") from exc
+            resolved.append((slug, by_name[name]))
+    return resolved
 
 
 def _remote_identity(chapters: list[dict[str, Any]]) -> list[tuple[str, str]]:
@@ -346,20 +431,19 @@ def _remote_identity(chapters: list[dict[str, Any]]) -> list[tuple[str, str]]:
 
 def push_confirmed(payload: dict[str, Any], progress: Progress = _noop) -> dict[str, Any]:
     with library.collection_lease():
-        _, tracks = confirmed_tracks(payload)
-        return _push_confirmed_tracks(payload, tracks, progress)
+        resolved = confirmed_tracks(payload)
+        return _push_confirmed_tracks(payload, resolved, progress)
 
 
 def _push_confirmed_tracks(
     payload: dict[str, Any],
-    tracks: list[dict[str, Any]],
+    resolved: list[tuple[str, dict[str, Any]]],
     progress: Progress,
 ) -> dict[str, Any]:
-    slug = payload["slug"]
-    if not tracks:
+    if not resolved:
         raise RuntimeError("Nothing selected to push.")
 
-    total = sum(t.get("seconds", 0) for t in tracks)
+    total = sum(track.get("seconds", 0) for _, track in resolved)
     limit = config.usable_limit()
     if total > limit:
         raise RuntimeError(
@@ -377,7 +461,10 @@ def _push_confirmed_tracks(
             state = client.get_tonie(payload["household_id"], payload["tonie_id"])
             current_chapters = state.get("chapters") or []
             if _remote_identity(current_chapters) != _remote_identity(payload.get("remote_chapters") or []):
-                raise StalePush("The Creative Tonie changed after confirmation. Refresh targets and review again.")
+                raise StalePush(
+                    "The Creative Tonie changed after confirmation. "
+                    "Refresh targets in the Library and send again."
+                )
             replace = payload["replace"]
             if not replace:
                 present = float(state.get("secondsPresent") or 0)
@@ -389,10 +476,10 @@ def _push_confirmed_tracks(
                 client.clear_tonie(payload["household_id"], payload["tonie_id"])
 
             uploaded = []
-            for position, track in enumerate(tracks, start=1):
+            for position, (slug, track) in enumerate(resolved, start=1):
                 path = library.track_path(slug, track["name"])
                 label = track.get("title") or Path(track["name"]).stem
-                progress(f"Uploading {position}/{len(tracks)}: {label}")
+                progress(f"Uploading {position}/{len(resolved)}: {label}")
                 file_id = client.upload_file(path)
                 client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
                 uploaded.append({"title": label, "file": file_id})

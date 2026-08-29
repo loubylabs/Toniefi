@@ -1,9 +1,22 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
 import {
+  buildPushBatchPayload,
+  createSendAttempt,
+  membershipSignature,
+  newOperationKey,
+  packSelection,
+  rebindTargets,
+  selectionProblems,
+  sendCapacityLimit,
+  tonieCapacity,
+  tonieFreeSeconds,
+} from "./send.js";
+import {
   announce,
   createMutationController,
   element,
+  humanDuration,
   notify,
   rememberFocus,
   replace,
@@ -11,12 +24,36 @@ import {
   setBusy,
   showConfirmDialog,
   snapshotRefreshOutcome,
+  tonieLabel,
 } from "./shared.js";
 
 export function filterCollectionsByTitle(collections, query) {
   const needle = String(query || "").trim().toLocaleLowerCase();
   if (!needle) return collections.slice();
   return collections.filter((collection) => String(collection.title || "").toLocaleLowerCase().includes(needle));
+}
+
+export function selectableCollections(collections, jobs = []) {
+  // Only a forged collection can be sent, and forgePreparationState is the one
+  // place that decides what "ready" means.
+  return collections.filter((collection) => forgePreparationState(collection, jobs).state === "ready");
+}
+
+export function createSelectionState() {
+  // A set of slugs, never an array of collections. The send order is the
+  // Library's own order, resolved at read time, so nothing depends on the
+  // order the operator happened to tick.
+  const chosen = new Set();
+  return {
+    has: (slug) => chosen.has(slug),
+    size: () => chosen.size,
+    toggle(slug) {
+      if (chosen.has(slug)) chosen.delete(slug);
+      else chosen.add(slug);
+    },
+    clear() { chosen.clear(); },
+    ordered: (collections) => collections.filter((collection) => chosen.has(collection.slug)),
+  };
 }
 
 export async function rescanCollections({ collections, request, refresh, signal = null }) {
@@ -89,6 +126,7 @@ export function createLibraryScreen({
     let collections = refresh.snapshot.collections || [];
     let jobs = refresh.snapshot.jobs || [];
     let query = "";
+    const selection = createSelectionState();
     const root = element("section", { className: "library-screen", "aria-labelledby": "library-title" });
     const titleGroup = element("div", {}, [
       element("h1", { id: "library-title", text: "Library" }),
@@ -116,6 +154,19 @@ export function createLibraryScreen({
     const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
     const summary = element("p", { className: "library-summary", role: "status", "aria-live": "polite" });
     const list = element("ul", { className: "library-list" });
+    const sendBar = element("section", {
+      className: "library-send-bar",
+      "aria-labelledby": "library-send-title",
+      hidden: true,
+    });
+    let tonies = null;
+    let toniesError = "";
+    let selections = [];
+    let operationKey = "";
+    let signature = "";
+    let sending = false;
+    let announcedProblem = "";
+    let targetsToken = 0;
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -146,17 +197,17 @@ export function createLibraryScreen({
       onStale: (error) => showStale(`${error.message} The current index remains visible.`),
     });
 
-    function collectionRow(collection, index, shown) {
+    function collectionRow(collection, index, shown, sendable) {
       const titleId = `library-collection-${collection.slug}`;
       const preparation = forgePreparationState(collection, jobs);
       const primary = preparation.state === "ready"
         ? element("a", {
           className: "button button-primary",
-          href: `/review/${encodeURIComponent(collection.slug)}`,
-          "data-route": "review",
+          href: `/collection/${encodeURIComponent(collection.slug)}`,
+          "data-route": "collection",
           "data-focus-key": `library-${collection.slug}-open`,
           "data-collection-mutation": "",
-        }, [iconNode("review"), element("span", { text: "Open for review" })])
+        }, [iconNode("library"), element("span", { text: "Open" })])
         : element("button", {
           type: "button",
           className: "button button-primary library-finish",
@@ -250,6 +301,35 @@ export function createLibraryScreen({
           removeButton.focus({ preventScroll: true });
         }
       });
+      const selectable = sendable.has(collection.slug);
+      const tickId = `library-select-${collection.slug}`;
+      const tick = selectable
+        ? element("input", {
+          id: tickId,
+          type: "checkbox",
+          className: "library-select",
+          checked: selection.has(collection.slug),
+          // The whole selection freezes for the duration of a send, the same
+          // way Send and Clear already do. The payload was built from the ticks
+          // as they stood, and the receipt clears every tick, so a story ticked
+          // mid-flight would be neither sent nor kept.
+          disabled: sending,
+          "data-focus-key": `library-${collection.slug}-select`,
+        })
+        : null;
+      if (tick) {
+        tick.addEventListener("change", () => {
+          // disabled is the visible guard, and a stale render is one bug away
+          // from leaving it wrong, so the freeze gets its own guard too.
+          if (sending) return;
+          selection.toggle(collection.slug);
+          if (selection.size() === 1 && tonies === null) loadTargets(`library-${collection.slug}-select`);
+          render({ focusKey: `library-${collection.slug}-select` });
+        });
+      }
+      const tickCell = element("div", { className: "library-select-cell" }, tick
+        ? [tick, element("label", { for: tickId, className: "visually-hidden", text: `Select ${collection.title || collection.slug} to send` })]
+        : []);
       const facts = element("ul", { className: "collection-facts", "aria-label": "Collection facts" }, [
         element("li", { text: `${collection.track_count || 0} ${collection.track_count === 1 ? "chapter" : "chapters"}` }),
         element("li", { text: collection.total_duration || "No duration yet" }),
@@ -272,7 +352,7 @@ export function createLibraryScreen({
           : null,
         element("div", { className: "library-row-actions" }, [primary, download, removeButton]),
       ]);
-      return element("li", { className: "library-row", "aria-labelledby": titleId }, [collectionCover(collection), body]);
+      return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
     }
 
     function render({ focusKey = "" } = {}) {
@@ -308,10 +388,261 @@ export function createLibraryScreen({
         ]));
       } else {
         summary.textContent = `${shown.length} of ${collections.length} ${collections.length === 1 ? "collection" : "collections"}`;
-        replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown)));
+        // One rule for what can be sent, and selectableCollections is it.
+        const sendable = new Set(selectableCollections(shown, jobs).map((item) => item.slug));
+        replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown, sendable)));
       }
+      renderSendBar();
       mutation.sync();
       restoreFocus(token, { root, fallback: search });
+    }
+
+    function limitSeconds() {
+      return sendCapacityLimit(refresh.snapshot.status || {});
+    }
+
+    // The caller says where focus belongs when the fetch settles, because the
+    // first tick on a row loads targets too: restoring to the refresh button
+    // there would take focus off the checkbox the operator just used.
+    async function loadTargets(focusKey = "library-send-refresh") {
+      // Two reads can be in flight at once, because Refresh targets stays live
+      // while the automatic first load is still running. Only the newest answer
+      // may land: an older one carries obsolete free space AND an obsolete
+      // remote_chapters precondition, which would go straight into the payload.
+      const token = targetsToken + 1;
+      targetsToken = token;
+      let loaded = null;
+      let rejected = false;
+      let failureMessage = "";
+      try {
+        loaded = await request("/api/tonies", { signal });
+      } catch (error) {
+        // Whether the request failed is its own fact, tracked independently
+        // of the error's message text. A rejection can carry an empty
+        // message (an ApiError built from a 503 body of `{"detail": []}`,
+        // say), and testing `if (failure)` against that text would read the
+        // empty string as no failure at all and fall into the success branch
+        // below with `loaded` still null.
+        rejected = true;
+        failureMessage = error.message || "The Tonie Cloud did not explain what went wrong.";
+      }
+      if (token !== targetsToken) return;
+      if (rejected) {
+        // A failed request is not the operator deciding anything, so it must
+        // not look like one. Leave `tonies` and every group's chosen target
+        // exactly as they were: rebindTargets on an empty list would read as
+        // "the operator's Tonie is gone" and null out a selection nobody
+        // abandoned, the picker would print no options at all, and clearing
+        // the key with it would strand a lost-response retry without the
+        // safe 409. Surface the failure and let the operator retry the
+        // refresh, the same as showStale keeps the last good collection
+        // index visible on a failed background load.
+        toniesError = failureMessage;
+      } else {
+        tonies = loaded;
+        toniesError = "";
+        rebindTargets(selections, tonies);
+      }
+      // The operation key is NOT touched here, whatever the refresh returned.
+      // The key tracks the operator's intent, and a refresh reports what the
+      // world did rather than what the operator decided. If the first send
+      // landed and its response was lost, this refresh is exactly where the
+      // appended chapters show up: clearing the key on that would make the
+      // next Send a brand new operation and append the same audio twice, and a
+      // Tonie write has no undo. Keeping the key hands the moved payload back
+      // under the same key, so the server's idempotency digest answers 409 and
+      // tells the operator the situation moved instead of uploading again.
+      if (active && !signal?.aborted) render({ focusKey });
+    }
+
+    // Focus is NOT handled here. `render` already wraps the whole screen in
+    // rememberFocus(root) / restoreFocus, and the bar lives inside `root`, so
+    // a second focus dance nested inside that one would remember a focused
+    // element the outer render is about to detach. Every control in the bar
+    // therefore calls `render({ focusKey })`, never `renderSendBar()` directly.
+    function renderSendBar() {
+      if (!active || signal?.aborted) return;
+      const picked = selection.ordered(collections);
+      sendBar.hidden = picked.length === 0;
+      if (!picked.length) {
+        replace(sendBar);
+        selections = [];
+        operationKey = "";
+        signature = "";
+        announcedProblem = "";
+        return;
+      }
+      const groups = packSelection(picked, limitSeconds());
+      const nextSignature = membershipSignature(groups);
+      if (nextSignature !== signature) {
+        // Membership, order, fingerprint or grouping changed, so this is a new
+        // operation. Targets clear with it: a Tonie chosen for one set of
+        // chapters was never chosen for a different set, and preselecting it
+        // for the new set would be the automatic assignment the design forbids.
+        signature = nextSignature;
+        selections = groups.map(() => ({ tonie: null, replaceExisting: false }));
+        operationKey = "";
+      }
+      const totalSeconds = groups.reduce((sum, group) => sum + group.seconds, 0);
+      const heading = element("div", { className: "screen-heading" }, [
+        element("h2", {
+          id: "library-send-title",
+          text: `${picked.length} ${picked.length === 1 ? "story" : "stories"} selected · ${humanDuration(totalSeconds)}`,
+        }),
+        element("button", { type: "button", className: "button button-secondary library-send-refresh", "data-focus-key": "library-send-refresh" }, [
+          iconNode("refresh"), element("span", { text: "Refresh targets" }),
+        ]),
+      ]);
+      heading.querySelector("button").addEventListener("click", () => loadTargets());
+
+      const groupNodes = groups.map((group, index) => {
+        const chosen = selections[index];
+        const picker = element("select", {
+          className: "library-send-target",
+          "aria-label": `Creative Tonie for group ${group.index}`,
+          "data-focus-key": `library-send-target-${group.index}`,
+        });
+        // No preselected target. Sending without an explicit choice would be an
+        // automatic assignment, and a Tonie write has no undo.
+        picker.append(element("option", { value: "", text: "Choose a Creative Tonie" }));
+        for (const tonie of tonies || []) {
+          // Free space is a property of the Tonie, so the printed figure is the
+          // same whichever effect is ticked. It is computed here rather than
+          // read from the tonie's own time_free, which is a server snapshot
+          // that can disagree with the limit this bar packs against.
+          const free = tonieFreeSeconds(tonie, limitSeconds());
+          const capacity = tonieCapacity(tonie, group.seconds, chosen.replaceExisting, limitSeconds());
+          // A replace clears the box first, so a group larger than the free
+          // space still fits. Saying so is what keeps "6m 40s free" from
+          // reading as a contradiction beside an option the bar accepts, and
+          // it matches what the validation line offers when an append
+          // overflows: choose Replace everything, or another Tonie.
+          let fitNote = "";
+          if (!capacity.fits) fitNote = " · does not fit";
+          else if (group.seconds > free) fitNote = " · fits once everything is replaced";
+          picker.append(element("option", {
+            value: `${tonie.householdId}/${tonie.id}`,
+            text: `${tonieLabel(tonie)} · ${humanDuration(free)} free${fitNote}`,
+            selected: chosen.tonie ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === `${tonie.householdId}/${tonie.id}` : false,
+          }));
+        }
+        picker.addEventListener("change", () => {
+          chosen.tonie = (tonies || []).find((tonie) => `${tonie.householdId}/${tonie.id}` === picker.value) || null;
+          operationKey = "";
+          render({ focusKey: `library-send-target-${group.index}` });
+        });
+
+        const appendInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "append", checked: !chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-append` });
+        const replaceInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "replace", checked: chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-replace` });
+        appendInput.addEventListener("change", () => { chosen.replaceExisting = false; operationKey = ""; render({ focusKey: `library-send-effect-${group.index}-append` }); });
+        replaceInput.addEventListener("change", () => { chosen.replaceExisting = true; operationKey = ""; render({ focusKey: `library-send-effect-${group.index}-replace` }); });
+
+        const membership = element("ol", { className: "library-send-membership" }, group.entries.map((entry) => (
+          element("li", {}, [
+            element("span", { text: entry.collectionTitle }),
+            element("span", { text: entry.title }),
+            element("span", { text: entry.duration || "" }),
+          ])
+        )));
+
+        return element("li", { className: "library-send-group" }, [
+          element("h3", { text: groups.length === 1 ? "Chapters to send" : `Group ${group.index}` }),
+          membership,
+          element("div", { className: "library-send-target-field" }, [picker]),
+          element("fieldset", { className: "library-send-effect" }, [
+            element("legend", { text: `What group ${group.index} does to that Tonie` }),
+            element("label", {}, [appendInput, element("span", { text: "Append to the back" })]),
+            element("label", {}, [replaceInput, element("span", { text: "Replace everything" })]),
+          ]),
+        ]);
+      });
+
+      const problems = tonies ? selectionProblems(groups, selections, limitSeconds(), picked) : ["Creative Tonies are not loaded yet."];
+      const validation = element("p", { className: "library-send-validation" },
+        problems.length ? [element("span", { text: problems[0] })] : []);
+      // A failed refresh with a Tonies list already on hand is not the same
+      // situation as never having loaded one: the picker still shows real
+      // choices and the chosen target is still valid, so the message says a
+      // refresh failed rather than claiming there is nothing to send to,
+      // matching how showStale reports a failed background load without
+      // implying the last good state is gone.
+      const toniesErrorMessage = toniesError
+        ? (tonies
+          ? `Creative Tonies could not refresh. ${toniesError} The last known list remains available.`
+          : `Creative Tonies could not load. ${toniesError}`)
+        : "";
+      if (toniesErrorMessage) {
+        replace(validation, element("span", { text: toniesErrorMessage }));
+      }
+      // The paragraph is rebuilt every render, so it can never be the live
+      // region that fires: a node has to be in the document before its text
+      // changes. Announcing the message itself is the only way a screen reader
+      // hears it, and only on a change, or every keystroke would re-read it.
+      const spoken = toniesErrorMessage || (problems[0] || "");
+      if (spoken !== announcedProblem) {
+        announcedProblem = spoken;
+        if (spoken) announce(spoken);
+      }
+
+      const send = element("button", {
+        type: "button",
+        className: "button button-primary library-send-submit",
+        disabled: sending || problems.length > 0,
+        "data-focus-key": "library-send-submit",
+      }, [iconNode("tonie"), element("span", { text: `Send ${picked.length} ${picked.length === 1 ? "story" : "stories"}` })]);
+      send.addEventListener("click", () => submitSend(groups, picked));
+
+      const cancel = element("button", {
+        type: "button",
+        className: "button button-secondary library-send-clear",
+        text: "Clear selection",
+        disabled: sending,
+        "data-focus-key": "library-send-clear",
+      });
+      cancel.addEventListener("click", () => {
+        selection.clear();
+        render({ focusKey: "library-search" });
+      });
+
+      replace(sendBar,
+        heading,
+        element("ol", { className: "library-send-groups" }, groupNodes),
+        validation,
+        element("div", { className: "library-send-actions" }, [cancel, send]),
+      );
+    }
+
+    async function submitSend(groups, picked) {
+      if (sending) return;
+      if (!operationKey) operationKey = newOperationKey();
+      const payload = buildPushBatchPayload(groups, selections, operationKey);
+      const replacing = selections.filter((choice) => choice.replaceExisting);
+      const attempt = createSendAttempt({
+        payload,
+        request,
+        signal,
+        setPending: (pending) => { sending = pending; render({ focusKey: "library-send-submit" }); },
+        confirm: () => showConfirmDialog({
+          title: "Replace chapters on a Creative Tonie?",
+          message: `${replacing.map((choice) => tonieLabel(choice.tonie)).join(", ")} will lose every chapter currently stored, and this cannot be undone. Your local library is not touched.`,
+          confirmLabel: "Replace and send",
+          destructive: true,
+        }),
+        onReceipt: async () => {
+          selection.clear();
+          operationKey = "";
+          notify(`${picked.length} ${picked.length === 1 ? "story is" : "stories are"} queued to send.`, { kind: "success" });
+          announce("Creative Tonie send queued.");
+          await refresh.request();
+          render({ focusKey: "library-search" });
+        },
+        onFailure: (error) => {
+          notify(`${error.message} The selection is unchanged. Fix the problem and send again.`, { kind: "failure", timeout: 0 });
+        },
+      });
+      // Only a replace is irreversible, so only a replace is worth a dialog.
+      if (replacing.length) await attempt.submit();
+      else await attempt.retry();
     }
 
     function onRefresh(snapshot) {
@@ -357,7 +688,7 @@ export function createLibraryScreen({
       }
     });
 
-    root.append(header, searchField, stale, summary, list);
+    root.append(header, searchField, stale, summary, list, sendBar);
     replace(workspace, root);
     render();
     const unsubscribe = refresh.subscribe(onRefresh);

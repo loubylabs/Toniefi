@@ -8,7 +8,7 @@
 
 ## Summary
 
-TonieFi will become a batch-first preparation workspace for one household. A user can submit several audiobook links, let every source extract and Forge independently, review completed collections, and deliberately choose which Creative Tonies receive them. The interface will replace the current five-step wizard with a persistent application shell based on the approved Command Desk composition.
+TonieFi will become a batch-first preparation workspace for one household. A user can submit several audiobook links, let every source extract and Forge independently, and then select finished collections in the Library to send to their Creative Tonies. The interface will replace the current five-step wizard with a persistent application shell based on the approved Command Desk composition.
 
 The visual system translates a contemporary library workroom into an operational web interface. A deep bottle-green service index anchors navigation. A cool utility-paper intake tray owns batch entry. A live work cart keeps background state visible. Full-color cover jackets make collections recognizable. Stamped labels communicate state without depending on color alone.
 
@@ -20,9 +20,9 @@ The visual system translates a contemporary library workroom into an operational
 - Normalize perceived loudness to −16 LUFS with a −1.5 dBTP ceiling.
 - Preserve chapter markers, clean titles, and split oversized tracks by default.
 - Keep successful sources moving when another source fails.
-- Stop every prepared collection at review before any Tonie Cloud write.
-- Make background progress, failures, retries, and review readiness visible across navigation.
-- Give collection review, library management, Creative Tonie management, activity, and account settings clear homes.
+- Land every prepared collection in the Library, where nothing reaches a Creative Tonie without an explicit selection and an explicit Send.
+- Make background progress, failures, and retries visible across navigation, with every finished collection visible in the Library.
+- Give the Library, Creative Tonie management, activity, and account settings clear homes.
 - Work with keyboard, touch, narrow screens, reduced motion, and high zoom.
 
 ## Non-goals
@@ -36,7 +36,7 @@ The visual system translates a contemporary library workroom into an operational
 
 ## Product principles
 
-1. Automation handles repeatable preparation. Human attention stays on review, assignment, and destructive actions.
+1. Automation handles repeatable preparation. Human attention stays on selection, assignment, and destructive actions.
 2. Each collection keeps its own identity, progress, failure, and recovery path.
 3. The next safe action remains visible.
 4. TonieFi describes unsupported APIs, stored credentials, destructive writes, and errors plainly.
@@ -44,16 +44,15 @@ The visual system translates a contemporary library workroom into an operational
 
 ## Information architecture
 
-The application shell has six destinations:
+The application shell has five destinations:
 
 1. **Desk:** batch intake and the live work cart.
-2. **Review Shelf:** collections whose manifest stage is `forged`, plus focused collection review.
-3. **Library:** every local collection, search, rescan, open, download, and delete.
-4. **Creative Tonies:** remote Tonie contents and existing safe chapter management.
-5. **Activity:** complete job history, progress, errors, and eligible retries.
-6. **Settings:** account connection, credential source, connection test, credential replacement or removal, system tools, and product disclosures.
+2. **Library:** every local collection, search, rescan, open, download, delete, and the selection bar that starts a Creative Tonie send from finished collections.
+3. **Creative Tonies:** remote Tonie contents and existing safe chapter management.
+4. **Activity:** complete job history, progress, errors, and eligible retries.
+5. **Settings:** account connection, credential source, connection test, credential replacement or removal, system tools, and product disclosures.
 
-Desktop uses the persistent left service index from the approved comp. Mobile uses a bottom bar for Desk, Review Shelf, Library, and Creative Tonies. Activity and Settings live behind a clearly labeled More control. The current top tabs and stepper are removed.
+Desktop uses the persistent left service index from the approved comp. Mobile uses a bottom bar for Desk, Library, and Creative Tonies. Activity and Settings live behind a clearly labeled More control. The current top tabs and stepper are removed.
 
 ## Desk
 
@@ -71,7 +70,7 @@ Shared defaults appear beneath the source list. On mobile, the count-aware Prepa
 
 The primary action names the count, such as `Prepare 5 stories`. Invalid or duplicate rows keep the batch in the intake tray with inline explanations and no jobs are created. A valid submission creates one job per source and clears the submitted rows.
 
-LibriVox search and local file upload remain available as secondary intake modes on Desk. A selected LibriVox book imports and then runs the same default Forge sequence. A local file collection uploads all chosen files, then runs the default Forge sequence. Both finish on Review Shelf.
+LibriVox search and local file upload remain available as secondary intake modes on Desk. A selected LibriVox book imports and then runs the same default Forge sequence. A local file collection uploads all chosen files, then runs the default Forge sequence. Both finish in the Library, ready to send.
 
 ### Live work cart
 
@@ -82,7 +81,7 @@ Visible phases are:
 - Queued
 - Extracting
 - Forging
-- Ready to review
+- Ready to send
 - Failed
 
 The jobs table remains unchanged. Phase is encoded into the existing `progress` field as a stable prefix and exposed by the API as a derived `phase` property. This avoids a SQLite migration. Existing jobs without a phase prefix continue to render using their kind and status.
@@ -152,11 +151,13 @@ The former `url` job kind and `POST /api/ingest/url` route are deleted with thei
 
 Only an eligible failed job can be retried. The new job clones the original kind, label, and current payload. When a Forge job for the same extracted collection is already queued or running, retry returns that active job instead of creating a duplicate. Manual Forge persists one operation identity before work begins and writes the same identity before publication. Database initialization migrates every older queued, running, or failed Forge payload that lacks this identity before a worker can claim or clone it. The manifest stage `forged` is terminal regardless of which historical operation completed it. Direct workers and cloned jobs return that existing output without copying or transforming it. History marks a failed Forge row non-retryable when its collection is already forged, and a direct retry resolves that row to the completed collection. A valid hidden stage resumes without repeating completed file intake. A missing stage safely restarts from immutable source input. Publication identity prevents duplicate visible collections and proves that the consumed hidden source can be removed during recovery or sweep even if a failed job still references it. Final slugs are reserved atomically across visible collections and hidden stages before intake begins, so same-title jobs keep distinct retry-stable folders. The response contains the queued, reused, or resolved job.
 
-## Review Shelf and focused review
+## Library selection bar and the collection page
 
-Review Shelf lists forged collections newest first. Each row shows cover, title, chapter count, duration, Tonies needed, and Forge state. Selecting a collection opens focused review without losing the application shell.
+A send starts in the Library, not on a separate screen. Ticking one or more finished collections reveals a selection bar showing the count selected, the total duration, the send order (the Library's own order, newest first, then each collection's manifest track order), and one capacity group per Tonie's worth of audio with that group's exact chapter membership.
 
-Focused review provides:
+Each capacity group gets its own Creative Tonie picker, showing the Tonie's name, its household, and its free space. No target is preselected, and Send stays disabled until every group names a Tonie; two groups may not name the same Tonie. Each group also chooses its effect: **Append to the back**, the default, or **Replace everything**. An append-only send posts with no confirmation dialog, because appending is recoverable by removing chapters afterwards. Any send that includes a replace opens the irreversible-action dialog first, naming every affected Tonie, because replacing destroys that Tonie's current cloud audio with no undo.
+
+Opening a collection from the Library goes to its own page, without losing the application shell. That page is inspect-and-edit only:
 
 - Editable collection title.
 - Cover art, source, uploader, duration, chapter count, and Forge state.
@@ -165,17 +166,18 @@ Focused review provides:
 - Pointer drag ordering plus keyboard Move up and Move down controls.
 - Chapter removal with a confirmation naming the deleted local file.
 - Sequential capacity plan with exact chapter groups and usable minutes.
-- A clear `Choose Creative Tonies` action after the plan.
 
-An extracted collection is never labeled ready and never exposes Creative Tonie assignment. Focused Review and Library show one `Finish preparation` action that enqueues the existing persisted Forge job. Queued and failed Forge states remain visible. The collection joins Review Shelf only after its manifest reaches `forged`.
+The collection page has no Creative Tonie assignment action. A send is chosen and confirmed from the Library selection bar, never from here.
 
-Assignment reuses the existing safe push behavior. It refreshes Tonie data before showing available targets, distinguishes replace from append, and never sends until the user confirms the target and effect.
+An extracted collection is never labeled ready and never exposes Creative Tonie assignment. The Library and the collection page show one `Finish preparation` action that enqueues the existing persisted Forge job. Queued and failed Forge states remain visible. The collection becomes selectable for a send in the Library only after its manifest reaches `forged`.
+
+Sending reuses the existing safe push behavior. It refreshes Tonie data before showing available targets, distinguishes replace from append, and never sends until the user confirms every target and effect.
 
 ## Library
 
-Library is the durable local collection view. It provides search by title, Rescan, Finish preparation for legacy extracted collections, open for review when forged, download, and delete. Download returns the collection as one zip of audio, cover art, and its manifest, numbered in the reviewed order rather than the order the files were written in. The archived manifest is rewritten to name the renumbered files, so it always describes exactly what the archive holds. A download never mixes two versions of a collection: every file is fingerprinted when the download is planned and checked when it is opened, so a delete or a Forge replacement that lands while files remain to be opened ends the stream instead of completing a hybrid archive. It is offered for every collection, forged or not, because the audio is on disk either way. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
+Library is the durable local collection view. It provides search by title, Rescan, Finish preparation for legacy extracted collections, open when forged, download, delete, and the selection bar described above. Download returns the collection as one zip of audio, cover art, and its manifest, numbered in the collection's own chapter order rather than the order the files were written in. The archived manifest is rewritten to name the renumbered files, so it always describes exactly what the archive holds. A download never mixes two versions of a collection: every file is fingerprinted when the download is planned and checked when it is opened, so a delete or a Forge replacement that lands while files remain to be opened ends the stream instead of completing a hybrid archive. It is offered for every collection, forged or not, because the audio is on disk either way. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
 
-The current collection list behavior moves into this screen. There is no second library implementation hidden inside Desk or Review Shelf.
+The current collection list behavior moves into this screen. There is no second library implementation hidden inside Desk.
 
 ## Creative Tonies
 
@@ -191,9 +193,9 @@ The presentation becomes a compact Tonie list with an expanded detail counter. K
 
 ## Activity
 
-Activity shows the 40 most recent jobs with kind, phase, status, progress, timestamp, source label, result link, error, and retry eligibility. Failed jobs remain historical records after retry. Selecting a successful preparation opens its collection review.
+Activity shows the 40 most recent jobs with kind, phase, status, progress, timestamp, source label, result link, error, and retry eligibility. Failed jobs remain historical records after retry. Selecting a successful preparation opens its collection page.
 
-One application-level refresh loop updates jobs, history, collections, status, and review counts while any job is queued or running. Each resource publishes to subscribers as soon as it settles, so jobs and history continue updating while a collection lease delays collection refresh. Fulfilled slices remain cached, stale and error state stays resource-specific, polling slows when no job is active, and polling stops while the page is hidden.
+One application-level refresh loop updates jobs, history, collections, and status while any job is queued or running. Each resource publishes to subscribers as soon as it settles, so jobs and history continue updating while a collection lease delays collection refresh. Fulfilled slices remain cached, stale and error state stays resource-specific, polling slows when no job is active, and polling stops while the page is hidden.
 
 ## Settings and account management
 
@@ -220,7 +222,7 @@ Settings also reports the 90-minute Tonie limit, usable headroom, library path, 
 
 **THESIS:** TonieFi is a working circulation desk for stories. It refuses the generic dark dashboard and the linear setup wizard.
 **OWN-WORLD:** Deep bottle-green bookcloth, cool utility paper, chartreuse action ink, periwinkle information ink, square status stamps, thin rules, full-color cover jackets, and compact service labels.
-**STORY:** Add several sources, watch each move independently through preparation, review the ready jackets, and choose their Creative Tonies.
+**STORY:** Add several sources, watch each move independently through preparation, then pick the ready jackets in the Library and send them to their Creative Tonies.
 **FIRST VIEWPORT:** The service index occupies the left, batch intake owns the center, and the live work cart remains visible at right. The count-aware preparation action closes the intake tray.
 **FORM:** Command Desk, selected from three Circulation Desk compositions. Seed key `17e3c753`.
 **FINISH:** unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
@@ -298,15 +300,15 @@ Static and browser verification will cover:
 
 This change deletes the current five-step wizard, its stepper, the wizard's manual Extract and Forge progression, the `url` worker kind, the `/api/ingest/url` route, the `/api/probe` route, and the single watched-job timer. Their callers, tests, copy, and documentation are migrated in the same branch. The existing persisted `/api/forge` route remains the single supported migration path for legacy extracted collections.
 
-The SQLite schema does not change. Existing job rows and collection manifests remain readable. Existing extracted collections continue to appear in Library with Finish preparation, and existing forged collections appear on Review Shelf.
+The SQLite schema does not change. Existing job rows and collection manifests remain readable. Existing extracted collections continue to appear in Library with Finish preparation, and existing forged collections appear in the Library, ready to send.
 
 ## Acceptance criteria
 
 1. Submitting five valid URLs returns five job IDs and creates five independent preparation jobs.
-2. Every successful preparation runs extraction and default Forge processing, then appears on Review Shelf.
-3. One failed source does not block another source from reaching review.
+2. Every successful preparation runs extraction and default Forge processing, then appears in the Library, ready to send.
+3. One failed source does not block another source from reaching the Library.
 4. A Forge failure can retry from its extracted slug without downloading again.
-5. No Creative Tonie changes until the user reviews a collection and confirms a target.
+5. No Creative Tonie changes without an explicit selection and an explicit Send, and a confirmation dialog is required before any replace.
 6. Account status and credential source remain visible and truthful.
 7. All existing Tonie chapter safety tests continue to pass.
 8. Desktop and mobile implementations preserve the Command Desk hierarchy and Circulation Desk visual system.

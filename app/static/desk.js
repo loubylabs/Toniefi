@@ -290,7 +290,7 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
       phase: "ready",
       title: collection.title || "Untitled collection",
       source: collection.url || collection.source || "Local collection",
-      progress: "Ready for your review",
+      progress: "Ready to send from the Library",
       error: "",
       slug: collection.slug,
       canRetry: false,
@@ -313,7 +313,7 @@ function phaseDetails(phase) {
     queued: { label: "Queued", icon: "clock" },
     extracting: { label: "Extracting", icon: "arrowDown" },
     forging: { label: "Forging", icon: "forge" },
-    ready: { label: "Ready to review", icon: "check" },
+    ready: { label: "Ready to send", icon: "check" },
     failed: { label: "Failed", icon: "alert" },
   }[phase] || { label: "Queued", icon: "clock" };
 }
@@ -456,22 +456,12 @@ function workCartRow(item, { request, requestRefresh, navigate, signal }) {
   }
 
   const actions = element("div", { className: "work-cart-actions" });
-  if (item.phase === "ready" && item.slug) {
-    actions.append(element("a", {
-      className: "work-cart-link work-cart-review-link",
-      href: `/review/${encodeURIComponent(item.slug)}`,
-      "data-route": "review",
-      "data-focus-key": `${item.key}-primary`,
-    }, [element("span", { text: "Review" }), iconNode("chevronRight")]));
-  } else {
-    const detailsLink = element("a", {
-      className: "work-cart-link",
-      href: "/activity",
-      "data-route": "activity",
-      "data-focus-key": `${item.key}-primary`,
-    }, [element("span", { text: "View details" }), iconNode("chevronRight")]);
-    actions.append(detailsLink);
-  }
+  actions.append(element("a", {
+    className: "work-cart-link",
+    href: "/activity",
+    "data-route": "activity",
+    "data-focus-key": `${item.key}-primary`,
+  }, [element("span", { text: "View details" }), iconNode("chevronRight")]));
   if (item.canRetry) {
     const retry = element("button", {
       type: "button",
@@ -542,11 +532,22 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
     "aria-live": "polite",
     "aria-atomic": "true",
   });
+  // One action for the whole batch, not one per story. A link inside each row
+  // would rebuild the per-collection path the Library selection bar replaces.
+  const libraryActionLabel = element("span", { text: "Open Library" });
+  const libraryAction = element("a", {
+    className: "button button-primary work-cart-library-link",
+    href: "/library",
+    "data-route": "library",
+    "data-focus-key": "work-cart-library",
+    hidden: true,
+  }, [iconNode("library"), libraryActionLabel]);
   const host = element("aside", { className: "live-work-cart", "aria-labelledby": "work-cart-title" }, [
     header,
     staleNotice,
     empty,
     list,
+    libraryAction,
     liveStatus,
   ]);
   let priorPhases = null;
@@ -568,6 +569,11 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
     withFocusRestored(() => {
       replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate, signal })));
     }, { root: host });
+    const ready = items.filter((item) => item.phase === "ready").length;
+    libraryAction.hidden = ready === 0;
+    libraryActionLabel.textContent = ready === 1
+      ? "Open Library to send 1 story"
+      : `Open Library to send ${ready} stories`;
     const phases = new Map(items.map((item) => [item.key, item.phase]));
     const announcements = [];
     if (staleAnnouncement.message) announcements.push(staleAnnouncement.message);
@@ -604,7 +610,7 @@ function animateSubmission(rows, root, cart) {
 
 function createSecondaryIntake({ root, request, requestRefresh, signal }) {
   const heading = element("h2", { id: "secondary-intake-title", text: "Other ways to add stories" });
-  const intro = element("p", { className: "secondary-intake-copy", text: "Public-domain LibriVox books and your own audio files use the same Forge defaults, then stop at Review Shelf." });
+  const intro = element("p", { className: "secondary-intake-copy", text: "Public-domain LibriVox books and your own audio files use the same Forge defaults, then appear in the Library." });
 
   const searchInput = element("input", {
     id: "librivox-query",
@@ -1043,7 +1049,7 @@ export function createDeskScreen({
     const forgeSummary = createForgeSummary();
     const actionNote = element("p", { className: "desk-action-note" }, [
       iconNode("info"),
-      element("span", { text: "Preparation stops at Review Shelf. No Creative Tonie changes happen here." }),
+      element("span", { text: "Prepared stories appear in the Library. No Creative Tonie changes happen here." }),
     ]);
     form.append(sourceHeading, pasteLabel, pasteControls, validation, sourceList, prepareButton, forgeSummary, actionNote);
     form.addEventListener("submit", async (event) => {

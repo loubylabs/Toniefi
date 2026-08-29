@@ -8,6 +8,19 @@ export class ApiError extends Error {
   }
 }
 
+function formatDetail(detail) {
+  // FastAPI's 422 `detail` is a list of {msg, loc, ...} objects, not a string.
+  // String(detail) on an array joins each element with its own toString, and
+  // a plain object's toString is "[object Object]", so an unhandled
+  // validation error reads as "[object Object]" instead of the message.
+  if (Array.isArray(detail)) {
+    return detail
+      .map((entry) => (entry && typeof entry === "object" && typeof entry.msg === "string" ? entry.msg : JSON.stringify(entry)))
+      .join(" ");
+  }
+  return String(detail);
+}
+
 function requestHeaders(options) {
   const headers = new Headers(options.headers || {});
   if (options.body != null && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -50,10 +63,14 @@ export async function api(path, options = {}) {
 
   const body = await responseBody(response);
   if (!response.ok) {
-    const message = typeof body === "object" && body?.detail
-      ? String(body.detail)
-      : `${response.status} ${response.statusText || "Request failed"}`;
-    throw new ApiError(message, {
+    const statusMessage = `${response.status} ${response.statusText || "Request failed"}`;
+    // `detail` can be present and still carry nothing readable, e.g. FastAPI's
+    // `{"detail": []}`: the array is truthy, but joining zero entries yields
+    // "". An ApiError with an empty message is unhelpful everywhere it
+    // surfaces, so a blank join falls back to the status line rather than
+    // handing every caller an empty string to display or to test for failure.
+    const detailMessage = typeof body === "object" && body?.detail ? formatDetail(body.detail) : "";
+    throw new ApiError(detailMessage || statusMessage, {
       status: response.status,
       details: body,
       url: response.url || path,

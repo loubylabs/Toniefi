@@ -10,6 +10,7 @@ import {
   restoreFocus,
   setBusy,
   showConfirmDialog,
+  tonieLabel,
 } from "./shared.js";
 
 
@@ -18,6 +19,13 @@ export function buildTonieChapterPayload(tonie, chapters) {
     base: (tonie.chapters || []).map(({ id, title }) => ({ id, title: title || "" })),
     chapters: chapters.map(({ id, title }) => ({ id, title: title || "" })),
   };
+}
+
+
+export function survivingChapters(chapters, removedIds) {
+  // The Tonie Cloud only offers a whole-list PATCH, so removing six chapters
+  // is one write of the survivors, not six writes.
+  return (chapters || []).filter((chapter) => !removedIds.has(chapter.id));
 }
 
 
@@ -90,10 +98,13 @@ function tonieKey(tonie) {
 }
 
 
-function chapterDrafts(list) {
+export function chapterDrafts(list) {
   return Array.from(list.querySelectorAll("[data-tonie-chapter]")).map((row) => ({
     id: row.dataset.tonieChapter,
-    title: row.querySelector("input").value,
+    // Named explicitly. The row now also holds a selection checkbox, and
+    // `querySelector("input")` would return that instead, writing "on" over a
+    // chapter's real title on a Tonie that has no undo.
+    title: row.querySelector("[data-tonie-title]").value,
   }));
 }
 
@@ -106,12 +117,16 @@ export function createToniesScreen({ request = api } = {}) {
     let loadState = "loading";
     let loadError = "";
     let loadToken = 0;
+    // Keyed by chapter id and cleared on every reload, so a tick that predates
+    // a remote change can never reach a write.
+    const selectedChapters = new Set();
 
     const root = element("section", { className: "tonies-screen", "aria-labelledby": "tonies-title" });
     const refreshButton = element("button", {
       type: "button",
       className: "button button-secondary",
       "data-tonie-control": "",
+      "data-focus-key": "tonie-refresh",
     }, [iconNode("refresh"), element("span", { text: "Refresh Tonies" })]);
     const header = element("div", { className: "screen-heading" }, [
       element("div", {}, [
@@ -132,6 +147,7 @@ export function createToniesScreen({ request = api } = {}) {
         loadState = "loaded";
         loadError = "";
         if (openKey && !tonies.some((tonie) => tonieKey(tonie) === openKey)) openKey = "";
+        selectedChapters.clear();
         render();
         if (announceSuccess) {
           notify("Creative Tonies refreshed from myTonies.", { kind: "success" });
@@ -189,6 +205,7 @@ export function createToniesScreen({ request = api } = {}) {
         value: chapter.title || "",
         maxlength: "128",
         "aria-label": `Chapter ${index + 1} title`,
+        "data-tonie-title": "",
         "data-focus-key": `tonie-${chapter.id}-title`,
         "data-tonie-control": "",
       });
@@ -199,6 +216,7 @@ export function createToniesScreen({ request = api } = {}) {
         title: "Move up",
         disabled: index === 0,
         "data-tonie-control": "",
+        "data-tonie-disabled": index === 0 ? "" : null,
         "data-focus-key": `tonie-${chapter.id}-up`,
       }, [iconNode("arrowUp")]);
       const down = element("button", {
@@ -208,20 +226,35 @@ export function createToniesScreen({ request = api } = {}) {
         title: "Move down",
         disabled: index === tonie.chapters.length - 1,
         "data-tonie-control": "",
+        "data-tonie-disabled": index === tonie.chapters.length - 1 ? "" : null,
         "data-focus-key": `tonie-${chapter.id}-down`,
       }, [iconNode("arrowDown")]);
-      const removeButton = element("button", {
-        type: "button",
-        className: "button button-secondary tonie-remove",
+      const tickId = `tonie-${tonie.id}-select-${chapter.id}`;
+      const tick = element("input", {
+        id: tickId,
+        type: "checkbox",
+        className: "tonie-chapter-select",
+        checked: selectedChapters.has(chapter.id),
         "data-tonie-control": "",
-        "data-focus-key": `tonie-${chapter.id}-remove`,
-      }, [iconNode("trash"), element("span", { text: "Remove" })]);
+        "data-focus-key": `tonie-${chapter.id}-select`,
+      });
+      tick.addEventListener("change", () => {
+        if (tick.checked) selectedChapters.add(chapter.id);
+        else selectedChapters.delete(chapter.id);
+        render({ focusKey: `tonie-${chapter.id}-select` });
+      });
+      const tickLabel = element("label", {
+        for: tickId,
+        className: "visually-hidden",
+        text: `Select ${chapter.title || `chapter ${index + 1}`} for removal`,
+      });
       const row = element("li", {
         className: "tonie-chapter-row",
         draggable: true,
         "data-tonie-chapter": chapter.id,
         "data-tonie-control": "",
       }, [
+        tick, tickLabel,
         iconNode("grip", "tonie-grip"),
         element("span", { className: "tonie-chapter-number", text: String(index + 1) }),
         element("div", { className: "tonie-chapter-title" }, [
@@ -230,28 +263,11 @@ export function createToniesScreen({ request = api } = {}) {
           element("span", { className: "tonie-chapter-meta", text: chapter.transcoding ? "Processing" : chapter.duration || "Duration pending" }),
         ]),
         element("div", { className: "tonie-chapter-actions", role: "group", "aria-label": `Reorder ${chapter.title || `chapter ${index + 1}`}` }, [up, down]),
-        removeButton,
       ]);
 
       title.addEventListener("change", () => saveChapters(tonie, chapterDrafts(row.parentNode), "Chapter title saved to the Tonie."));
       up.addEventListener("click", () => saveChapters(tonie, moveItem(chapterDrafts(row.parentNode), index, -1), "Chapter moved up on the Tonie."));
       down.addEventListener("click", () => saveChapters(tonie, moveItem(chapterDrafts(row.parentNode), index, 1), "Chapter moved down on the Tonie."));
-      removeButton.addEventListener("click", async () => {
-        const name = title.value || "this chapter";
-        const confirmed = await showConfirmDialog({
-          title: `Remove ${name}?`,
-          message: `Remove "${name}" from "${tonie.name || "this Tonie"}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
-          confirmLabel: "Remove chapter",
-          destructive: true,
-        });
-        removeButton.focus({ preventScroll: true });
-        if (!confirmed) return;
-        await saveChapters(
-          tonie,
-          chapterDrafts(row.parentNode).filter((item) => item.id !== chapter.id),
-          "Chapter removed from the Tonie. Your local library was not changed.",
-        );
-      });
       return row;
     }
 
@@ -261,7 +277,7 @@ export function createToniesScreen({ request = api } = {}) {
         detail.append(element("div", { className: "empty-state tonie-empty" }, [
           iconNode("tonie"),
           element("strong", { text: "Nothing is stored on this Tonie" }),
-          element("p", { text: "Choose this Tonie from a prepared collection in Review when you are ready to send audio." }),
+          element("p", { text: "Select stories in the Library and send them here when you are ready." }),
         ]));
         return detail;
       }
@@ -273,8 +289,8 @@ export function createToniesScreen({ request = api } = {}) {
       }, [iconNode("trash"), element("span", { text: "Clear all chapters" })]);
       clearButton.addEventListener("click", async () => {
         const confirmed = await showConfirmDialog({
-          title: `Clear ${tonie.name || "this Tonie"}?`,
-          message: `Clear all ${tonie.chapters.length} chapters from "${tonie.name || "this Tonie"}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          title: `Clear ${tonieLabel(tonie)}?`,
+          message: `Clear all ${tonie.chapters.length} chapters from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
           confirmLabel: "Clear every chapter",
           destructive: true,
         });
@@ -282,12 +298,67 @@ export function createToniesScreen({ request = api } = {}) {
         if (!confirmed) return;
         await saveChapters(tonie, [], "Every chapter was cleared from the Tonie. Your local library was not changed.");
       });
-      const intro = element("div", { className: "tonie-detail-heading" }, [
-        element("p", { text: "Rename or reorder chapters here. Pointer drag and the Move buttons save the same canonical chapter list." }),
-        clearButton,
-      ]);
       const chapters = element("ol", { className: "tonie-chapter-list" });
       tonie.chapters.forEach((chapter, index) => chapters.append(chapterRow(tonie, chapter, index)));
+
+      const selectedCount = tonie.chapters.filter((chapter) => selectedChapters.has(chapter.id)).length;
+      const allTicked = tonie.chapters.length > 0 && selectedCount === tonie.chapters.length;
+      const selectAll = element("input", {
+        id: `tonie-${tonie.id}-select-all`,
+        type: "checkbox",
+        className: "tonie-select-all",
+        checked: allTicked,
+        "data-tonie-control": "",
+        "data-focus-key": `tonie-${tonie.id}-select-all`,
+      });
+      // indeterminate has no reflected attribute, only the IDL property, so a
+      // partial selection has to be set imperatively on every render or it
+      // looks identical to no selection at all.
+      selectAll.indeterminate = selectedCount > 0 && !allTicked;
+      selectAll.addEventListener("change", () => {
+        if (selectAll.checked) tonie.chapters.forEach((chapter) => selectedChapters.add(chapter.id));
+        else tonie.chapters.forEach((chapter) => selectedChapters.delete(chapter.id));
+        render({ focusKey: `tonie-${tonie.id}-select-all` });
+      });
+      const removeSelected = element("button", {
+        type: "button",
+        className: "button button-danger tonie-remove-selected",
+        disabled: selectedCount === 0,
+        "data-tonie-control": "",
+        "data-tonie-disabled": selectedCount === 0 ? "" : null,
+        "data-focus-key": `tonie-${tonie.id}-remove-selected`,
+      }, [
+        iconNode("trash"),
+        element("span", { text: selectedCount ? `Remove ${selectedCount} selected` : "Remove selected" }),
+      ]);
+      removeSelected.addEventListener("click", async () => {
+        const removing = new Set(tonie.chapters.filter((chapter) => selectedChapters.has(chapter.id)).map((chapter) => chapter.id));
+        // disabled is the visible guard, but a control's disabled state is
+        // one render-cycle bug away from being wrong (it just was). A write
+        // to a Tonie is not undoable, so it gets its own guard too.
+        if (removing.size === 0) return;
+        const confirmed = await showConfirmDialog({
+          title: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"}?`,
+          message: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"} from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          confirmLabel: removing.size === 1 ? "Remove chapter" : `Remove ${removing.size} chapters`,
+          destructive: true,
+        });
+        removeSelected.focus({ preventScroll: true });
+        if (!confirmed) return;
+        await saveChapters(
+          tonie,
+          survivingChapters(chapterDrafts(chapters), removing),
+          `${removing.size} ${removing.size === 1 ? "chapter was" : "chapters were"} removed from the Tonie. Your local library was not changed.`,
+        );
+      });
+      const intro = element("div", { className: "tonie-detail-heading" }, [
+        element("p", { text: "Tick chapters to remove them together. Rename or reorder in place; pointer drag and the Move buttons save the same canonical chapter list." }),
+        element("div", { className: "tonie-detail-bulk" }, [
+          element("label", { className: "tonie-select-all-field" }, [selectAll, element("span", { text: "Select all" })]),
+          removeSelected,
+          clearButton,
+        ]),
+      ]);
       let draggedIndex = -1;
       chapters.addEventListener("dragstart", (event) => {
         const row = event.target.closest("[data-tonie-chapter]");
@@ -389,7 +460,14 @@ export function createToniesScreen({ request = api } = {}) {
         replace(list, ...tonies.map(tonieRow));
       }
       root.querySelectorAll("[data-tonie-control]").forEach((control) => {
-        control.disabled = mutation.pending;
+        // A pending save disables everything. Otherwise a control's disabled
+        // state comes only from data-tonie-disabled, set at build time by
+        // whichever boundary rule created it (a Move button at the edge of
+        // the list, or Remove selected at zero ticked). Never from the
+        // control's own previous .disabled: refreshButton lives in header,
+        // which this render() never rebuilds, so reading its prior state
+        // back would let one save's disabling accumulate and never clear.
+        control.disabled = mutation.pending || control.hasAttribute("data-tonie-disabled");
         if (control.hasAttribute("draggable")) control.draggable = !mutation.pending;
       });
       root.querySelectorAll("[data-tonie-summary]").forEach((control) => { control.disabled = mutation.pending; });

@@ -9,10 +9,10 @@ Layout, deliberately boring so nothing is trapped in this app:
 
 Delete Toniefi tomorrow and you still have plain folders of MP3s.
 
-Track ORDER lives in collection.json, not in the filenames -- the Review step
-lets you drag chapters around, and renaming files to match would churn the
-whole folder every time. Files found on disk that the manifest doesn't know
-about get appended at the end, in filename order.
+Track ORDER lives in collection.json, not in the filenames -- the collection
+page lets you drag chapters around, and renaming files to match would churn
+the whole folder every time. Files found on disk that the manifest doesn't
+know about get appended at the end, in filename order.
 """
 from __future__ import annotations
 
@@ -741,7 +741,7 @@ def get(slug: str, refresh: bool = False) -> dict[str, Any] | None:
 
 
 def manifest_fingerprint(manifest: dict[str, Any]) -> str:
-    """Identify the exact reviewed order and metadata used for a send."""
+    """Identify the exact confirmed order and metadata used for a send."""
     relevant = {
         "slug": manifest.get("slug"),
         "title": manifest.get("title"),
@@ -778,6 +778,10 @@ def _decorate(slug: str, path: Path, manifest: dict[str, Any]) -> dict[str, Any]
     for track in manifest["tracks"]:
         track["duration"] = audio.human_duration(track.get("seconds", 0))
         track["oversized"] = track.get("seconds", 0) > limit
+    # Computed last, so it covers the decorated track list the caller will
+    # actually send. Both the index and the detail route go through here, so a
+    # collection fingerprints identically wherever it is read.
+    manifest["manifest_fingerprint"] = manifest_fingerprint(manifest)
     return manifest
 
 
@@ -962,9 +966,9 @@ def download_entries(slug: str) -> list[archive.Member]:
     """Pair every file of one collection with its name inside a download.
 
     Track ORDER lives in the manifest, not in the filenames, so a collection
-    reordered during Review carries stale numbers on disk. Numbering here comes
-    from the manifest: whoever unpacks the archive hears the reviewed order,
-    not the order the files happened to be written in.
+    reordered on its collection page carries stale numbers on disk. Numbering
+    here comes from the manifest: whoever unpacks the archive hears the chapter
+    order the manifest holds, not the order the files happened to be written in.
 
     The manifest is therefore rewritten rather than copied. Renaming the audio
     and shipping the original `collection.json` beside it would hand out an

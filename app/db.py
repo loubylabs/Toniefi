@@ -39,6 +39,7 @@ CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
 """
 
 FORGE_OPERATION_IDS_MIGRATION = "2026-08-28-forge-operation-ids"
+PUSH_BATCH_SOURCES_MIGRATION = "2026-08-29-push-batch-sources"
 
 
 def connect() -> sqlite3.Connection:
@@ -59,6 +60,7 @@ def init() -> None:
             conn.executescript(SCHEMA)
             conn.execute("BEGIN IMMEDIATE")
             _migrate_forge_operation_ids(conn)
+            _migrate_push_batch_sources(conn)
             conn.commit()
         except BaseException:
             conn.rollback()
@@ -92,6 +94,54 @@ def _migrate_forge_operation_ids(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
         (FORGE_OPERATION_IDS_MIGRATION, time.time()),
+    )
+
+
+def _migrate_push_batch_sources(conn: sqlite3.Connection) -> None:
+    """Give every persisted push job the multi-collection `sources` shape.
+
+    A send queued before one assignment could carry several collections stored
+    its one collection at the top level. The worker now reads `sources`, so a
+    job left in the old shape is claimed after an upgrade and dies on a
+    KeyError. The rewrite is lossless: the three retired keys become the single
+    source they always described, and every other key is carried through.
+    """
+    applied = conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE name=?",
+        (PUSH_BATCH_SOURCES_MIGRATION,),
+    ).fetchone()
+    if applied:
+        return
+    rows = conn.execute("SELECT id,payload FROM jobs WHERE kind='push'").fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            continue
+        if isinstance(payload.get("sources"), list):
+            continue
+        slug = payload.pop("slug", None)
+        fingerprint = payload.pop("manifest_fingerprint", None)
+        files = payload.pop("files", None)
+        if not isinstance(slug, str) or not isinstance(fingerprint, str) or not isinstance(files, list):
+            # Nothing recognisable to carry across. Leaving the payload alone
+            # keeps the job failing with its own error rather than one invented
+            # by a migration guessing at a shape it never wrote.
+            continue
+        payload["sources"] = [{
+            "slug": slug,
+            "manifest_fingerprint": fingerprint,
+            "files": files,
+        }]
+        conn.execute(
+            "UPDATE jobs SET payload=? WHERE id=?",
+            (json.dumps(payload), row["id"]),
+        )
+    conn.execute(
+        "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
+        (PUSH_BATCH_SOURCES_MIGRATION, time.time()),
     )
 
 

@@ -1,5 +1,6 @@
 from html.parser import HTMLParser
 
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app import main
@@ -14,7 +15,10 @@ class ShellDocument(HTMLParser):
         self.ids: set[str] = set()
         self.module_scripts: list[str] = []
         self.skip_targets: list[str] = []
-        self.navigation_labels: list[str] = []
+        # Desktop and mobile are separate navigation roots that have to stay
+        # in step. Merged into one list, deleting a link from either root is
+        # invisible as long as the other root still carries the same label.
+        self.desktop_controls: list[str] = []
         self.mobile_controls: list[str] = []
         self._body_depth = 0
         self._nav_depth = 0
@@ -68,9 +72,10 @@ class ShellDocument(HTMLParser):
             if self._control_depth == 0:
                 label = " ".join("".join(self._control_text).split())
                 if label:
-                    self.navigation_labels.append(label)
                     if self._mobile_nav_depth:
                         self.mobile_controls.append(label)
+                    else:
+                        self.desktop_controls.append(label)
 
         if tag == "nav" and self._nav_depth:
             if self._mobile_nav_depth:
@@ -103,16 +108,21 @@ def test_shell_retires_the_wizard_and_loads_modules():
     assert "workspace" in document.ids
     assert document.module_scripts == ["/static/app.js"]
     assert "stepper" not in document.ids
-    for label in (
+    assert set(document.desktop_controls) == {
         "Desk",
-        "Review Shelf",
         "Library",
         "Creative Tonies",
         "Activity",
         "Settings",
-    ):
-        assert label in document.navigation_labels
-    assert "More" in document.mobile_controls
+    }
+    assert set(document.mobile_controls) == {
+        "Desk",
+        "Library",
+        "Creative Tonies",
+        "More",
+        "Activity",
+        "Settings",
+    }
     assert "persistent-utilities" in document.class_names
     assert "activityStatus" in document.ids
     assert "clock" in document.icon_names
@@ -123,8 +133,7 @@ def test_every_application_route_serves_the_shell_document():
     for path in (
         "/",
         "/desk",
-        "/review",
-        "/review/the-wind-in-the-willows",
+        "/collection/the-wind-in-the-willows",
         "/library",
         "/tonies",
         "/activity",
@@ -135,3 +144,40 @@ def test_every_application_route_serves_the_shell_document():
         document = ShellDocument()
         document.feed(response.text)
         assert document.module_scripts == ["/static/app.js"], path
+
+
+def test_only_the_current_screens_serve_the_shell_document():
+    """Pin the served set by URL, so a retired screen cannot come back at all.
+
+    Filtering by endpoint identity would miss a fresh wrapper function that
+    returns the same document from a retired path, which is exactly how a
+    deleted screen comes back.
+    """
+    served = {
+        route.path
+        for route in main.app.routes
+        if isinstance(route, APIRoute) and "GET" in route.methods
+        and not route.path.startswith("/api/")
+    }
+
+    # /healthz is the one path outside the API surface that is not a screen.
+    assert served == {
+        "/",
+        "/desk",
+        "/library",
+        "/tonies",
+        "/activity",
+        "/settings",
+        "/collection/{slug}",
+        "/healthz",
+    }
+
+
+def test_the_retired_review_urls_exist_nowhere_and_answer_404():
+    """The deleted screen is gone as a URL, whichever function might serve it."""
+    paths = {getattr(route, "path", "") for route in main.app.routes}
+    assert not {"/review", "/review/{slug}"} & paths
+
+    client = TestClient(main.app)
+    assert client.get("/review").status_code == 404
+    assert client.get("/review/the-wind-in-the-willows").status_code == 404

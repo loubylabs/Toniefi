@@ -1,10 +1,10 @@
 import { api, scopeRequest } from "./api.js";
 import { createActivityScreen } from "./activity.js";
+import { createCollectionScreen } from "./collection.js";
 import { createDeskScreen } from "./desk.js";
 import { icon } from "./icons.js";
 import { createLibraryScreen } from "./library.js";
 import { createRefreshCoordinator, scopeRefresh, updateShell } from "./refresh.js";
-import { createReviewScreen } from "./review.js";
 import { createRouter } from "./router.js";
 import { createSettingsScreen } from "./settings.js";
 import { createPersistentAudioPlayer, notify } from "./shared.js";
@@ -13,7 +13,7 @@ import { createToniesScreen } from "./tonies.js";
 const routeDefinitions = [
   { name: "desk", path: "/" },
   { name: "desk", path: "/desk" },
-  { name: "review", path: "/review/:slug?" },
+  { name: "collection", path: "/collection/:slug", navigation: "library" },
   { name: "library", path: "/library" },
   { name: "tonies", path: "/tonies" },
   { name: "activity", path: "/activity" },
@@ -83,7 +83,7 @@ export const router = createRouter(routeDefinitions, {
 });
 
 router.register("desk", scopedScreen(createDeskScreen, { request: api, refresh }));
-router.register("review", scopedScreen(createReviewScreen, { request: api, refresh, player }));
+router.register("collection", scopedScreen(createCollectionScreen, { request: api, refresh, player }));
 router.register("library", scopedScreen(createLibraryScreen, { request: api, refresh }));
 router.register("tonies", scopedScreen(createToniesScreen, { request: api }));
 router.register("activity", scopedScreen(createActivityScreen, { request: api, refresh }));

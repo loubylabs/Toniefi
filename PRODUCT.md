@@ -12,7 +12,7 @@ The primary user is one person managing a single household's Creative Tonies fro
 
 ## Product Purpose
 
-TonieFi turns source audio into organized, Tonie-ready collections while keeping the finished library as ordinary folders and MP3 files on the user's own disk. Success means a user can add several audiobooks, let TonieFi prepare them independently, review the results, and deliberately choose which Creative Tonies receive them.
+TonieFi turns source audio into organized, Tonie-ready collections while keeping the finished library as ordinary folders and MP3 files on the user's own disk. Success means a user can add several audiobooks, let TonieFi prepare them independently, and then deliberately choose which Creative Tonies receive them.
 
 ## Positioning
 
@@ -22,10 +22,10 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 
 - A user commonly starts with YouTube video or playlist links, LibriVox books, or local audio files.
 - Each source becomes its own independent collection. A batch of five audiobook links produces five collections.
-- URL imports run through extraction and the default Forge cleanup automatically, then stop in a review queue before any Creative Tonie is changed.
+- URL imports run through extraction and the default Forge cleanup automatically, then appear in the Library, where the operator selects what to send.
 - Long-running extraction, Forge, and transfer work runs in background jobs and can survive the browser closing.
 - URL, LibriVox, upload, and Forge output stays hidden until one complete collection can be published atomically.
-- Review includes cover art, chapter titles, order, playback, duration, and the planned split across one or more Creative Tonies.
+- The Library selection bar shows the send order, the capacity groups for the selection, each group's chapter membership, and the target Tonie with its household and free space.
 - The myTonies account is configured once for the household and is only needed for listing, editing, and sending to Creative Tonies.
 
 ## Capabilities and Constraints
@@ -34,19 +34,21 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 - TonieFi preserves source order when packing chapters across multiple Tonies.
 - Default Forge processing normalizes perceived loudness to −16 LUFS with a −1.5 dBTP ceiling, cleans source-title noise, and splits oversized tracks. This is the strongest safe loudness target currently supported without clipping.
 - Each collection progresses and fails independently so one bad source does not block the rest of a batch.
-- Nothing is sent to a Creative Tonie without explicit user review and selection.
+- Nothing is sent to a Creative Tonie without explicit user selection and confirmation.
 - myTonies uses a private, unsupported API. Two-factor accounts are not supported by the current login method.
 - Credentials may come from environment variables or the local SQLite settings store. Credentials saved through the UI are stored as plain text and must be described honestly.
 - A complete credential pair is Configured. Connected is reserved for a successful connection test in the current browser session.
-- Legacy extracted collections use the persisted Forge job as their only migration path to Review Shelf.
+- Legacy extracted collections use the persisted Forge job as their only migration path to the Library.
+- Appending to a Creative Tonie is recoverable, because the added chapters can be removed afterwards, so it posts without a confirmation dialog and **Append to the back** is the preselected default for every capacity group. Replacing a Creative Tonie's chapters destroys its current cloud audio with no undo, so it always confirms and is never the default; the operator has to choose **Replace everything** deliberately.
 - Tonie chapter changes have no undo in the Tonie Cloud. Destructive actions require confirmation and concurrent external changes must never be overwritten silently.
+- On a Creative Tonie's own screen, several chapters can be ticked (individually or with Select all) and removed together: one whole-list save behind one confirmation, not one request per chapter, because a Tonie write has no undo to fall back on.
 - The app remains single-household for this redesign. Multi-user and multi-household management are outside scope.
 
 ## Brand Commitments
 
 - The product name is TonieFi.
 - Product language should be direct, calm, and understandable to a parent without hiding technical or data-safety limitations.
-- Existing product terminology includes collections, chapters, Forge, Creative Tonies, review, and send.
+- Existing product terminology includes collections, chapters, Forge, Creative Tonies, and send.
 
 ## Evidence on Hand
 
@@ -58,7 +60,7 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 ## Product Principles
 
 - Make the next safe action obvious, especially while several collections are moving through the pipeline.
-- Automate repeatable preparation and reserve human attention for review, assignment, and destructive changes.
+- Automate repeatable preparation and reserve human attention for selection, assignment, and destructive changes.
 - Keep every collection independent, recoverable, and easy to locate after leaving the page.
 - Be explicit about background state, failures, account connection, and irreversible Tonie Cloud changes.
 - Preserve ownership through plain files and local storage.

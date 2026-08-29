@@ -48,7 +48,7 @@
       { "name": "reduced-motion", "value": "0.01ms, one iteration", "purpose": "Global reduced-motion fallback; the indeterminate meter becomes a static centered bar." }
     ],
     "breakpoints": [
-      { "name": "focused-review-stack", "value": "1279.98px" },
+      { "name": "collection-page-stack", "value": "1279.98px" },
       { "name": "desk-stack", "value": "1199px" },
       { "name": "service-index-compact", "value": "1199.98px" },
       { "name": "mobile-bottom-navigation", "value": "759.98px" }
@@ -100,7 +100,7 @@
       "kind": "chip",
       "refersTo": "status-stamp",
       "description": "Text-first phase label with semantic ink and square stamp corners.",
-      "html": "<span class=\"ds-status-stamp ds-status-ready\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m5 12 4 4L19 6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Ready to review</span>",
+      "html": "<span class=\"ds-status-stamp ds-status-ready\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m5 12 4 4L19 6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Ready to send</span>",
       "css": ".ds-status-stamp { display: inline-flex; min-height: 1.75rem; padding: 0.25rem 0.5rem; align-items: center; gap: 0.25rem; border: 1px solid currentColor; border-radius: calc(var(--radius) / 2); background: var(--paper-raised); color: var(--ink-muted); font: 800 0.75rem/1 \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; text-transform: uppercase; } .ds-status-stamp svg { width: .9rem; height: .9rem; } .ds-status-ready { color: var(--success); } .ds-status-stamp:hover { background: var(--paper); } .ds-status-stamp:focus-visible { outline: 0.1875rem solid var(--focus); outline-offset: 0.1875rem; }"
     },
     {
@@ -115,7 +115,7 @@
       "kind": "card",
       "refersTo": "paper-record",
       "description": "Reusable raised record for shelf, library, Tonie, activity, and settings content.",
-      "html": "<article class=\"ds-paper-record\"><span class=\"ds-record-label\">12 chapters</span><h3>The Wind in the Willows</h3><p>Forge complete and ready for review.</p></article>",
+      "html": "<article class=\"ds-paper-record\"><span class=\"ds-record-label\">12 chapters</span><h3>The Wind in the Willows</h3><p>Forge complete and ready to send.</p></article>",
       "css": ".ds-paper-record { padding: 1rem; border: 1px solid var(--rule); border-radius: var(--radius); background: rgba(255,255,255,.88); box-shadow: 0 .35rem .9rem rgba(11,42,32,.08), 0 .1rem .25rem rgba(11,42,32,.06); color: var(--ink); font-family: \"Avenir Next\", Avenir, \"Segoe UI\", Helvetica, Arial, sans-serif; } .ds-paper-record h3 { margin: .5rem 0 0; font-size: 1.25rem; line-height: 1.15; letter-spacing: -.025em; } .ds-paper-record p { margin: .5rem 0 0; color: var(--ink-muted); } .ds-record-label { color: var(--ink-muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; } .ds-paper-record:hover { border-color: var(--bookcloth-muted); } .ds-paper-record:focus-visible { outline: .1875rem solid var(--focus); outline-offset: .1875rem; }"
     },
     {
@@ -154,7 +154,7 @@
     "dos": [
       "Do preserve the Circulation Desk split between bookcloth service chrome and cool paper work surfaces.",
       "Do use thin rules, compact labels, authored jacket fallbacks, and restrained lift to keep dense workflows scannable.",
-      "Do keep real cover jackets prominent enough to preserve collection identity across Desk, Review Shelf, Library, and focused review.",
+      "Do keep real cover jackets prominent enough to preserve collection identity across Desk, Library, and the collection page.",
       "Do pair every semantic color with visible words, an icon, a border, or an explanatory message.",
       "Do keep the 0.1875rem focus outline visible and provide 44px controls plus safe-area spacing below 759.98px.",
       "Do use the 150ms to 220ms state-transition family for ordinary feedback, the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.",

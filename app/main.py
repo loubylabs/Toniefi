@@ -5,13 +5,13 @@ import json
 import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import quote, unquote_to_bytes, urlparse
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import archive, audio, config, db, ingest, jobs, library, push, tonies
 
@@ -90,26 +90,39 @@ def valid_source_url(value: str) -> bool:
 
 # ------------------------------------------------------------------ models
 
-class TitlePatch(BaseModel):
+class RequestModel(BaseModel):
+    """The base every request body inherits, so extras are refused everywhere.
+
+    A request that carries a retired field beside its replacement comes from a
+    caller nobody migrated, and accepting it while silently discarding the
+    retired field is how that caller stays wrong without anyone finding out.
+    The only client is the browser in this repository, so there is no installed
+    base to keep working and no reason to be lenient.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TitlePatch(RequestModel):
     title: str
 
 
-class ReorderRequest(BaseModel):
+class ReorderRequest(RequestModel):
     names: list[str]
 
 
-class PrepareSource(BaseModel):
+class PrepareSource(RequestModel):
     url: str
     # Which playlist entries to download, as the numbers the preview showed.
     # Empty means the link speaks for itself: one video, or a whole playlist.
     playlist_items: list[int] = Field(default_factory=list)
 
 
-class PlaylistPreviewRequest(BaseModel):
+class PlaylistPreviewRequest(RequestModel):
     url: str
 
 
-class PrepareOptions(BaseModel):
+class PrepareOptions(RequestModel):
     use_chapters: bool = True
     normalize: bool = True
     clean_titles: bool = True
@@ -118,17 +131,29 @@ class PrepareOptions(BaseModel):
     split_oversized: bool = True
 
 
-class PrepareBatch(BaseModel):
+class PrepareBatch(RequestModel):
     sources: list[PrepareSource]
     options: PrepareOptions = Field(default_factory=PrepareOptions)
 
 
-class LibrivoxImport(BaseModel):
+class UploadPrepare(RequestModel):
+    """The multipart intake form, declared so it is refused the same way.
+
+    A form is a request body like any other, and the base class is what makes
+    a stray field a 422 here rather than something the server drops in silence.
+    """
+
+    files: list[UploadFile]
+    title: str = ""
+    options: str = "{}"
+
+
+class LibrivoxImport(RequestModel):
     book_id: str
     options: PrepareOptions = Field(default_factory=PrepareOptions)
 
 
-class ForgeRequest(BaseModel):
+class ForgeRequest(RequestModel):
     slug: str
     normalize: bool = True
     clean_titles: bool = True
@@ -137,34 +162,41 @@ class ForgeRequest(BaseModel):
     split_oversized: bool = True
 
 
-class ChapterRef(BaseModel):
+class ChapterRef(RequestModel):
     id: str
     title: str = ""
 
 
-class PushAssignment(BaseModel):
-    household_id: str
-    tonie_id: str
-    files: list[str] = Field(min_length=1)
-    replace: bool
-    remote_chapters: list[ChapterRef]
-
-
-class PushBatch(BaseModel):
-    operation_key: str = Field(min_length=1, max_length=128)
+class PushSource(RequestModel):
     slug: str
     manifest_fingerprint: str = Field(min_length=64, max_length=64)
+    files: list[str] = Field(min_length=1)
+
+
+class PushAssignment(RequestModel):
+    household_id: str
+    tonie_id: str
+    replace: bool
+    remote_chapters: list[ChapterRef]
+    # One assignment is one Creative Tonie, and a Tonie can hold chapters from
+    # several collections, so the collection identity lives here rather than on
+    # the batch.
+    sources: list[PushSource] = Field(min_length=1)
+
+
+class PushBatch(RequestModel):
+    operation_key: str = Field(min_length=1, max_length=128)
     assignments: list[PushAssignment] = Field(min_length=1, max_length=100)
 
 
-class ChaptersPut(BaseModel):
+class ChaptersPut(RequestModel):
     # `base` carries titles as well as ids, because a rename made elsewhere is
     # invisible to an id-only precondition and would be silently reverted.
     base: list[ChapterRef]
     chapters: list[ChapterRef]
 
 
-class Credentials(BaseModel):
+class Credentials(RequestModel):
     username: str
     password: str
 
@@ -266,13 +298,10 @@ def librivox_import(body: LibrivoxImport) -> dict[str, Any]:
 
 
 @app.post("/api/uploads/prepare")
-async def prepare_uploads(
-    files: list[UploadFile] = File(...),
-    title: str = Form(""),
-    options: str = Form("{}"),
-) -> dict[str, Any]:
+async def prepare_uploads(body: Annotated[UploadPrepare, Form()]) -> dict[str, Any]:
+    files, title = body.files, body.title
     try:
-        forge_options = PrepareOptions.model_validate(json.loads(options)).model_dump()
+        forge_options = PrepareOptions.model_validate(json.loads(body.options)).model_dump()
     except (json.JSONDecodeError, ValidationError) as exc:
         raise fail(400, "Upload options are invalid.") from exc
     if not files:
@@ -336,7 +365,7 @@ def run_forge(body: ForgeRequest) -> dict[str, Any]:
     return {"job_id": job_id}
 
 
-# -------------------------------------------------------------- 4. review
+# --------------------------------------------------------- 4. collections
 
 @app.get("/api/collections")
 def list_collections() -> list[dict[str, Any]]:
@@ -349,7 +378,6 @@ def get_collection(slug: str, refresh: bool = False) -> dict[str, Any]:
     if not manifest:
         raise fail(404, f"No collection named {slug}.")
     manifest["plan"] = library.plan(slug)
-    manifest["manifest_fingerprint"] = library.manifest_fingerprint(manifest)
     return manifest
 
 
@@ -462,10 +490,20 @@ def list_tonies() -> list[dict[str, Any]]:
     return [push.describe_tonie(tonie) for tonie in result]
 
 
+def _push_job_title(assignment: dict[str, Any]) -> str:
+    """Name a send by what it carries, since a batch is no longer one slug."""
+    slugs = {source["slug"] for source in assignment["sources"]}
+    if len(slugs) == 1:
+        return f"Send {next(iter(slugs))} to a Creative Tonie"
+    return f"Send {len(slugs)} collections to a Creative Tonie"
+
+
 @app.post("/api/push/batch")
 def push_batch(body: PushBatch) -> dict[str, Any]:
-    library.validate_public_collection_slug(body.slug)
     assignments = [assignment.model_dump() for assignment in body.assignments]
+    for assignment in assignments:
+        for source in assignment["sources"]:
+            library.validate_public_collection_slug(source["slug"])
     targets = [(item["household_id"], item["tonie_id"]) for item in assignments]
     if len(targets) != len(set(targets)):
         raise fail(400, "Each capacity group needs a different Creative Tonie.")
@@ -477,13 +515,9 @@ def push_batch(body: PushBatch) -> dict[str, Any]:
         existing = db.existing_idempotent_jobs(body.operation_key, digest)
         if existing is not None:
             return {"operation_key": body.operation_key, "job_ids": existing}
-        push.validate_confirmed_groups(body.slug, body.manifest_fingerprint, assignments)
+        push.validate_confirmed_batch(assignments)
         entries = [
-            ("push", f"Send {body.slug} to a Tonie", {
-                **assignment,
-                "slug": body.slug,
-                "manifest_fingerprint": body.manifest_fingerprint,
-            })
+            ("push", _push_job_title(assignment), assignment)
             for assignment in assignments
         ]
         job_ids, _ = db.create_idempotent_jobs(body.operation_key, digest, entries)
@@ -554,7 +588,6 @@ def healthz() -> JSONResponse:
 
 @app.get("/")
 @app.get("/desk")
-@app.get("/review")
 @app.get("/library")
 @app.get("/tonies")
 @app.get("/activity")
@@ -563,8 +596,8 @@ def application_document() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/review/{slug}")
-def collection_review_document(slug: str) -> FileResponse:
+@app.get("/collection/{slug}")
+def collection_document(slug: str) -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 

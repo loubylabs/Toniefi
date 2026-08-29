@@ -3,25 +3,13 @@ import { icon } from "./icons.js";
 import {
   announce,
   element,
+  exactDuration,
   notify,
   replace,
   setBusy,
   showConfirmDialog,
   snapshotRefreshOutcome,
 } from "./shared.js";
-
-
-function formatSeconds(value) {
-  const total = Math.max(0, Math.round(Number(value) || 0));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  const parts = [];
-  if (hours) parts.push(`${hours}h`);
-  if (minutes) parts.push(`${minutes}m`);
-  if (seconds || !parts.length) parts.push(`${seconds}s`);
-  return parts.join(" ");
-}
 
 
 export function credentialView(credentials = {}, connectionResult = null) {
@@ -70,9 +58,9 @@ export function settingsFacts(status = {}) {
   const limit = Number(status.tonie_limit_seconds || 0);
   const usable = Number(status.usable_limit_seconds || 0);
   return {
-    limit: status.tonie_limit_human || formatSeconds(limit),
-    usable: formatSeconds(usable),
-    headroom: formatSeconds(Math.max(0, limit - usable)),
+    limit: status.tonie_limit_human || exactDuration(limit),
+    usable: exactDuration(usable),
+    headroom: exactDuration(Math.max(0, limit - usable)),
     libraryPath: status.library_dir || "Unavailable",
     tools: Object.entries(status.tools || {}).map(([name, available]) => ({
       name,

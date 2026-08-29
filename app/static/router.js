@@ -81,6 +81,12 @@ export function createRouter(routes, {
     return fallback ? { ...fallback, params: {}, unmatched: true } : null;
   }
 
+  // A route without a navigation entry of its own says which entry it belongs
+  // to, so a screen reached from one is still announced as being inside it.
+  function navigationEntry(route) {
+    return route.navigation || route.name;
+  }
+
   function markNavigation(name) {
     document.querySelectorAll("[data-route]").forEach((control) => {
       const active = control.dataset.route === name;
@@ -94,7 +100,7 @@ export function createRouter(routes, {
     if (!route || !workspace) return;
     const renderSequence = ++sequence;
     current = route;
-    markNavigation(route.name);
+    markNavigation(navigationEntry(route));
 
     activeController?.abort();
     const controller = new AbortController();

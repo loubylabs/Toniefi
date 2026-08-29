@@ -40,6 +40,44 @@ export function element(tagName, attributes = {}, children = []) {
   return node;
 }
 
+export function humanDuration(seconds) {
+  // Media durations, shown beside values the server formatted, so this matches
+  // `human_duration` in app/audio.py exactly and drops seconds at the hour
+  // scale the same way it does.
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+}
+
+
+export function exactDuration(seconds) {
+  // Config figures the reader is meant to subtract, so this never drops a
+  // unit the way humanDuration does at the hour scale. A limit of 1h 30m, a
+  // usable 1h 29m 30s and a headroom of 30s have to agree on screen.
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  if (rest || !parts.length) parts.push(`${rest}s`);
+  return parts.join(" ");
+}
+
+
+export function tonieLabel(tonie) {
+  // A Tonie name is unique inside a household and nowhere else, so a name on
+  // its own can describe two different boxes. Every screen that names a Tonie
+  // in a picker or a destructive dialog uses this, because "Remove 6 chapters
+  // from Bedtime" is not a question anyone with two households can answer.
+  const household = tonie?.householdName ? ` · ${tonie.householdName}` : "";
+  return `${tonie?.name || "Creative Tonie"}${household}`;
+}
+
 export function replace(host, ...children) {
   host.replaceChildren(...children.flat().filter((child) => child != null));
   return host;
@@ -116,6 +154,10 @@ export function restoreFocus(token, { root = document, fallback = null } = {}) {
   if (token?.id) target = document.getElementById(token.id);
   if (!target && token?.key) target = matchingAttribute(root, "data-focus-key", token.key);
   if (!target && token?.name) target = matchingAttribute(root, "name", token.name);
+  // A disabled element cannot take focus. Treat it the same as no match at
+  // all rather than calling focus() on it, which is a no-op in a real
+  // browser and would silently strand focus on nothing.
+  if (target?.disabled) target = null;
   if (!target) target = fallback;
   if (!target || typeof target.focus !== "function") return false;
   target.focus({ preventScroll: true });

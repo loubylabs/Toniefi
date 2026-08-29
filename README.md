@@ -1,18 +1,17 @@
 # TonieFi
 
-TonieFi is a self-hosted audiobook preparation workspace for Creative Tonies. It accepts several sources at once, prepares each collection independently, and stops at review before any Creative Tonie changes. The finished library stays as ordinary folders and MP3 files on your own disk.
+TonieFi is a self-hosted audiobook preparation workspace for Creative Tonies. It accepts several sources at once, prepares each collection independently, and stops in the Library before any Creative Tonie changes. The finished library stays as ordinary folders and MP3 files on your own disk.
 
 ```text
-Batch intake -> Automatic extraction and Forge -> Review Shelf -> Confirmed send
+Batch intake -> Automatic extraction and Forge -> Library -> Confirmed send
 ```
 
 ## The Command Desk workflow
 
-The application has six destinations:
+The application has five destinations:
 
 - **Desk** accepts up to 50 HTTP or HTTPS source URLs at once. LibriVox search and multi-file upload are available as secondary intake modes.
-- **Review Shelf** holds every collection that completed Forge and is ready for a deliberate Creative Tonie choice.
-- **Library** shows every local collection, including extracted work that is not ready to send. Search, rescan, Finish preparation, open, download, and local deletion live here.
+- **Library** shows every local collection, including extracted work that is not ready to send, and is the one place a send starts: search, rescan, Finish preparation, open, download, delete, multi-select, and send to a Creative Tonie.
 - **Creative Tonies** reads current remote contents before writes. It supports chapter rename, pointer and keyboard reorder, remove, and clear.
 - **Activity** keeps the 40 most recent jobs with progress, timestamps, errors, result links, and eligible retries.
 - **Settings** manages the myTonies credential source, connection tests, local credential removal, capacity, paths, and tool status.
@@ -29,7 +28,7 @@ Every accepted source runs extraction and the default Forge sequence automatical
 - Split tracks that exceed usable Creative Tonie capacity.
 - Apply no automatic head or tail trim.
 
-Each successful preparation stops on Review Shelf. TonieFi never assigns a Creative Tonie automatically.
+Each successful preparation appears in the Library. TonieFi never assigns a Creative Tonie automatically.
 
 ### Playlists
 
@@ -39,15 +38,19 @@ Leave the control alone and the link speaks for itself. A `playlist?list=...` li
 
 A playlist that mixes videos carrying chapter markers with videos that have none keeps both. Chapters win for the video that has them, and a video without any keeps its whole file.
 
-### Review Shelf and confirmed sends
+### Library and confirmed sends
 
-Open a prepared collection to inspect its cover, source, chapter titles, order, playback, duration, Forge result, and sequential capacity plan. Chapter edits change the local collection. Pointer drag has visible Move up and Move down alternatives for keyboard and touch use.
+Open a prepared collection from the Library to inspect its cover, source, chapter titles, order, playback, duration, Forge result, and sequential capacity plan. Chapter edits change the local collection. Pointer drag has visible Move up and Move down alternatives for keyboard and touch use.
 
-Choose one Creative Tonie for each capacity group, then choose whether the group replaces current remote chapters or appends after them. TonieFi refreshes remote state before presenting targets and asks for one final confirmation before queueing a send.
+A send starts on the Library itself. Tick one or more finished collections and a selection bar appears, showing the total selected and the send order: the Library's own order, newest first, and within a collection its manifest track order. The bar breaks the selection into capacity groups, one per Tonie's worth of audio, and shows each group's exact chapter membership.
 
-`POST /api/push/batch` validates the complete confirmed assignment against the reviewed local manifest and current remote chapter state. Job creation for the batch is atomic. Either every assignment is queued or none is. An operation key makes an uncertain response safe to retry without creating a second send batch.
+Each capacity group gets its own Creative Tonie picker. No target is preselected, and Send stays disabled until every group names a Tonie; two groups may not name the same Tonie. Each option shows the Tonie's name, its household, and its free space. **Append to the back** is the default effect for every group; **Replace everything** is the deliberate opposite choice.
 
-If a send fails, return to Review and confirm the assignment again. Activity does not offer a generic Retry for push jobs because Creative Tonie writes have no undo and remote state may have changed.
+An append-only send posts with no confirmation dialog, because appending is recoverable: the added chapters can be removed afterwards. Any send that includes a replace opens the irreversible-action dialog first, naming every affected Tonie, because replacing destroys that Tonie's current cloud audio with no undo. One selection holds one operation key until its payload changes, and an in-flight lock keeps a double click from queuing a second batch.
+
+`POST /api/push/batch` submits one assignment per capacity group, each carrying its own `sources`: the collection slugs, their manifest fingerprints, and the exact files in that group. The server validates every assignment against the manifests on disk, never against the file order the browser submitted, so an omitted track, a duplicated track, a reordered collection, or two interleaved collections are all refused. Job creation for the batch is atomic. Either every assignment is queued or none is. An operation key makes an uncertain response safe to retry without creating a second send batch.
+
+If a send fails, fix the problem on the Library and send the selection again. Activity does not offer a generic Retry for push jobs because Creative Tonie writes have no undo and remote state may have changed.
 
 ### Recovery and job history
 
@@ -63,7 +66,7 @@ The interface refreshes jobs, history, collections, and status through one appli
 
 Creative Tonie edits always begin from a fresh remote list. The save precondition includes chapter titles as well as IDs, so a rename made elsewhere cannot be overwritten silently. While a save is running, every competing edit is disabled.
 
-Remove and Clear require an explicit irreversible-action confirmation. These operations affect only the Tonie Cloud. Your local library is never changed from the Creative Tonies screen.
+Chapters are ticked and removed together: Select all or tick individual rows, then remove the selected chapters in one save. Clear all chapters remains, for wiping a Tonie in one step. Both require an explicit irreversible-action confirmation. These operations affect only the Tonie Cloud. Your local library is never changed from the Creative Tonies screen.
 
 If the myTonies app, another tab, or a background send changes the same Tonie first, TonieFi refuses the stale write and reloads remote truth. A failed response also triggers a remote reload before controls become available again.
 
@@ -109,7 +112,7 @@ Open <http://127.0.0.1:8080>. `Ctrl-C` stops it. Override the port with `PORT=90
 
 `run-local.sh` creates `.venv/`, installs or upgrades dependencies, creates the local directories, and starts the server. Run only one TonieFi process against a SQLite database at a time.
 
-You can prepare and review collections without a myTonies account. Creative Tonie reads and confirmed sends require one.
+You can prepare and organise collections without a myTonies account. Creative Tonie reads and confirmed sends require one.
 
 ## API examples
 
@@ -167,7 +170,7 @@ One upload collection can contain up to 500 files and 20 GiB of staged audio. To
 
 ### Finish a legacy extracted collection
 
-Library and focused Review show **Finish preparation** for an older collection whose manifest stage is `extracted`. The action enqueues the supported persisted Forge job exactly once. The same migration route is available directly:
+Library and the collection page show **Finish preparation** for an older collection whose manifest stage is `extracted`. The action enqueues the supported persisted Forge job exactly once. The same migration route is available directly:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/api/forge \
@@ -175,7 +178,7 @@ curl -s -X POST http://127.0.0.1:8080/api/forge \
   -d '{"slug":"legacy-collection"}'
 ```
 
-Assignment remains unavailable until the collection reaches manifest stage `forged` and appears on Review Shelf.
+Assignment remains unavailable until the collection reaches manifest stage `forged` and appears in the Library ready to send.
 
 ## Account management
 
@@ -198,7 +201,7 @@ The library is deliberately plain:
 
 `collection.json` owns track order, titles, metadata, and cached durations. Files added by hand appear after a Library rescan. Deleting TonieFi leaves the folders and MP3 files usable by other software.
 
-Download on any Library row returns that collection as one zip of audio, cover art, and `collection.json`, so the files are reachable without shell access to the host. Track order lives in the manifest rather than in the filenames, so the archive renumbers its tracks from the manifest and a collection reordered during Review still unpacks in the reviewed order. The archived `collection.json` is rewritten to name the files the archive actually holds, so the index never points at a filename the archive lacks.
+Download on any Library row returns that collection as one zip of audio, cover art, and `collection.json`, so the files are reachable without shell access to the host. Track order lives in the manifest rather than in the filenames, so the archive renumbers its tracks from the manifest and a collection reordered on its collection page still unpacks in that order. The archived `collection.json` is rewritten to name the files the archive actually holds, so the index never points at a filename the archive lacks.
 
 The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed. One file is open at a time, so a collection at the 500-file intake limit cannot exhaust the process descriptor budget and an abandoned download strands nothing.
 
@@ -293,7 +296,7 @@ app/
 tests/          Python API and service tests plus Node browser behavior tests
 ```
 
-The former manual probe, single-URL import route, five-step wizard, and one-job browser watcher have been retired. New preparation enters through `/api/prepare`, `/api/librivox/import`, or `/api/uploads/prepare` and advances through automatic Forge before review. The persisted `/api/forge` route remains the single migration path for legacy extracted collections.
+The former manual probe, single-URL import route, five-step wizard, and one-job browser watcher have been retired. New preparation enters through `/api/prepare`, `/api/librivox/import`, or `/api/uploads/prepare` and advances through automatic Forge before appearing in the Library. The persisted `/api/forge` route remains the single migration path for legacy extracted collections.
 
 ## Development
 

@@ -3,260 +3,9 @@ import test from "node:test";
 
 import { createDeskScreen, createLiveWorkCart } from "../../app/static/desk.js";
 import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
-import { createFocusedReview } from "../../app/static/review.js";
+import { createCollectionDetail } from "../../app/static/collection.js";
 
-function textOf(node) {
-  if (typeof node === "string") return node;
-  return `${node._textContent || ""}${node.childNodes.map(textOf).join("")}`;
-}
-
-function matches(node, selector) {
-  if (selector.endsWith(":last-child")) {
-    const base = selector.slice(0, -":last-child".length);
-    return matches(node, base) && node.parentNode?.childNodes.at(-1) === node;
-  }
-  if (selector.startsWith(".")) return node.className.split(/\s+/).includes(selector.slice(1));
-  if (selector.startsWith("#")) return node.id === selector.slice(1);
-  if (selector.startsWith("[") && selector.endsWith("]")) {
-    return node.hasAttribute(selector.slice(1, -1));
-  }
-  return node.tagName === selector.toUpperCase();
-}
-
-class MiniElement {
-  constructor(tagName, ownerDocument) {
-    this.tagName = tagName.toUpperCase();
-    this.ownerDocument = ownerDocument;
-    this.attributes = new Map();
-    this.childNodes = [];
-    this.parentNode = null;
-    this.listeners = new Map();
-    this.className = "";
-    this.id = "";
-    this._textContent = "";
-    this.dataset = {};
-    this.disabled = false;
-    this.hidden = false;
-    this.checked = false;
-    this.selected = false;
-    this.value = "";
-    this.name = "";
-    this.type = "";
-    this.tabIndex = 0;
-    this.draggable = false;
-  }
-
-  get children() {
-    return this.childNodes.filter((child) => typeof child !== "string");
-  }
-
-  set textContent(value) {
-    this._textContent = String(value ?? "");
-    this.childNodes = [];
-  }
-
-  get textContent() {
-    return textOf(this);
-  }
-
-  get classList() {
-    return {
-      add: (...names) => {
-        const values = new Set(this.className.split(/\s+/).filter(Boolean));
-        names.forEach((name) => values.add(name));
-        this.className = [...values].join(" ");
-      },
-      remove: (...names) => {
-        const removed = new Set(names);
-        this.className = this.className.split(/\s+/).filter((name) => name && !removed.has(name)).join(" ");
-      },
-      contains: (name) => this.className.split(/\s+/).includes(name),
-      toggle: (name, force) => {
-        if (force) this.classList.add(name);
-        else this.classList.remove(name);
-      },
-    };
-  }
-
-  setAttribute(name, value) {
-    this.attributes.set(name, String(value));
-    if (name === "id") this.id = String(value);
-    if (name === "class") this.className = String(value);
-    if (name === "value") this.value = String(value);
-    if (name === "name") this.name = String(value);
-    if (name === "type") this.type = String(value);
-    if (name === "disabled") this.disabled = true;
-    if (name === "checked") this.checked = true;
-    if (name === "selected") this.selected = true;
-    if (name === "draggable") this.draggable = String(value) === "true";
-    if (name.startsWith("data-")) {
-      const key = name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-      this.dataset[key] = String(value);
-    }
-  }
-
-  getAttribute(name) {
-    return this.attributes.get(name) ?? null;
-  }
-
-  hasAttribute(name) {
-    return this.attributes.has(name);
-  }
-
-  removeAttribute(name) {
-    this.attributes.delete(name);
-  }
-
-  toggleAttribute(name, force) {
-    if (force) this.setAttribute(name, "");
-    else this.removeAttribute(name);
-  }
-
-  append(...children) {
-    for (const child of children) {
-      if (child && typeof child !== "string") child.parentNode = this;
-      this.childNodes.push(child);
-    }
-  }
-
-  insertBefore(node, reference) {
-    if (node && typeof node !== "string") node.parentNode = this;
-    const index = this.childNodes.indexOf(reference);
-    if (index < 0) this.childNodes.push(node);
-    else this.childNodes.splice(index, 0, node);
-    return node;
-  }
-
-  prepend(...children) {
-    for (const child of children) {
-      if (child && typeof child !== "string") child.parentNode = this;
-    }
-    this.childNodes.unshift(...children);
-  }
-
-  replaceChildren(...children) {
-    this.childNodes = [];
-    this.append(...children);
-  }
-
-  remove() {
-    if (!this.parentNode) return;
-    this.parentNode.childNodes = this.parentNode.childNodes.filter((child) => child !== this);
-    this.parentNode = null;
-  }
-
-  contains(target) {
-    if (target === this) return true;
-    return this.childNodes.some((child) => typeof child !== "string" && child.contains(target));
-  }
-
-  querySelectorAll(selector) {
-    const selectors = selector.split(",").map((item) => item.trim());
-    const found = [];
-    const visit = (node) => {
-      if (typeof node === "string") return;
-      if (selectors.some((item) => matches(node, item))) found.push(node);
-      node.childNodes.forEach(visit);
-    };
-    this.childNodes.forEach(visit);
-    return found;
-  }
-
-  querySelector(selector) {
-    return this.querySelectorAll(selector)[0] || null;
-  }
-
-  addEventListener(name, listener) {
-    const listeners = this.listeners.get(name) || [];
-    listeners.push(listener);
-    this.listeners.set(name, listeners);
-  }
-
-  removeEventListener(name, listener) {
-    const listeners = this.listeners.get(name) || [];
-    this.listeners.set(name, listeners.filter((item) => item !== listener));
-  }
-
-  async dispatchEvent(event) {
-    event.target ||= this;
-    event.currentTarget = this;
-    event.preventDefault ||= () => { event.defaultPrevented = true; };
-    const results = (this.listeners.get(event.type) || []).map((listener) => listener(event));
-    await Promise.all(results);
-    return !event.defaultPrevented;
-  }
-
-  click() {
-    return this.dispatchEvent({ type: "click" });
-  }
-
-  focus() {
-    this.ownerDocument.activeElement = this;
-  }
-
-  showModal() {
-    this.setAttribute("open", "");
-  }
-
-  close() {
-    this.removeAttribute("open");
-  }
-
-  setCustomValidity() {}
-  reportValidity() {}
-}
-
-class MiniDocument {
-  constructor() {
-    this.body = new MiniElement("body", this);
-    this.activeElement = null;
-    this.hidden = false;
-  }
-
-  createElement(tagName) {
-    return new MiniElement(tagName, this);
-  }
-
-  getElementById(id) {
-    if (this.body.id === id) return this.body;
-    return this.body.querySelectorAll(`#${id}`)[0] || null;
-  }
-
-  querySelectorAll(selector) {
-    return this.body.querySelectorAll(selector);
-  }
-}
-
-function buttonWithText(root, text) {
-  return root.querySelectorAll("button").find((button) => button.textContent.includes(text));
-}
-
-function installDom() {
-  const originalDocument = globalThis.document;
-  const originalWindow = globalThis.window;
-  const document = new MiniDocument();
-  globalThis.document = document;
-  globalThis.window = { requestAnimationFrame: (callback) => callback() };
-  const workspace = document.createElement("main");
-  workspace.id = "workspace";
-  const dialogs = document.createElement("div");
-  dialogs.id = "dialogHost";
-  document.body.append(workspace, dialogs);
-  return {
-    document,
-    workspace,
-    restore() {
-      globalThis.document = originalDocument;
-      globalThis.window = originalWindow;
-    },
-  };
-}
-
-async function flush() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-}
+import { buttonWithText, flush, installDom } from "./mini-dom.mjs";
 
 test("Desk gives every accepted source URL textbox a distinct accessible name", async () => {
   const dom = installDom();
@@ -390,99 +139,9 @@ test("Desk renders forged truth instead of an obsolete failed Forge card", () =>
 
     const rows = dom.workspace.querySelectorAll(".work-cart-row");
     assert.equal(rows.length, 1);
-    assert.match(rows[0].textContent, /Ready to review/);
-    assert.match(rows[0].textContent, /Review/);
+    assert.match(rows[0].textContent, /Ready to send/);
+    assert.match(rows[0].textContent, /View details/);
     assert.doesNotMatch(rows[0].textContent, /Failed|Retry|Worker stopped/);
-  } finally {
-    controller.abort();
-    dom.restore();
-  }
-});
-
-test("focused Review owns assignment pending, failure, and recovered receipt DOM states", async () => {
-  const dom = installDom();
-  const controller = new AbortController();
-  const bodies = [];
-  let resolveRetry;
-  const collection = {
-    slug: "night-story",
-    title: "Night Story",
-    stage: "forged",
-    manifest_fingerprint: "f".repeat(64),
-    track_count: 1,
-    total_duration: "16m 40s",
-    tonies_needed: 1,
-    tracks: [{ name: "one.mp3", title: "One", seconds: 1000, duration: "16m 40s" }],
-    plan: [{ index: 1, seconds: 1000, duration: "16m 40s", tracks: [{ name: "one.mp3", title: "One", duration: "16m 40s" }] }],
-  };
-  const tonies = [{
-    householdId: "house-1",
-    householdName: "Home",
-    id: "tonie-1",
-    name: "Fox",
-    chapters: [{ id: "old-1", title: "Old" }],
-    chapter_count: 1,
-    seconds_present: 100,
-    seconds_free: 5300,
-    time_free: "1h 28m",
-  }];
-  const request = async (url, options = {}) => {
-    if (url === "/api/collections/night-story") return collection;
-    if (url === "/api/tonies") return tonies;
-    if (url === "/api/push/batch") {
-      bodies.push(options.body);
-      if (bodies.length === 1) throw new Error("response uncertain");
-      return new Promise((resolve) => { resolveRetry = resolve; });
-    }
-    throw new Error(`Unexpected request ${url}`);
-  };
-  const refresh = {
-    snapshot: { status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 } },
-    request: async () => ({ collections: [collection], stale: [], errors: {} }),
-    subscribe: () => () => {},
-  };
-
-  try {
-    createFocusedReview({
-      workspace: dom.workspace,
-      slug: collection.slug,
-      request,
-      refresh,
-      player: { play() {} },
-      signal: controller.signal,
-    });
-    await flush();
-    await buttonWithText(dom.workspace, "Choose Creative Tonies").click();
-    await flush();
-    const form = dom.workspace.querySelector(".assignment-form");
-    assert.match(form.querySelector("select").childNodes[1].textContent, /1h 27m free/);
-    form.querySelector("select").value = "house-1:tonie-1";
-    const firstSubmit = form.dispatchEvent({ type: "submit" });
-    await flush();
-    const assignment = dom.workspace.querySelector(".assignment-panel");
-    assert.equal(assignment.hasAttribute("data-assignment-pending"), true);
-    assert.equal(assignment.querySelectorAll("input, select, button").every((control) => control.disabled), true);
-    const repeatedSubmit = form.dispatchEvent({ type: "submit" });
-    await flush();
-    assert.equal(dom.document.getElementById("dialogHost").querySelectorAll("dialog").length, 1);
-    await repeatedSubmit;
-    await buttonWithText(dom.document.getElementById("dialogHost"), "Confirm").click();
-    await firstSubmit;
-    await flush();
-    assert.match(assignment.textContent, /response uncertain/);
-    assert.equal(bodies.length, 1);
-
-    const retry = buttonWithText(assignment, "Retry confirmed batch");
-    const retrying = retry.click();
-    await flush();
-    assert.equal(assignment.hasAttribute("data-assignment-pending"), true);
-    assert.equal(retry.disabled, true);
-    resolveRetry({ operation_key: "recovered", job_ids: [41] });
-    await retrying;
-    await flush();
-    assert.deepEqual(bodies, [bodies[0], bodies[0]]);
-    assert.doesNotMatch(assignment.textContent, /response uncertain/);
-    assert.match(assignment.textContent, /1 send is queued/);
   } finally {
     controller.abort();
     dom.restore();
@@ -557,7 +216,7 @@ test("Library rerenders every mutation control disabled while Rescan is pending"
   }
 });
 
-test("Forge preparation state keeps extracted collections out of review and reports job truth", () => {
+test("Forge preparation state keeps extracted collections unfinished and reports job truth", () => {
   const collection = { slug: "legacy-story", stage: "extracted" };
   assert.deepEqual(forgePreparationState(collection, []), { state: "incomplete", error: "" });
   assert.deepEqual(forgePreparationState(collection, [{
@@ -576,7 +235,7 @@ test("Forge preparation state keeps extracted collections out of review and repo
   assert.deepEqual(forgePreparationState({ ...collection, stage: "forged" }, []), { state: "ready", error: "" });
 });
 
-test("Library gives extracted collections one Finish preparation action and no review action", async () => {
+test("Library gives extracted collections one Finish preparation action and no link into the collection", async () => {
   const dom = installDom();
   const controller = new AbortController();
   const collection = {
@@ -610,7 +269,8 @@ test("Library gives extracted collections one Finish preparation action and no r
   try {
     createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
     await flush();
-    assert.equal(buttonWithText(dom.workspace, "Open for review"), undefined);
+    assert.deepEqual(dom.workspace.querySelectorAll("a")
+      .filter((link) => link.getAttribute("data-route") === "collection"), []);
     const finish = buttonWithText(dom.workspace, "Finish preparation");
     assert.ok(finish);
     await finish.click();
@@ -664,7 +324,7 @@ test("Library offers every collection a download, whether or not Forge has finis
   }
 });
 
-test("focused Review stage-gates assignment and offers the same Finish preparation route", async () => {
+test("the collection screen stage-gates the capacity plan and offers the same Finish preparation route", async () => {
   const dom = installDom();
   const controller = new AbortController();
   const collection = {
@@ -708,7 +368,7 @@ test("focused Review stage-gates assignment and offers the same Finish preparati
   };
 
   try {
-    createFocusedReview({
+    createCollectionDetail({
       workspace: dom.workspace,
       slug: collection.slug,
       request,
@@ -718,7 +378,7 @@ test("focused Review stage-gates assignment and offers the same Finish preparati
     });
     await flush();
     assert.match(dom.workspace.textContent, /Forge incomplete/);
-    assert.equal(buttonWithText(dom.workspace, "Choose Creative Tonies"), undefined);
+    assert.equal(dom.workspace.querySelector(".capacity-plan"), null);
     const finish = buttonWithText(dom.workspace, "Finish preparation");
     assert.ok(finish);
     await finish.click();

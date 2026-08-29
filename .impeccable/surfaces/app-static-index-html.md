@@ -13,23 +13,23 @@ Full responsive web application shell and its primary workflows. Mode: Operate.
 
 ## Audience and job
 
-A single-household user prepares several audiobook sources, monitors independent background processing, reviews each resulting collection, and deliberately assigns ready audio to Creative Tonies.
+A single-household user prepares several audiobook sources, monitors independent background processing, opens each resulting collection, and deliberately assigns ready audio to Creative Tonies.
 
 ## Primary tasks
 
 - Add several YouTube links at once, with one resulting collection per link.
 - See extraction and Forge progress without remaining on the page.
 - Resolve failures without blocking successful collections.
-- Review covers, chapters, loudness processing, duration, and multi-Tonie packing.
+- Inspect covers, chapters, loudness processing, duration, and multi-Tonie packing.
 - Manage the connected myTonies account and Creative Tonie contents safely.
 
 ## Chosen direction
 
-Circulation Desk. A contemporary library workroom translated into a digital operations surface. Saturated bookcloth fields, cool utility paper, stamped status ink, full-color cover jackets, a compact service index, batch intake tray, live work cart, review shelf, and explicit account connection state form one system.
+Circulation Desk. A contemporary library workroom translated into a digital operations surface. Saturated bookcloth fields, cool utility paper, stamped status ink, full-color cover jackets, a compact service index, batch intake tray, live work cart, library selection bar, and explicit account connection state form one system.
 
 ## Memorable moment
 
-When a batch is submitted, individual source slips lift from the intake tray into the live work cart. Each collection retains identity and visibly advances until it reaches the review shelf.
+When a batch is submitted, individual source slips lift from the intake tray into the live work cart. Each collection retains identity and visibly advances until it reaches the Library, ready to send.
 
 ## Constraints
 
