@@ -31,6 +31,14 @@ Every accepted source runs extraction and the default Forge sequence automatical
 
 Each successful preparation stops on Review Shelf. TonieFi never assigns a Creative Tonie automatically.
 
+### Playlists
+
+A source link that carries a `list=` parameter offers a **Pick videos** control on its tray row. It lists the playlist without downloading any audio, ticks every playable entry, and lets you untick the ones you do not want. Only the ticked entries are downloaded, so removing a video costs nothing.
+
+Leave the control alone and the link speaks for itself. A `playlist?list=...` link brings every entry; a `watch?v=...&list=...` link brings that one video, not the playlist standing behind it.
+
+A playlist that mixes videos carrying chapter markers with videos that have none keeps both. Chapters win for the video that has them, and a video without any keeps its whole file.
+
 ### Review Shelf and confirmed sends
 
 Open a prepared collection to inspect its cover, source, chapter titles, order, playback, duration, Forge result, and sequential capacity plan. Chapter edits change the local collection. Pointer drag has visible Move up and Move down alternatives for keyboard and touch use.
@@ -115,7 +123,7 @@ curl -s -X POST http://127.0.0.1:8080/api/prepare \
   -d '{
     "sources": [
       {"url": "https://www.youtube.com/watch?v=FIRST"},
-      {"url": "https://www.youtube.com/watch?v=SECOND"}
+      {"url": "https://www.youtube.com/playlist?list=SECOND", "playlist_items": [1, 3, 4, 5]}
     ],
     "options": {
       "use_chapters": true,
@@ -134,10 +142,12 @@ The response has this shape:
 {
   "jobs": [
     {"id": 42, "url": "https://www.youtube.com/watch?v=FIRST"},
-    {"id": 43, "url": "https://www.youtube.com/watch?v=SECOND"}
+    {"id": 43, "url": "https://www.youtube.com/playlist?list=SECOND"}
   ]
 }
 ```
+
+`playlist_items` is optional. It names the playlist entries to download, numbered from 1 in playlist order, and an empty list lets the link decide. `POST /api/playlist/preview` with `{"url": "..."}` returns those numbers alongside each entry title, without downloading audio.
 
 Read current and historical work with `GET /api/jobs`. Retry one eligible failed job with `POST /api/jobs/{job_id}/retry`.
 

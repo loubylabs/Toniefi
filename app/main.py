@@ -230,9 +230,8 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
 
     options = body.options.model_dump()
     entries = [
-        ("prepare_url", source.url.strip(),
-         {"url": source.url.strip(), "playlist_items": source.playlist_items, "options": options})
-        for source in body.sources
+        ("prepare_url", url, {"url": url, "playlist_items": source.playlist_items, "options": options})
+        for url, source in zip(sources, body.sources, strict=True)
     ]
     ids = jobs.enqueue_many(entries)
     created = [{"id": job_id, "url": url} for job_id, url in zip(ids, sources, strict=True)]

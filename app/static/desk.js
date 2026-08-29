@@ -772,7 +772,7 @@ export function createDeskScreen({
     const paste = element("textarea", {
       id: "source-paste",
       rows: "4",
-      placeholder: "https://www.youtube.com/watch?v=...\nhttps://example.com/another-story",
+      placeholder: "https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/playlist?list=...",
       spellcheck: "false",
       autocapitalize: "off",
       autocomplete: "off",
