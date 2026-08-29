@@ -831,3 +831,73 @@ test("an option never advertises free space the fit check will refuse", async ()
   }
 });
 
+test("an option reports the Tonie's own free space under either effect", async () => {
+  // 5,000 seconds of a 5,400 second limit are already on the box, so it has
+  // 6m 40s free. That is a fact about the Tonie, so ticking Replace everything
+  // must not turn it into "1h 30m free": the operator would be reading the
+  // operation's budget and calling it the box's remaining space.
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    tonies: [{ ...blueTonie(), time_free: "6m 40s", seconds_present: 5000 }],
+    limitSeconds: 5400,
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+
+    // Append: 25m does not fit into 6m 40s, and the option says both.
+    assert.match(screen.node(".library-send-target").textContent, /Blue Tonie · Home · 6m 40s free · does not fit/);
+
+    await screen.byFocusKey("library-send-effect-1-replace").dispatchEvent({ type: "change" });
+    await flush();
+
+    // Replace: the SAME free figure, with the suffix explaining why a group
+    // bigger than it is still accepted, rather than reading as a contradiction.
+    assert.match(screen.node(".library-send-target").textContent, /Blue Tonie · Home · 6m 40s free · fits once everything is replaced/);
+    assert.doesNotMatch(screen.node(".library-send-target").textContent, /1h 30m/);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a replace of a group larger than the free figure still sends", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    tonies: [{ ...blueTonie(), time_free: "6m 40s", seconds_present: 5000 }],
+    limitSeconds: 5400,
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    // The append is refused, which is what the printed free space describes.
+    assert.equal(screen.node(".library-send-submit").disabled, true);
+    assert.match(screen.node(".library-send-validation").textContent, /Group 1 does not fit Blue Tonie · Home\. Choose Replace everything, or another Tonie\./);
+
+    await screen.byFocusKey("library-send-effect-1-replace").dispatchEvent({ type: "change" });
+    await flush();
+
+    // The fit budget for a replace is the whole usable limit, so the same 25m
+    // group now fits and the bar has nothing to complain about.
+    assert.equal(screen.node(".library-send-submit").disabled, false);
+    assert.equal(screen.node(".library-send-validation").textContent, "");
+
+    const sending = screen.node(".library-send-submit").click();
+    await flush();
+    const dialog = screen.dom.document.getElementById("dialogHost").querySelector(".confirmation-dialog");
+    await buttonWithText(dialog, "Replace and send").click();
+    await sending;
+    await flush();
+
+    assert.equal(screen.pushes.length, 1);
+    assert.equal(screen.pushes[0].assignments[0].replace, true);
+  } finally {
+    screen.stop();
+  }
+});

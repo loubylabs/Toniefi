@@ -11,6 +11,7 @@ import {
   selectionProblems,
   sendCapacityLimit,
   tonieCapacity,
+  tonieFreeSeconds,
 } from "../../app/static/send.js";
 
 const story = (slug, fingerprint, tracks) => ({
@@ -105,6 +106,21 @@ test("tonieCapacity subtracts what is present for an append and ignores it for a
   assert.equal(tonieCapacity(tonie, 900, false, 5400).fits, true);
   assert.equal(tonieCapacity(tonie, 2000, false, 5400).fits, false);
   assert.equal(tonieCapacity(tonie, 2000, true, 5400).fits, true);
+});
+
+test("tonieFreeSeconds is a property of the Tonie and never moves with the effect", () => {
+  // The fit budget grows for a replace, because the box is cleared first. The
+  // free space does not: it describes how full the Tonie is right now, and the
+  // picker prints it so the operator reads the same figure under either effect.
+  const tonie = { seconds_present: 5000 };
+  assert.equal(tonieFreeSeconds(tonie, 5400), 400);
+  assert.equal(tonieCapacity(tonie, 1200, false, 5400).availableSeconds, 400);
+  assert.equal(tonieCapacity(tonie, 1200, true, 5400).availableSeconds, 5400);
+});
+
+test("tonieFreeSeconds never reports negative space for an overfull Tonie", () => {
+  assert.equal(tonieFreeSeconds({ seconds_present: 6000 }, 5400), 0);
+  assert.equal(tonieFreeSeconds({}, 5400), 5400);
 });
 
 test("sendCapacityLimit reads the usable limit from status", () => {

@@ -47,11 +47,24 @@ export function groupSources(group) {
   return sources;
 }
 
+export function tonieFreeSeconds(tonie, limitSeconds) {
+  // The Tonie's own remaining space: the usable limit minus what is on it now.
+  // This is a property of the box, so it does not move when the operator picks
+  // an effect. The picker prints this, because "free space" that grew because
+  // Replace everything was ticked describes the operation, not the Tonie, and
+  // an operator reading it cannot tell how full the box actually is.
+  const present = Number(tonie?.seconds_present ?? tonie?.secondsPresent ?? 0);
+  return Math.max(0, Number(limitSeconds) - present);
+}
+
 export function tonieCapacity(tonie, groupSeconds, replaceExisting, limitSeconds) {
+  // The fit budget, which DOES move with the effect: a replace clears the box
+  // first, so the whole usable limit is available to it. Every fit check runs
+  // against this, never against tonieFreeSeconds.
   const present = Number(tonie?.seconds_present ?? tonie?.secondsPresent ?? 0);
   const availableSeconds = replaceExisting
     ? Number(limitSeconds)
-    : Math.max(0, Number(limitSeconds) - present);
+    : tonieFreeSeconds(tonie, limitSeconds);
   const projectedSeconds = replaceExisting ? Number(groupSeconds) : present + Number(groupSeconds);
   return {
     availableSeconds,

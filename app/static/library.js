@@ -10,6 +10,7 @@ import {
   selectionProblems,
   sendCapacityLimit,
   tonieCapacity,
+  tonieFreeSeconds,
 } from "./send.js";
 import {
   announce,
@@ -471,16 +472,23 @@ export function createLibraryScreen({
         // automatic assignment, and a Tonie write has no undo.
         picker.append(element("option", { value: "", text: "Choose a Creative Tonie" }));
         for (const tonie of tonies || []) {
+          // Free space is a property of the Tonie, so the printed figure is the
+          // same whichever effect is ticked. It is computed here rather than
+          // read from the tonie's own time_free, which is a server snapshot
+          // that can disagree with the limit this bar packs against.
+          const free = tonieFreeSeconds(tonie, limitSeconds());
           const capacity = tonieCapacity(tonie, group.seconds, chosen.replaceExisting, limitSeconds());
+          // A replace clears the box first, so a group larger than the free
+          // space still fits. Saying so is what keeps "6m 40s free" from
+          // reading as a contradiction beside an option the bar accepts, and
+          // it matches what the validation line offers when an append
+          // overflows: choose Replace everything, or another Tonie.
+          let fitNote = "";
+          if (!capacity.fits) fitNote = " · does not fit";
+          else if (group.seconds > free) fitNote = " · fits once everything is replaced";
           picker.append(element("option", {
             value: `${tonie.householdId}/${tonie.id}`,
-            // The number printed here is the one the fit check ran against, so
-            // an option can never read "1h 30m free · does not fit". That has
-            // to come from tonieCapacity, not the tonie's own time_free:
-            // replaceExisting frees the whole usable limit, not the usable
-            // limit minus what is already present, and time_free does not
-            // know which effect is chosen.
-            text: `${tonieLabel(tonie)} · ${humanDuration(capacity.availableSeconds)} free${capacity.fits ? "" : " · does not fit"}`,
+            text: `${tonieLabel(tonie)} · ${humanDuration(free)} free${fitNote}`,
             selected: chosen.tonie ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === `${tonie.householdId}/${tonie.id}` : false,
           }));
         }
