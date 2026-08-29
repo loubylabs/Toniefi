@@ -646,23 +646,40 @@ export function createLibraryScreen({
         appendInput.addEventListener("change", () => { chosen.replaceExisting = false; operationKey = ""; render({ focusKey: `library-send-effect-${group.index}-append` }); });
         replaceInput.addEventListener("change", () => { chosen.replaceExisting = true; operationKey = ""; render({ focusKey: `library-send-effect-${group.index}-replace` }); });
 
-        const membership = element("ol", { className: "library-send-membership" }, group.entries.map((entry) => (
-          element("li", {}, [
-            element("span", { text: entry.collectionTitle }),
-            element("span", { text: entry.title }),
-            element("span", { text: entry.duration || "" }),
-          ])
-        )));
+        // Collapsed by default. A 30 chapter audiobook printed in full pushed
+        // the picker and the Send button off the screen, and every row of it
+        // repeated the same collection title in its first column.
+        const sourceTitles = [];
+        for (const entry of group.entries) {
+          if (!sourceTitles.includes(entry.collectionTitle)) sourceTitles.push(entry.collectionTitle);
+        }
+        const membership = element("details", { className: "library-send-membership-disclosure" }, [
+          element("summary", {
+            text: `${group.entries.length} ${group.entries.length === 1 ? "chapter" : "chapters"} · ${humanDuration(group.seconds)} · ${sourceTitles.join(", ")}`,
+          }),
+          element("ol", { className: "library-send-membership" }, group.entries.map((entry) => (
+            element("li", {}, [
+              // The collection column appears only when a group actually spans
+              // more than one, which is the only time it says anything.
+              sourceTitles.length > 1 ? element("span", { text: entry.collectionTitle }) : null,
+              element("span", { text: entry.title }),
+              element("span", { text: entry.duration || "" }),
+            ].filter(Boolean))
+          ))),
+        ]);
 
+        // Decisions first, evidence second. The membership list used to lead,
+        // and with one audiobook it was the whole bar: the target picker, the
+        // effect and Send were all below the fold.
         return element("li", { className: "library-send-group" }, [
           element("h3", { text: groups.length === 1 ? "Chapters to send" : `Group ${group.index}` }),
-          membership,
           picker,
           element("fieldset", { className: "library-send-effect" }, [
             element("legend", { text: `What group ${group.index} does to that Tonie` }),
             element("label", {}, [appendInput, element("span", { text: "Append to the back" })]),
             element("label", {}, [replaceInput, element("span", { text: "Replace everything" })]),
           ]),
+          membership,
         ]);
       });
 

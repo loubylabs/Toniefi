@@ -302,7 +302,13 @@ test("ticking a row opens the send bar, keeps focus on the tick and blocks a sen
     assert.match(screen.node(".library-send-targets").textContent, /1h 30m free/);
     assert.deepEqual(
       screen.node(".library-send-membership").childNodes.map((item) => item.textContent),
-      ["Night StoryOne10m 00s", "Night StoryTwo15m 00s"],
+      // One collection in this group, so its title is not repeated on every
+      // row. It is named once, in the disclosure's own summary.
+      ["One10m 00s", "Two15m 00s"],
+    );
+    assert.match(
+      screen.node(".library-send-membership-disclosure").querySelector("summary").textContent,
+      /2 chapters · 25m 00s · Night Story/,
     );
   } finally {
     screen.stop();

@@ -3646,7 +3646,20 @@ img.collection-detail-cover {
   height: 2.5rem;
 }
 
+/* A global field rule gives inputs a 2.75rem minimum height, which is right
+   for a text box and wrong for a radio: it stretched the control into a large
+   circle and pushed the jacket and the name across the card. */
+.library-send-target-card > input[type="radio"] {
+  width: 1.375rem;
+  height: 1.375rem;
+  min-height: 1.375rem;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--info);
+}
+
 .library-send-target-copy {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -3738,4 +3751,28 @@ img.collection-detail-cover {
 
 .mobile-more-menu .nav-job-status {
   margin-left: auto;
+}
+
+
+/* ------------------------------------------- collapsed chapter membership */
+
+.library-send-membership-disclosure {
+  min-width: 0;
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-2);
+}
+
+.library-send-membership-disclosure > summary {
+  min-height: 2.75rem;
+  padding: var(--space-2) 0;
+  display: flex;
+  align-items: center;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.library-send-membership-disclosure[open] > summary {
+  color: var(--ink);
+  font-weight: 700;
 }
