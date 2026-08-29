@@ -56,6 +56,36 @@ test("packSelection keeps an oversized single track alone rather than dropping i
   assert.deepEqual(groups[0].entries.map((entry) => entry.name), ["big.mp3"]);
 });
 
+test("packSelection keeps a track that exactly fills the limit in the same group", () => {
+  // The boundary that separates the server's `>` from a `>=` off-by-one. At
+  // exactly the limit the track still belongs to the current group; only a
+  // track that would take the total PAST the limit starts a new one. A drift
+  // here makes the server refuse every real send with a 409 nobody can clear.
+  const groups = packSelection([
+    story("a", "f-a", [
+      { name: "a1.mp3", title: "A1", seconds: 1000 },
+      { name: "a2.mp3", title: "A2", seconds: 500 },
+    ]),
+  ], 1500);
+
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].entries.map((entry) => entry.name), ["a1.mp3", "a2.mp3"]);
+  assert.equal(groups[0].seconds, 1500);
+});
+
+test("packSelection starts a new group one second past the limit", () => {
+  const groups = packSelection([
+    story("a", "f-a", [
+      { name: "a1.mp3", title: "A1", seconds: 1000 },
+      { name: "a2.mp3", title: "A2", seconds: 501 },
+    ]),
+  ], 1500);
+
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0].entries.map((entry) => entry.name), ["a1.mp3"]);
+  assert.deepEqual(groups[1].entries.map((entry) => entry.name), ["a2.mp3"]);
+});
+
 test("groupSources collapses consecutive tracks of one collection into one source", () => {
   const [group] = packSelection([
     story("a", "f-a", [
