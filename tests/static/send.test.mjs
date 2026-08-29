@@ -160,6 +160,30 @@ test("selectionProblems is empty when every group has a distinct target that fit
   assert.deepEqual(selectionProblems(groups, [{ tonie, replaceExisting: false }], 5400), []);
 });
 
+test("selectionProblems reports a picked collection with no chapters, even alone", () => {
+  // Every chapter removed from a forged collection on its own page leaves it
+  // with zero tracks. packSelection drops it silently: it contributes no
+  // entries, so groups is empty and the loop over groups never runs. Without
+  // this check, an all-empty selection would read as zero problems, Send
+  // would be enabled, and the batch it posts would carry no assignments.
+  const empty = story("empty", "f-empty", []);
+
+  const problems = selectionProblems([], [], 5400, [empty]);
+
+  assert.deepEqual(problems, ["empty has no chapters and cannot be sent."]);
+});
+
+test("selectionProblems reports a picked collection with no chapters alongside real ones", () => {
+  const real = story("a", "f-a", [{ name: "a1.mp3", title: "A1", seconds: 100 }]);
+  const empty = story("empty", "f-empty", []);
+  const groups = packSelection([real], 5400);
+  const tonie = { id: "t1", householdId: "h1", name: "Bedtime", householdName: "Emily", seconds_present: 0 };
+
+  const problems = selectionProblems(groups, [{ tonie, replaceExisting: false }], 5400, [real, empty]);
+
+  assert.deepEqual(problems, ["empty has no chapters and cannot be sent."]);
+});
+
 test("buildPushBatchPayload emits one assignment per group with its sources", () => {
   const groups = packSelection([
     story("a", "f-a", [{ name: "a1.mp3", title: "A1", seconds: 100 }]),

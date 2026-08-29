@@ -69,8 +69,18 @@ export function sendCapacityLimit(status = {}) {
   return Number(status.usable_limit_seconds || 0);
 }
 
-export function selectionProblems(groups, selections, limitSeconds) {
+export function selectionProblems(groups, selections, limitSeconds, picked = []) {
   const problems = [];
+  // A forged collection can still have zero tracks (every chapter removed on
+  // its own page), and packSelection silently drops it: it contributes no
+  // entries and no group, so the loop below never sees it. Left unchecked,
+  // ticking only empty collections leaves `groups` empty, every check below
+  // passes on an empty list, and Send posts a batch with no assignments.
+  for (const collection of picked) {
+    if (!(collection.tracks || []).length) {
+      problems.push(`${collection.title || collection.slug} has no chapters and cannot be sent.`);
+    }
+  }
   const chosen = [];
   groups.forEach((group, index) => {
     const selection = selections[index];

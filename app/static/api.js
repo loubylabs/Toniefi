@@ -8,6 +8,19 @@ export class ApiError extends Error {
   }
 }
 
+function formatDetail(detail) {
+  // FastAPI's 422 `detail` is a list of {msg, loc, ...} objects, not a string.
+  // String(detail) on an array joins each element with its own toString, and
+  // a plain object's toString is "[object Object]", so an unhandled
+  // validation error reads as "[object Object]" instead of the message.
+  if (Array.isArray(detail)) {
+    return detail
+      .map((entry) => (entry && typeof entry === "object" && typeof entry.msg === "string" ? entry.msg : JSON.stringify(entry)))
+      .join(" ");
+  }
+  return String(detail);
+}
+
 function requestHeaders(options) {
   const headers = new Headers(options.headers || {});
   if (options.body != null && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -51,7 +64,7 @@ export async function api(path, options = {}) {
   const body = await responseBody(response);
   if (!response.ok) {
     const message = typeof body === "object" && body?.detail
-      ? String(body.detail)
+      ? formatDetail(body.detail)
       : `${response.status} ${response.statusText || "Request failed"}`;
     throw new ApiError(message, {
       status: response.status,

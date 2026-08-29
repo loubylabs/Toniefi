@@ -485,7 +485,7 @@ export function createLibraryScreen({
         ]);
       });
 
-      const problems = tonies ? selectionProblems(groups, selections, limitSeconds()) : ["Creative Tonies are not loaded yet."];
+      const problems = tonies ? selectionProblems(groups, selections, limitSeconds(), picked) : ["Creative Tonies are not loaded yet."];
       const validation = element("p", { className: "library-send-validation" },
         problems.length ? [element("span", { text: problems[0] })] : []);
       if (toniesError) {
