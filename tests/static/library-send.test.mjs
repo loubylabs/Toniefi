@@ -10,6 +10,35 @@ import { buttonWithText, flush, installDom } from "./mini-dom.mjs";
 // The phone breakpoint appears more than once in the stylesheet, and every
 // rule in it also exists at desktop width, so a rule is read out of the block
 // that holds it rather than out of the file.
+// The target picker is a radio card group, not a select: a select cannot hold
+// the figure's picture, which is the only thing that tells two Creative Tonies
+// apart when the cloud has named them both "Creative Tonie". This picks one
+// card the way a person would.
+function targetCard(screen, value, group = 1) {
+  return screen.dom.workspace.querySelectorAll(".library-send-target")
+    .find((input) => input.getAttribute("value") === value
+      && input.getAttribute("name") === `library-target-${group}`);
+}
+
+async function chooseTarget(screen, value, group = 1) {
+  const input = targetCard(screen, value, group);
+  input.checked = true;
+  await input.dispatchEvent({ type: "change" });
+  return input;
+}
+
+function targetValues(screen, group = 1) {
+  return screen.dom.workspace.querySelectorAll(".library-send-target")
+    .filter((input) => input.getAttribute("name") === `library-target-${group}`)
+    .map((input) => input.getAttribute("value"));
+}
+
+function targetChecked(screen, group = 1) {
+  return screen.dom.workspace.querySelectorAll(".library-send-target")
+    .filter((input) => input.getAttribute("name") === `library-target-${group}`)
+    .map((input) => Boolean(input.checked));
+}
+
 function phoneDeclarations(selector) {
   const styles = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "");
@@ -145,10 +174,20 @@ function mountLibrary({
   const controller = new AbortController();
   const pushes = [];
   let tonieCalls = 0;
+  // The real coordinator publishes to its subscribers on every request. The
+  // stub used to swallow that, which meant a test could not drive the screen's
+  // view of running jobs at all.
+  const listeners = new Set();
   const refresh = {
     snapshot: { status: { usable_limit_seconds: limitSeconds }, collections, jobs: [], stale: [], errors: {} },
-    subscribe: () => () => {},
-    request: async () => refresh.snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    request: async () => {
+      for (const listener of listeners) listener(refresh.snapshot);
+      return refresh.snapshot;
+    },
   };
   const request = async (url, options = {}) => {
     if (url === "/api/tonies") {
@@ -162,7 +201,7 @@ function mountLibrary({
       const outcome = pushOutcomes[pushes.length - 1];
       if (typeof outcome === "function") return outcome();
       if (outcome instanceof Error) throw outcome;
-      return { job_id: 7 };
+      return { operation_key: "op", job_ids: [7] };
     }
     throw new Error(`Unexpected request ${url}`);
   };
@@ -174,6 +213,7 @@ function mountLibrary({
   return {
     dom,
     pushes,
+    refresh,
     node: (selector) => dom.workspace.querySelector(selector),
     byFocusKey: (key) => dom.workspace.querySelectorAll("[data-focus-key]").find((item) => item.getAttribute("data-focus-key") === key),
     focusKey: () => dom.document.activeElement?.getAttribute("data-focus-key") || "",
@@ -221,10 +261,14 @@ test("ticking a row opens the send bar, keeps focus on the tick and blocks a sen
     assert.equal(screen.node(".library-send-submit").disabled, true);
     assert.match(screen.node(".library-send-validation").textContent, /Group 1 has no Creative Tonie chosen/);
     assert.deepEqual(
-      screen.node(".library-send-target").childNodes.map((option) => option.getAttribute("value")),
-      ["", "h1/t1"],
+      targetValues(screen),
+      ["h1/t1"],
     );
-    assert.match(screen.node(".library-send-target").textContent, /Blue Tonie · Home · 1h 30m free/);
+    // No card starts checked. That is the same promise the empty option made:
+    // nothing is assigned until the operator assigns it.
+    assert.deepEqual(targetChecked(screen), [false]);
+    assert.match(screen.node(".library-send-targets").textContent, /Blue Tonie · Home/);
+    assert.match(screen.node(".library-send-targets").textContent, /1h 30m free/);
     assert.deepEqual(
       screen.node(".library-send-membership").childNodes.map((item) => item.textContent),
       ["Night StoryOne10m 00s", "Night StoryTwo15m 00s"],
@@ -241,11 +285,9 @@ test("choosing a target sends one batch and clears the selection", async () => {
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
 
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
-    assert.equal(screen.focusKey(), "library-send-target-1");
+    assert.equal(screen.focusKey(), "library-send-target-1-h1/t1");
     assert.equal(screen.node(".library-send-submit").disabled, false);
     assert.equal(screen.node(".library-send-submit").textContent, "Send 1 story");
 
@@ -263,9 +305,13 @@ test("choosing a target sends one batch and clears the selection", async () => {
       remote_chapters: [{ id: "c1", title: "Old chapter" }],
       sources: [{ slug: "night-story", manifest_fingerprint: "f-night", files: ["01.mp3", "02.mp3"] }],
     }]);
-    assert.equal(screen.node(".library-send-bar").hidden, true);
+    // The bar no longer vanishes on submit: it becomes the live receipt, so
+    // the operator keeps watching the thing they just started.
+    assert.equal(screen.node(".library-send-bar").hidden, false);
+    assert.ok(screen.node(".library-receipt"), "the bar becomes a receipt");
+    assert.match(screen.node(".library-receipt").textContent, /Blue Tonie/);
     assert.equal(screen.node(".library-select").checked, false);
-    assert.equal(screen.focusKey(), "library-search");
+    assert.equal(screen.focusKey(), "library-send-done");
   } finally {
     screen.stop();
   }
@@ -278,9 +324,7 @@ test("replacing everything asks first and only then sends", async () => {
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
 
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.byFocusKey("library-send-effect-1-replace").dispatchEvent({ type: "change" });
@@ -305,7 +349,8 @@ test("replacing everything asks first and only then sends", async () => {
 
     assert.equal(screen.pushes.length, 1);
     assert.equal(screen.pushes[0].assignments[0].replace, true);
-    assert.equal(screen.node(".library-send-bar").hidden, true);
+    assert.equal(screen.node(".library-send-bar").hidden, false);
+    assert.ok(screen.node(".library-receipt"), "the bar becomes a receipt");
   } finally {
     screen.stop();
   }
@@ -318,9 +363,7 @@ test("declining the replacement dialog sends nothing and keeps the selection", a
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
 
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
     await screen.byFocusKey("library-send-effect-1-replace").dispatchEvent({ type: "change" });
     await flush();
@@ -360,7 +403,7 @@ test("a selection too long for one Tonie splits into groups that each need their
       ["Group 1", "Group 2"],
     );
     assert.deepEqual(
-      screen.dom.workspace.querySelectorAll(".library-send-target").map((item) => item.getAttribute("aria-label")),
+      screen.dom.workspace.querySelectorAll(".library-send-targets").map((item) => item.getAttribute("aria-label")),
       ["Creative Tonie for group 1", "Creative Tonie for group 2"],
     );
     assert.equal(screen.node(".library-send-submit").disabled, true);
@@ -378,11 +421,9 @@ test("adding a story to the selection clears the chosen target and never reuses 
     await flush();
     await screen.dom.workspace.querySelectorAll(".library-select")[0].dispatchEvent({ type: "change" });
     await flush();
-    let picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.deepEqual(targetChecked(screen), [true]);
 
     // A refused send keeps its operation key so a retry of the identical
     // payload is recognised rather than duplicated.
@@ -395,15 +436,14 @@ test("adding a story to the selection clears the chosen target and never reuses 
     // that described the old one must both go.
     await screen.dom.workspace.querySelectorAll(".library-select")[1].dispatchEvent({ type: "change" });
     await flush();
-    picker = screen.node(".library-send-target");
-    assert.deepEqual(picker.childNodes.map((option) => option.selected), [false, false]);
+    // Nothing checked: the target that described the old selection is gone.
+    assert.deepEqual(targetChecked(screen), [false]);
     assert.equal(screen.node(".library-send-submit").disabled, true);
     assert.match(screen.node(".library-send-validation").textContent, /Group 1 has no Creative Tonie chosen/);
     assert.equal(screen.node(".library-send-groups").childNodes.length, 1);
     assert.equal(screen.node(".library-send-membership").childNodes.length, 3);
 
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
     await screen.node(".library-send-submit").click();
     await flush();
@@ -431,9 +471,7 @@ test("Refresh targets rebinds the chosen Tonie to the freshly fetched one", asyn
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
     assert.equal(screen.node(".library-send-submit").disabled, false);
 
@@ -441,7 +479,7 @@ test("Refresh targets rebinds the chosen Tonie to the freshly fetched one", asyn
     await screen.node(".library-send-refresh").click();
     await flush();
 
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.deepEqual(targetChecked(screen), [true]);
     assert.equal(screen.node(".library-send-submit").disabled, true);
     assert.match(screen.node(".library-send-validation").textContent, /does not fit Blue Tonie · Home/);
 
@@ -481,9 +519,7 @@ test("a failed target refresh leaves the chosen target selected and the operatio
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.node(".library-send-submit").click();
@@ -498,7 +534,7 @@ test("a failed target refresh leaves the chosen target selected and the operatio
     // A failed refresh must not read as "that Tonie is gone": the picker
     // still shows the operator's choice and Send is not blocked by it.
     assert.match(screen.node(".library-send-validation").textContent, /Creative Tonies could not refresh/);
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.deepEqual(targetChecked(screen), [true]);
     assert.equal(screen.node(".library-send-submit").disabled, false);
 
     await screen.node(".library-send-submit").click();
@@ -527,9 +563,7 @@ test("a rejection with an empty message is still a failure: the chosen target an
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.node(".library-send-submit").click();
@@ -543,7 +577,7 @@ test("a rejection with an empty message is still a failure: the chosen target an
 
     // The empty-message rejection must still read as a failure: the picker
     // keeps the operator's choice and Send is not blocked by it.
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.deepEqual(targetChecked(screen), [true]);
     assert.equal(screen.node(".library-send-submit").disabled, false);
 
     await screen.node(".library-send-submit").click();
@@ -568,9 +602,7 @@ test("a rejection with an empty message still shows non-empty text in the valida
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.node(".library-send-refresh").click();
@@ -606,9 +638,7 @@ test("a lost response, a failed refresh, then a landed refresh still resend unde
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     // The server committed this one; only the receipt was lost.
@@ -621,12 +651,12 @@ test("a lost response, a failed refresh, then a landed refresh still resend unde
     // The operator's first attempt to see what happened drops off the network.
     await screen.node(".library-send-refresh").click();
     await flush();
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.deepEqual(targetChecked(screen), [true]);
 
     // The second attempt lands and reveals the append.
     await screen.node(".library-send-refresh").click();
     await flush();
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.deepEqual(targetChecked(screen), [true]);
 
     await screen.node(".library-send-submit").click();
     await flush();
@@ -656,16 +686,14 @@ test("a successful refresh that no longer offers the chosen Tonie still clears t
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
     assert.equal(screen.node(".library-send-submit").disabled, false);
 
     await screen.node(".library-send-refresh").click();
     await flush();
 
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, false]);
+    assert.deepEqual(targetChecked(screen), [false]);
     assert.equal(screen.node(".library-send-submit").disabled, true);
     assert.match(screen.node(".library-send-validation").textContent, /Group 1 has no Creative Tonie chosen/);
   } finally {
@@ -682,9 +710,7 @@ test("a refused send leaves the selection ticked and ready to try again", async 
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.node(".library-send-submit").click();
@@ -695,7 +721,7 @@ test("a refused send leaves the selection ticked and ready to try again", async 
     assert.equal(screen.node(".library-select").checked, true);
     assert.equal(screen.node(".library-send-groups").childNodes.length, 1);
     assert.equal(screen.node(".library-send-membership").childNodes.length, 2);
-    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.deepEqual(targetChecked(screen), [true]);
     assert.equal(screen.node(".library-send-submit").disabled, false);
     assert.equal(screen.focusKey(), "library-send-submit");
   } finally {
@@ -720,9 +746,7 @@ test("the bar speaks each new problem once, and says nothing on an unrelated ren
     await flush();
     assert.equal(screen.dom.spoken.length, 2);
 
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
     assert.equal(screen.dom.spoken.length, 2);
   } finally {
@@ -761,9 +785,7 @@ test("a send in flight freezes the selection instead of discarding a late tick",
     await flush();
     await screen.dom.workspace.querySelectorAll(".library-select")[0].dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     const sending = screen.node(".library-send-submit").click();
@@ -795,7 +817,8 @@ test("a send in flight freezes the selection instead of discarding a late tick",
       screen.pushes[0].assignments[0].sources,
       [{ slug: "night-story", manifest_fingerprint: "f-night", files: ["01.mp3", "02.mp3"] }],
     );
-    assert.equal(screen.node(".library-send-bar").hidden, true);
+    assert.equal(screen.node(".library-send-bar").hidden, false);
+    assert.ok(screen.node(".library-receipt"), "the bar becomes a receipt");
     assert.deepEqual(
       screen.dom.workspace.querySelectorAll(".library-select").map((tick) => [tick.checked, tick.disabled]),
       [[false, false], [false, false]],
@@ -820,7 +843,7 @@ test("a slow first target read cannot overwrite what Refresh targets already sho
 
     await screen.node(".library-send-refresh").click();
     await flush();
-    assert.match(screen.node(".library-send-target").textContent, /Fresh Target · Home · 1h 20m free/);
+    assert.match(screen.node(".library-send-targets").textContent, /Fresh Target · Home/);
 
     // The automatic read finally answers, with an obsolete free space and an
     // obsolete remote_chapters precondition. It is not the newest, so it lands
@@ -829,10 +852,11 @@ test("a slow first target read cannot overwrite what Refresh targets already sho
     await flush();
     await flush();
 
-    const picker = screen.node(".library-send-target");
-    assert.match(picker.textContent, /Fresh Target · Home · 1h 20m free/);
+    const picker = screen.node(".library-send-targets");
+    assert.match(picker.textContent, /Fresh Target · Home/);
+    assert.match(picker.textContent, /1h 20m free/);
     assert.doesNotMatch(picker.textContent, /Stale Target/);
-    assert.deepEqual(picker.childNodes.map((option) => option.getAttribute("value")), ["", "h1/t8"]);
+    assert.deepEqual(targetValues(screen), ["h1/t8"]);
   } finally {
     screen.stop();
   }
@@ -847,9 +871,7 @@ test("retrying an unchanged selection reuses the operation key the refused send 
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.node(".library-send-submit").click();
@@ -881,9 +903,7 @@ test("Refresh targets keeps the operation key when nothing in the payload moved"
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     // The server committed this one and the response was lost, so the operator
@@ -936,9 +956,7 @@ test("Refresh targets KEEPS the operation key when the Tonie gained a chapter", 
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     // The server committed this one; only the receipt was lost. The operator
@@ -986,9 +1004,7 @@ test("Refresh targets keeps the operation key when someone else edited the Tonie
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.node(".library-send-submit").click();
@@ -1020,9 +1036,7 @@ test("changing the effect after a refresh is a new operation and takes a new key
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     await screen.node(".library-send-submit").click();
@@ -1066,8 +1080,11 @@ test("an option never advertises free space the fit check will refuse", async ()
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
 
-    const picker = screen.node(".library-send-target");
-    assert.match(picker.textContent, /Blue Tonie · Home · 1h 29m free · does not fit/);
+    const picker = screen.node(".library-send-targets");
+    assert.match(picker.textContent, /Blue Tonie · Home/);
+    // The computed figure, not the tonie's stale time_free snapshot, and the
+    // card says plainly that this group will not fit.
+    assert.match(picker.textContent, /1h 29m free · does not fit/);
     assert.doesNotMatch(picker.textContent, /1h 30m/);
     assert.equal(screen.node(".library-send-submit").disabled, true);
   } finally {
@@ -1090,16 +1107,21 @@ test("an option reports the Tonie's own free space under either effect", async (
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
 
-    // Append: 25m does not fit into 6m 40s, and the option says both.
-    assert.match(screen.node(".library-send-target").textContent, /Blue Tonie · Home · 6m 40s free · does not fit/);
+    // Append: 25m does not fit into 6m 40s, and the card says both.
+    assert.match(screen.node(".library-send-targets").textContent, /Blue Tonie · Home/);
+    assert.match(screen.node(".library-send-targets").textContent, /6m 40s free · does not fit/);
 
     await screen.byFocusKey("library-send-effect-1-replace").dispatchEvent({ type: "change" });
     await flush();
 
     // Replace: the SAME free figure, with the suffix explaining why a group
     // bigger than it is still accepted, rather than reading as a contradiction.
-    assert.match(screen.node(".library-send-target").textContent, /Blue Tonie · Home · 6m 40s free · fits once everything is replaced/);
-    assert.doesNotMatch(screen.node(".library-send-target").textContent, /1h 30m/);
+    assert.match(screen.node(".library-send-targets").textContent, /Blue Tonie · Home/);
+    assert.match(
+      screen.node(".library-send-targets").textContent,
+      /6m 40s free · fits once everything is replaced/,
+    );
+    assert.doesNotMatch(screen.node(".library-send-targets").textContent, /1h 30m/);
   } finally {
     screen.stop();
   }
@@ -1115,9 +1137,7 @@ test("a replace of a group larger than the free figure still sends", async () =>
     await flush();
     await screen.node(".library-select").dispatchEvent({ type: "change" });
     await flush();
-    const picker = screen.node(".library-send-target");
-    picker.value = "h1/t1";
-    await picker.dispatchEvent({ type: "change" });
+    await chooseTarget(screen, "h1/t1");
     await flush();
 
     // The append is refused, which is what the printed free space describes.
@@ -1169,4 +1189,68 @@ test("only the chapter list gives way when the phone send bar runs out of room",
   assert.equal(groups.flex, "1 1 auto");
   assert.equal(groups["min-height"], "0");
   assert.equal(groups["overflow-y"], "auto");
+});
+
+test("the send bar becomes a live receipt instead of vanishing", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    await chooseTarget(screen, "h1/t1");
+    await flush();
+
+    // The batch lands, and the worker starts reporting against the target.
+    screen.refresh.snapshot = {
+      ...screen.refresh.snapshot,
+      jobs: [{
+        id: 7,
+        kind: "push",
+        status: "running",
+        phase: "sending",
+        progress: "Uploading 1/2: One",
+        progress_percent: 40,
+        payload: { household_id: "h1", tonie_id: "t1" },
+      }],
+    };
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    const receipt = screen.node(".library-receipt");
+    assert.ok(receipt, "the bar stays as a receipt");
+    assert.match(receipt.textContent, /Blue Tonie · Home/);
+    assert.match(receipt.textContent, /Uploading 1\/2: One/);
+    assert.match(receipt.textContent, /Sending/);
+    const meter = receipt.querySelector(".work-cart-progress-track");
+    assert.equal(meter.getAttribute("data-mode"), "determinate");
+    assert.equal(meter.getAttribute("aria-valuenow"), "40");
+    // The figure is on the receipt too, because two Tonies can share a name.
+    assert.ok(receipt.querySelector(".library-receipt-jacket"));
+
+    // Done puts the bar away and gives the operator the Library back.
+    await screen.byFocusKey("library-send-done").dispatchEvent({ type: "click" });
+    await flush();
+    assert.equal(screen.node(".library-send-bar").hidden, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a receipt whose send has left the queue does not invent a result", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    await chooseTarget(screen, "h1/t1");
+    await flush();
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    const receipt = screen.node(".library-receipt");
+    assert.match(receipt.textContent, /Activity holds its result/);
+    assert.equal(screen.byFocusKey("library-send-done").textContent, "Done");
+  } finally {
+    screen.stop();
+  }
 });

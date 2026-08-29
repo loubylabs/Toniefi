@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
 import {
+  activeSendsByTonie,
   buildPushBatchPayload,
   createSendAttempt,
   membershipSignature,
@@ -9,8 +10,10 @@ import {
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
+  sendJobView,
   tonieCapacity,
   tonieFreeSeconds,
+  tonieJobKey,
 } from "./send.js";
 import {
   announce,
@@ -24,6 +27,7 @@ import {
   setBusy,
   showConfirmDialog,
   snapshotRefreshOutcome,
+  tonieJacket,
   tonieLabel,
 } from "./shared.js";
 
@@ -167,6 +171,10 @@ export function createLibraryScreen({
     let sending = false;
     let announcedProblem = "";
     let targetsToken = 0;
+    // What the bar becomes after a successful submit. Clearing the bar to
+    // nothing was the wrong ending: it knows every group's membership and
+    // target at the exact moment it used to throw both away.
+    let receipt = null;
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -393,6 +401,9 @@ export function createLibraryScreen({
         replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown, sendable)));
       }
       renderSendBar();
+      // The send bar is the region the operator is watching while the POST is
+      // in flight, so it is the region that reports being busy.
+      sendBar.setAttribute("aria-busy", String(Boolean(sending)));
       mutation.sync();
       restoreFocus(token, { root, fallback: search });
     }
@@ -460,9 +471,79 @@ export function createLibraryScreen({
     // a second focus dance nested inside that one would remember a focused
     // element the outer render is about to detach. Every control in the bar
     // therefore calls `render({ focusKey })`, never `renderSendBar()` directly.
+    function renderReceipt() {
+      const byTonie = activeSendsByTonie(jobs);
+      const rows = receipt.rows.map((row) => {
+        const key = row.tonie ? tonieJobKey(row.tonie.householdId, row.tonie.id) : "";
+        const job = (byTonie.get(key) || [])[0];
+        // No active job for this target means the send left the queue. The
+        // bar says so plainly rather than guessing at a result it never saw:
+        // Activity holds the outcome, including a failure.
+        const view = job ? sendJobView(job) : {
+          phase: "sent",
+          label: "Finished",
+          message: "This send has left the queue. Activity holds its result.",
+          mode: "determinate",
+          percent: 100,
+        };
+        const meterAttributes = view.mode === "determinate"
+          ? {
+            role: "progressbar",
+            "aria-label": `Send to ${row.tonie?.name || "Creative Tonie"}`,
+            "aria-valuemin": "0",
+            "aria-valuemax": "100",
+            "aria-valuenow": String(Math.round(view.percent)),
+            style: `--work-progress:${view.percent}%`,
+          }
+          : { "aria-label": `${view.label}, progress amount is not available` };
+        return element("li", { className: "library-receipt-row" }, [
+          tonieJacket(row.tonie, "library-receipt-jacket"),
+          element("div", { className: "library-receipt-copy" }, [
+            element("div", { className: "library-receipt-head" }, [
+              element("strong", { text: row.tonie ? tonieLabel(row.tonie) : "Creative Tonie" }),
+              element("span", { className: "status-stamp", "data-status": view.phase, text: view.label }),
+            ]),
+            element("p", { className: "library-receipt-facts", text: `${row.chapters} ${row.chapters === 1 ? "chapter" : "chapters"}` }),
+            element("p", { className: "library-receipt-message", text: view.message }),
+            element("span", {
+              className: "work-cart-progress-track",
+              "data-mode": view.mode,
+              ...meterAttributes,
+            }, [element("span", { className: "work-cart-progress-fill" })]),
+          ]),
+        ]);
+      });
+      const allDone = receipt.rows.every((row) => {
+        const key = row.tonie ? tonieJobKey(row.tonie.householdId, row.tonie.id) : "";
+        return !(byTonie.get(key) || []).length;
+      });
+      const done = element("button", {
+        type: "button",
+        className: "button button-secondary",
+        text: allDone ? "Done" : "Hide this",
+        "data-focus-key": "library-send-done",
+      });
+      done.addEventListener("click", () => {
+        receipt = null;
+        render({ focusKey: "library-search" });
+      });
+      sendBar.hidden = false;
+      replace(sendBar,
+        element("div", { className: "screen-heading" }, [
+          element("h2", { id: "library-send-title", text: allDone ? "Sent" : "Sending now" }),
+        ]),
+        element("ol", { className: "library-receipt", role: "status", "aria-live": "polite" }, rows),
+        element("div", { className: "library-send-actions" }, [done]),
+      );
+    }
+
     function renderSendBar() {
       if (!active || signal?.aborted) return;
       const picked = selection.ordered(collections);
+      if (!picked.length && receipt) {
+        renderReceipt();
+        return;
+      }
       sendBar.hidden = picked.length === 0;
       if (!picked.length) {
         replace(sendBar);
@@ -497,14 +578,16 @@ export function createLibraryScreen({
 
       const groupNodes = groups.map((group, index) => {
         const chosen = selections[index];
-        const picker = element("select", {
-          className: "library-send-target",
-          "aria-label": `Creative Tonie for group ${group.index}`,
-          "data-focus-key": `library-send-target-${group.index}`,
-        });
-        // No preselected target. Sending without an explicit choice would be an
+        // A radio card group, not a select. A select cannot hold an image, and
+        // the figure's picture is the only thing that tells two boxes apart
+        // when the Tonie Cloud has named them both "Creative Tonie". No option
+        // is preselected: sending without an explicit choice would be an
         // automatic assignment, and a Tonie write has no undo.
-        picker.append(element("option", { value: "", text: "Choose a Creative Tonie" }));
+        const picker = element("div", {
+          className: "library-send-targets",
+          role: "radiogroup",
+          "aria-label": `Creative Tonie for group ${group.index}`,
+        });
         for (const tonie of tonies || []) {
           // Free space is a property of the Tonie, so the printed figure is the
           // same whichever effect is ticked. It is computed here rather than
@@ -518,19 +601,36 @@ export function createLibraryScreen({
           // it matches what the validation line offers when an append
           // overflows: choose Replace everything, or another Tonie.
           let fitNote = "";
-          if (!capacity.fits) fitNote = " · does not fit";
-          else if (group.seconds > free) fitNote = " · fits once everything is replaced";
-          picker.append(element("option", {
-            value: `${tonie.householdId}/${tonie.id}`,
-            text: `${tonieLabel(tonie)} · ${humanDuration(free)} free${fitNote}`,
-            selected: chosen.tonie ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === `${tonie.householdId}/${tonie.id}` : false,
-          }));
+          if (!capacity.fits) fitNote = "does not fit";
+          else if (group.seconds > free) fitNote = "fits once everything is replaced";
+          const value = `${tonie.householdId}/${tonie.id}`;
+          const input = element("input", {
+            type: "radio",
+            className: "library-send-target",
+            name: `library-target-${group.index}`,
+            value,
+            checked: chosen.tonie
+              ? `${chosen.tonie.householdId}/${chosen.tonie.id}` === value
+              : false,
+            "data-focus-key": `library-send-target-${group.index}-${value}`,
+          });
+          input.addEventListener("change", () => {
+            chosen.tonie = (tonies || []).find((entry) => `${entry.householdId}/${entry.id}` === value) || null;
+            operationKey = "";
+            render({ focusKey: `library-send-target-${group.index}-${value}` });
+          });
+          picker.append(element("label", {
+            className: "library-send-target-card",
+            "data-fits": String(capacity.fits),
+          }, [
+            input,
+            tonieJacket(tonie, "library-send-target-jacket"),
+            element("span", { className: "library-send-target-copy" }, [
+              element("strong", { text: tonieLabel(tonie) }),
+              element("small", { text: `${humanDuration(free)} free${fitNote ? ` · ${fitNote}` : ""}` }),
+            ]),
+          ]));
         }
-        picker.addEventListener("change", () => {
-          chosen.tonie = (tonies || []).find((tonie) => `${tonie.householdId}/${tonie.id}` === picker.value) || null;
-          operationKey = "";
-          render({ focusKey: `library-send-target-${group.index}` });
-        });
 
         const appendInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "append", checked: !chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-append` });
         const replaceInput = element("input", { type: "radio", name: `library-effect-${group.index}`, value: "replace", checked: chosen.replaceExisting, "data-focus-key": `library-send-effect-${group.index}-replace` });
@@ -548,7 +648,7 @@ export function createLibraryScreen({
         return element("li", { className: "library-send-group" }, [
           element("h3", { text: groups.length === 1 ? "Chapters to send" : `Group ${group.index}` }),
           membership,
-          element("div", { className: "library-send-target-field" }, [picker]),
+          picker,
           element("fieldset", { className: "library-send-effect" }, [
             element("legend", { text: `What group ${group.index} does to that Tonie` }),
             element("label", {}, [appendInput, element("span", { text: "Append to the back" })]),
@@ -558,8 +658,10 @@ export function createLibraryScreen({
       });
 
       const problems = tonies ? selectionProblems(groups, selections, limitSeconds(), picked) : ["Creative Tonies are not loaded yet."];
-      const validation = element("p", { className: "library-send-validation" },
-        problems.length ? [element("span", { text: problems[0] })] : []);
+      // Every problem, not just the first. selectionProblems already returns
+      // them all, and with two unassigned groups the second was invisible.
+      const validation = element("ul", { className: "library-send-validation" },
+        problems.map((problem) => element("li", { text: problem })));
       // A failed refresh with a Tonies list already on hand is not the same
       // situation as never having loaded one: the picker still shows real
       // choices and the chosen target is still valid, so the message says a
@@ -572,7 +674,7 @@ export function createLibraryScreen({
           : `Creative Tonies could not load. ${toniesError}`)
         : "";
       if (toniesErrorMessage) {
-        replace(validation, element("span", { text: toniesErrorMessage }));
+        replace(validation, element("li", { text: toniesErrorMessage }));
       }
       // The paragraph is rebuilt every render, so it can never be the live
       // region that fires: a node has to be in the document before its text
@@ -589,7 +691,14 @@ export function createLibraryScreen({
         className: "button button-primary library-send-submit",
         disabled: sending || problems.length > 0,
         "data-focus-key": "library-send-submit",
-      }, [iconNode("tonie"), element("span", { text: `Send ${picked.length} ${picked.length === 1 ? "story" : "stories"}` })]);
+      }, [
+        iconNode("tonie"),
+        element("span", {
+          text: sending
+            ? "Sending..."
+            : `Send ${picked.length} ${picked.length === 1 ? "story" : "stories"}`,
+        }),
+      ]);
       send.addEventListener("click", () => submitSend(groups, picked));
 
       const cancel = element("button", {
@@ -621,7 +730,13 @@ export function createLibraryScreen({
         payload,
         request,
         signal,
-        setPending: (pending) => { sending = pending; render({ focusKey: "library-send-submit" }); },
+        setPending: (pending) => {
+          sending = pending;
+          // The submit button is gone once the bar has become a receipt, and
+          // asking for a focus key that no longer exists drops focus back to
+          // the search field, away from the thing the operator just started.
+          render({ focusKey: receipt ? "library-send-done" : "library-send-submit" });
+        },
         confirm: () => showConfirmDialog({
           title: replacing.length === 1
             ? "Replace chapters on a Creative Tonie?"
@@ -638,13 +753,23 @@ export function createLibraryScreen({
           confirmLabel: "Replace and send",
           destructive: true,
         }),
-        onReceipt: async () => {
+        onReceipt: async (created) => {
+          // The bar becomes the receipt. Everything it needs is right here and
+          // is about to be discarded by selection.clear().
+          receipt = {
+            jobIds: created?.job_ids || [],
+            rows: groups.map((group, index) => ({
+              index: group.index,
+              tonie: selections[index].tonie,
+              chapters: group.entries.length,
+            })),
+          };
           selection.clear();
           operationKey = "";
           notify(`${picked.length} ${picked.length === 1 ? "story is" : "stories are"} queued to send.`, { kind: "success" });
           announce("Creative Tonie send queued.");
           await refresh.request();
-          render({ focusKey: "library-search" });
+          render({ focusKey: "library-send-done" });
         },
         onFailure: (error) => {
           notify(`${error.message} The selection is unchanged. Fix the problem and send again.`, { kind: "failure", timeout: 0 });

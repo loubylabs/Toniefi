@@ -3390,12 +3390,6 @@ img.collection-detail-cover {
   overflow-wrap: anywhere;
 }
 
-.library-send-target-field {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-2);
-}
-
 .library-send-effect {
   margin: var(--space-3) 0 0;
   padding: 0;
@@ -3621,5 +3615,111 @@ img.collection-detail-cover {
 /* A send fills the same meter Forge does, in the information ink its stamp
    uses, so the two phases stay tellable apart at a glance. */
 .tonie-send-row .work-cart-progress-fill {
+  background: var(--info);
+}
+
+
+/* ------------------------------------------------------- send target cards */
+
+.library-send-targets {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+
+.library-send-target-card {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+  min-height: 3.75rem;
+  padding: var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: calc(var(--radius) / 2);
+  background: var(--paper-raised);
+  cursor: pointer;
+}
+
+.library-send-target-card:has(input:checked) {
+  border-color: var(--info);
+  box-shadow: inset 0 0 0 1px var(--info);
+}
+
+/* Never colour alone: a card that cannot take this group says so in words in
+   its own free-space line, and dims to back that up. */
+.library-send-target-card[data-fits="false"] {
+  opacity: 0.75;
+}
+
+.library-send-target-jacket {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.library-send-target-copy {
+  min-width: 0;
+}
+
+.library-send-target-copy strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.library-send-target-copy small {
+  display: block;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+.library-send-validation {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0;
+  padding-left: var(--space-5);
+}
+
+
+/* ------------------------------------------------------------ send receipt */
+
+.library-receipt {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-receipt-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.library-receipt-jacket {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.library-receipt-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.library-receipt-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.library-receipt-facts,
+.library-receipt-message {
+  margin: var(--space-2) 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+.library-receipt-row .work-cart-progress-fill {
   background: var(--info);
 }
