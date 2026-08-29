@@ -3447,14 +3447,15 @@ img.collection-detail-cover {
        it is sending, so a phone needs to keep seeing and unticking them; and
        a bar as tall as the room its containing block has is pinned to the top
        of that block, where the sticky bottom offset below can no longer lift
-       its buttons clear of the navigation. Filling the height budget did both,
-       and put the last 15px of Send behind the nav. A long chapter list
+       its buttons clear of the navigation. Taking the whole height budget did
+       both, and put the last 15px of Send behind the nav. A long chapter list
        scrolls inside the bar instead of growing it.
 
        svh is the viewport with the browser toolbar showing, which is the
        height a phone actually gives a page. vh is the toolbar-collapsed one,
-       so it measures screen the reader cannot see yet. */
-    max-height: min(55svh, calc(100svh - 4.5rem - env(safe-area-inset-bottom) - var(--space-4)));
+       so it measures screen the reader cannot see yet. 55svh leaves room for
+       the 4.5rem navigation on any viewport worth rendering to. */
+    max-height: 55svh;
     padding: var(--space-4);
     /* Sits above the fixed .mobile-navigation (min-height: calc(4.5rem +
        env(safe-area-inset-bottom)), z-index: 70) rather than under it, so a

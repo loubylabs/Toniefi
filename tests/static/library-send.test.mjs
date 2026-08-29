@@ -1150,10 +1150,7 @@ test("the phone send bar leaves the collections behind it on screen", () => {
   // room left to lift it clear.
   const bar = phoneDeclarations(".library-send-bar");
 
-  assert.equal(
-    bar["max-height"],
-    "min(55svh, calc(100svh - 4.5rem - env(safe-area-inset-bottom) - var(--space-4)))",
-  );
+  assert.equal(bar["max-height"], "55svh");
   assert.equal(bar.bottom, "calc(4.5rem + env(safe-area-inset-bottom))");
 });
 
