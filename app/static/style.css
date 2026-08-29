@@ -3344,7 +3344,21 @@ img.collection-detail-cover {
   }
 
   .library-send-bar {
+    display: flex;
+    max-height: calc(100vh - 4.5rem - env(safe-area-inset-bottom) - var(--space-4));
     padding: var(--space-4);
+    /* Sits above the fixed .mobile-navigation (min-height: calc(4.5rem +
+       env(safe-area-inset-bottom)), z-index: 70) rather than under it, so a
+       tap on Send lands on the send button, not the nav painted over it. */
+    bottom: calc(4.5rem + env(safe-area-inset-bottom));
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .library-send-groups {
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .library-send-membership li {
