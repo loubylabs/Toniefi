@@ -6,14 +6,14 @@ import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import unquote_to_bytes, urlparse
+from urllib.parse import quote, unquote_to_bytes, urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import audio, config, db, ingest, jobs, library, push, tonies
+from . import archive, audio, config, db, ingest, jobs, library, push, tonies
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -112,6 +112,13 @@ class ReorderRequest(RequestModel):
 
 
 class PrepareSource(RequestModel):
+    url: str
+    # Which playlist entries to download, as the numbers the preview showed.
+    # Empty means the link speaks for itself: one video, or a whole playlist.
+    playlist_items: list[int] = Field(default_factory=list)
+
+
+class PlaylistPreviewRequest(RequestModel):
     url: str
 
 
@@ -255,12 +262,24 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
 
     options = body.options.model_dump()
     entries = [
-        ("prepare_url", url, {"url": url, "options": options})
-        for url in sources
+        ("prepare_url", url, {"url": url, "playlist_items": source.playlist_items, "options": options})
+        for url, source in zip(sources, body.sources, strict=True)
     ]
     ids = jobs.enqueue_many(entries)
     created = [{"id": job_id, "url": url} for job_id, url in zip(ids, sources, strict=True)]
     return {"jobs": created}
+
+
+@app.post("/api/playlist/preview")
+def playlist_preview(body: PlaylistPreviewRequest) -> dict[str, Any]:
+    """List a playlist's entries so the desk can offer them for picking."""
+    url = body.url.strip()
+    if not valid_source_url(url):
+        raise fail(400, "Sources must use HTTP or HTTPS.")
+    try:
+        return ingest.playlist_preview(url)
+    except RuntimeError as exc:
+        raise fail(502, str(exc)) from exc
 
 
 @app.get("/api/librivox/search")
@@ -422,6 +441,40 @@ def stream_track(slug: str, name: str):
     except ValueError as exc:
         raise fail(404, str(exc)) from exc
     return FileResponse(path)
+
+
+def content_disposition(filename: str) -> str:
+    """Offer a download under `filename`, encoded only when it needs it.
+
+    A collection folder dropped in by hand can be named anything printable, so
+    a quote or a non-ASCII character must not be able to break the header apart.
+    """
+    fallback = "".join(
+        character for character in filename
+        if character.isascii() and character.isprintable() and character not in '"\\'
+    )
+    header = f'attachment; filename="{fallback or "collection.zip"}"'
+    if fallback == filename:
+        return header
+    return f"{header}; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+@app.get("/api/collections/{slug}/download")
+def download_collection(slug: str):
+    """Hand one whole collection back as an ordinary zip: audio, cover, manifest.
+
+    The archive streams as it is built, so a multi-Tonie collection never has
+    to fit in memory or in the small RAM-backed scratch directory.
+    """
+    try:
+        members = library.download_entries(slug)
+    except FileNotFoundError as exc:
+        raise fail(404, str(exc)) from exc
+    return StreamingResponse(
+        archive.stream(members),
+        media_type="application/zip",
+        headers={"Content-Disposition": content_disposition(f"{slug}.zip")},
+    )
 
 
 # ---------------------------------------------------------------- 5. send

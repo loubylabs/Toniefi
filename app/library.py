@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from . import audio, config
+from . import archive, audio, config
 
 MANIFEST = "collection.json"
 COVER_NAMES = ("cover.jpg", "cover.png", "cover.webp")
@@ -952,6 +952,61 @@ def cover_path(slug: str) -> Path | None:
     base = _public_collection_path(slug)
     cover = find_cover(base)
     return base / cover if cover else None
+
+
+# ---------------------------------------------------------------- downloads
+
+def _archive_track_name(index: int, track: dict[str, Any], source: Path) -> str:
+    """Name one track inside a download, the way the folder itself is named."""
+    title = str(track.get("title") or "").strip() or source.stem
+    return f"{index:03d}-{audio.slugify(title)}{source.suffix.lower()}"
+
+
+def download_entries(slug: str) -> list[archive.Member]:
+    """Pair every file of one collection with its name inside a download.
+
+    Track ORDER lives in the manifest, not in the filenames, so a collection
+    reordered on its collection page carries stale numbers on disk. Numbering
+    here comes from the manifest: whoever unpacks the archive hears the chapter
+    order the manifest holds, not the order the files happened to be written in.
+
+    The manifest is therefore rewritten rather than copied. Renaming the audio
+    and shipping the original `collection.json` beside it would hand out an
+    archive whose own index names files it does not contain, which is worse
+    than shipping no index at all.
+
+    A track the manifest lists but disk no longer holds is skipped rather than
+    raised on. A manifest can outlive a file, and one missing chapter is no
+    reason to refuse the rest of the story. Such a track leaves the archived
+    manifest too, so the index keeps describing exactly what is in the archive.
+    """
+    with _manifest_lock:
+        if get(slug) is None:
+            raise FileNotFoundError(f"No such collection: {slug}")
+        base = _public_collection_path(slug)
+        manifest = _read_manifest(base)
+        members: list[archive.Member] = []
+        archived_tracks: list[dict[str, Any]] = []
+        for track in manifest.get("tracks", []):
+            name = track.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            source = base / name
+            if source.parent != base or not source.is_file():
+                continue
+            member = _archive_track_name(len(members) + 1, track, source)
+            members.append(archive.Member(member, source, archive.identify(source)))
+            archived_tracks.append({**track, "name": member})
+        cover = find_cover(base)
+        if cover:
+            members.append(archive.Member(cover, base / cover, archive.identify(base / cover)))
+        archived = {**manifest, "tracks": archived_tracks}
+        if cover:
+            archived["cover"] = cover
+        else:
+            archived.pop("cover", None)
+        members.append(archive.Member(MANIFEST, json.dumps(archived, indent=2).encode("utf-8")))
+        return members
 
 
 def next_index(path: Path) -> int:

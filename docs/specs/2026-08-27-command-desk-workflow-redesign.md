@@ -47,7 +47,7 @@ The visual system translates a contemporary library workroom into an operational
 The application shell has five destinations:
 
 1. **Desk:** batch intake and the live work cart.
-2. **Library:** every local collection, search, rescan, open, delete, and the selection bar that starts a Creative Tonie send from finished collections.
+2. **Library:** every local collection, search, rescan, open, download, delete, and the selection bar that starts a Creative Tonie send from finished collections.
 3. **Creative Tonies:** remote Tonie contents and existing safe chapter management.
 4. **Activity:** complete job history, progress, errors, and eligible retries.
 5. **Settings:** account connection, credential source, connection test, credential replacement or removal, system tools, and product disclosures.
@@ -175,7 +175,7 @@ Sending reuses the existing safe push behavior. It refreshes Tonie data before s
 
 ## Library
 
-Library is the durable local collection view. It provides search by title, Rescan, Finish preparation for legacy extracted collections, open when forged, delete, and the selection bar described above. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
+Library is the durable local collection view. It provides search by title, Rescan, Finish preparation for legacy extracted collections, open when forged, download, delete, and the selection bar described above. Download returns the collection as one zip of audio, cover art, and its manifest, numbered in the collection's own chapter order rather than the order the files were written in. The archived manifest is rewritten to name the renumbered files, so it always describes exactly what the archive holds. A download never mixes two versions of a collection: every file is fingerprinted when the download is planned and checked when it is opened, so a delete or a Forge replacement that lands while files remain to be opened ends the stream instead of completing a hybrid archive. It is offered for every collection, forged or not, because the audio is on disk either way. Delete confirmation states that the collection folder and its local audio files will be removed. The empty state links back to Desk.
 
 The current collection list behavior moves into this screen. There is no second library implementation hidden inside Desk.
 

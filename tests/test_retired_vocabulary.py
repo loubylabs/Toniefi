@@ -1,14 +1,14 @@
 """The Review Shelf is gone as a screen, so it has to be gone as a word.
 
-Three scans, because three kinds of source have three different claims on the
-word. Product copy and design sources may not say "review" at all: every use
-there named a workflow step the product no longer has. Application source may
-not say it either, because a message that tells the operator to review
-something names a screen that is not in the build, but "preview" is the audio
-player's own word for something else and stays. A tracked spec may say it,
-because a spec legitimately records the design review that produced it, so
-specs get the narrower list of phrases that only ever described the deleted
-screen.
+Three scans. Product copy, design sources and application source may not name
+the retired step: a paragraph or a message telling the operator to review
+something points at a screen that is not in the build. Those two scans share
+one pattern, because "preview" has to survive in both, and for the same
+reason. It is the chapter player's own word for playing a track without
+sending it, and it is the name of the playlist endpoint the README documents.
+A tracked spec may say "review", because a spec legitimately records the
+design review that produced it, so specs get the narrower list of phrases that
+only ever described the deleted screen.
 """
 from __future__ import annotations
 
@@ -18,15 +18,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 PRODUCT_SOURCES = ("README.md", "PRODUCT.md", "DESIGN.md", ".impeccable")
-BARE_REVIEW = re.compile(r"review", re.IGNORECASE)
-
 APP_SOURCES = ("app",)
 # The word boundary is what separates the retired step from "preview" and
-# "previewing", which are the chapter player's own word for playing a track
-# without sending it. Nothing weaker would do: a bare "review" reports every
-# preview control in the interface, and the temptation would then be to prune
-# the scan until it went quiet.
+# "previewing": the chapter player's own word for playing a track without
+# sending it, and the name of the `/api/playlist/preview` endpoint the README
+# documents. Neither can be reworded, and neither is the deleted screen.
+# Nothing weaker would do: a bare "review" reports every preview control in
+# the interface and every mention of that endpoint, and the temptation would
+# then be to prune the scan until it went quiet. Nothing stronger is needed
+# either, which STILL_CAUGHT below is here to keep proving.
 WORKFLOW_REVIEW = re.compile(r"\breview", re.IGNORECASE)
+
+# The phrasings this gate exists to refuse, next to the ones it has to let
+# through. A pattern loosened far enough to quiet a scan would pass the second
+# list and start failing the first, which is the failure this pins down.
+STILL_CAUGHT = (
+    "the Review Shelf holds every forged collection",
+    "a collection reordered during Review",
+    "unpacks in the reviewed order",
+    "open for review when forged",
+    "ready to review",
+)
+STILL_ALLOWED = (
+    "`POST /api/playlist/preview` returns those numbers",
+    "the chapter player previews a track without sending it",
+)
 
 # The one legitimate use left in the application, named rather than pattern
 # matched. The Impeccable direction contract at the top of the shell records
@@ -102,8 +118,20 @@ def _hits(names: tuple[str, ...], pattern: re.Pattern[str]) -> list[str]:
     ]
 
 
+def test_the_scan_pattern_still_catches_every_retired_phrasing():
+    """The gate that guards the gate.
+
+    Two merges have now brought the word back in prose that had to be rewritten
+    by hand. The cheap way out of the next one is to widen the boundary until
+    the scan goes quiet, so what the pattern catches is asserted here rather
+    than argued for in a comment.
+    """
+    assert [text for text in STILL_CAUGHT if not WORKFLOW_REVIEW.search(text)] == []
+    assert [text for text in STILL_ALLOWED if WORKFLOW_REVIEW.search(text)] == []
+
+
 def test_no_product_or_design_source_names_the_retired_review_step():
-    assert _hits(PRODUCT_SOURCES, BARE_REVIEW) == []
+    assert _hits(PRODUCT_SOURCES, WORKFLOW_REVIEW) == []
 
 
 def test_no_application_source_sends_the_operator_to_a_review():

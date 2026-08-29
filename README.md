@@ -11,7 +11,7 @@ Batch intake -> Automatic extraction and Forge -> Library -> Confirmed send
 The application has five destinations:
 
 - **Desk** accepts up to 50 HTTP or HTTPS source URLs at once. LibriVox search and multi-file upload are available as secondary intake modes.
-- **Library** shows every local collection, including extracted work that is not ready to send, and is the one place a send starts: search, rescan, Finish preparation, open, delete, multi-select, and send to a Creative Tonie.
+- **Library** shows every local collection, including extracted work that is not ready to send, and is the one place a send starts: search, rescan, Finish preparation, open, download, delete, multi-select, and send to a Creative Tonie.
 - **Creative Tonies** reads current remote contents before writes. It supports chapter rename, pointer and keyboard reorder, remove, and clear.
 - **Activity** keeps the 40 most recent jobs with progress, timestamps, errors, result links, and eligible retries.
 - **Settings** manages the myTonies credential source, connection tests, local credential removal, capacity, paths, and tool status.
@@ -29,6 +29,14 @@ Every accepted source runs extraction and the default Forge sequence automatical
 - Apply no automatic head or tail trim.
 
 Each successful preparation appears in the Library. TonieFi never assigns a Creative Tonie automatically.
+
+### Playlists
+
+A source link that carries a `list=` parameter offers a **Pick videos** control on its tray row. It lists the playlist without downloading any audio, ticks every playable entry, and lets you untick the ones you do not want. Only the ticked entries are downloaded, so removing a video costs nothing.
+
+Leave the control alone and the link speaks for itself. A `playlist?list=...` link brings every entry; a `watch?v=...&list=...` link brings that one video, not the playlist standing behind it.
+
+A playlist that mixes videos carrying chapter markers with videos that have none keeps both. Chapters win for the video that has them, and a video without any keeps its whole file.
 
 ### Library and confirmed sends
 
@@ -118,7 +126,7 @@ curl -s -X POST http://127.0.0.1:8080/api/prepare \
   -d '{
     "sources": [
       {"url": "https://www.youtube.com/watch?v=FIRST"},
-      {"url": "https://www.youtube.com/watch?v=SECOND"}
+      {"url": "https://www.youtube.com/playlist?list=SECOND", "playlist_items": [1, 3, 4, 5]}
     ],
     "options": {
       "use_chapters": true,
@@ -137,10 +145,12 @@ The response has this shape:
 {
   "jobs": [
     {"id": 42, "url": "https://www.youtube.com/watch?v=FIRST"},
-    {"id": 43, "url": "https://www.youtube.com/watch?v=SECOND"}
+    {"id": 43, "url": "https://www.youtube.com/playlist?list=SECOND"}
   ]
 }
 ```
+
+`playlist_items` is optional. It names the playlist entries to download, numbered from 1 in playlist order, and an empty list lets the link decide. `POST /api/playlist/preview` with `{"url": "..."}` returns those numbers alongside each entry title, without downloading audio.
 
 Read current and historical work with `GET /api/jobs`. Retry one eligible failed job with `POST /api/jobs/{job_id}/retry`.
 
@@ -190,6 +200,12 @@ The library is deliberately plain:
 ```
 
 `collection.json` owns track order, titles, metadata, and cached durations. Files added by hand appear after a Library rescan. Deleting TonieFi leaves the folders and MP3 files usable by other software.
+
+Download on any Library row returns that collection as one zip of audio, cover art, and `collection.json`, so the files are reachable without shell access to the host. Track order lives in the manifest rather than in the filenames, so the archive renumbers its tracks from the manifest and a collection reordered on its collection page still unpacks in that order. The archived `collection.json` is rewritten to name the files the archive actually holds, so the index never points at a filename the archive lacks.
+
+The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed. One file is open at a time, so a collection at the 500-file intake limit cannot exhaust the process descriptor budget and an abandoned download strands nothing.
+
+Because files are opened as they are reached, a download never receives an archive that mixes two versions of a collection. Each file is fingerprinted when the download is planned and checked when it is opened, so a delete or a Forge replacement landing mid-download ends the stream at the next file. The response is chunked, so an ended stream never sends its terminating chunk and the browser reports an interrupted download instead of saving a plausible-looking archive. A download whose files have all been read is already past that point and completes normally, carrying the version it read.
 
 Library deletion is intentionally destructive. Its confirmation names the local collection folder and audio files that will be removed.
 

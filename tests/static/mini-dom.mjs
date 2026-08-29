@@ -62,6 +62,13 @@ class MiniElement {
     this.draggable = false;
   }
 
+  // Live-DOM `children` skips text nodes; `childNodes` does not. The desk's
+  // source tray reads `children` to index its rows, so a text child must not
+  // shift those indexes.
+  get children() {
+    return this.childNodes.filter((child) => typeof child !== "string");
+  }
+
   set textContent(value) {
     this._textContent = String(value ?? "");
     this.childNodes = [];
@@ -129,6 +136,14 @@ class MiniElement {
       if (child && typeof child !== "string") child.parentNode = this;
       this.childNodes.push(child);
     }
+  }
+
+  insertBefore(node, reference) {
+    if (node && typeof node !== "string") node.parentNode = this;
+    const index = this.childNodes.indexOf(reference);
+    if (index < 0) this.childNodes.push(node);
+    else this.childNodes.splice(index, 0, node);
+    return node;
   }
 
   prepend(...children) {

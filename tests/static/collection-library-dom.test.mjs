@@ -284,6 +284,46 @@ test("Library gives extracted collections one Finish preparation action and no l
   }
 });
 
+test("Library offers every collection a download, whether or not Forge has finished", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "peter pan & wendy",
+    title: "Peter Pan",
+    stage: "extracted",
+    track_count: 2,
+    total_duration: "1h 4m",
+    tonies_needed: 1,
+  };
+  const refresh = {
+    snapshot: { collections: [collection], jobs: [] },
+    subscribe() {
+      return () => {};
+    },
+    async request() {
+      return { collections: [collection], stale: [], errors: {} };
+    },
+  };
+  const request = async (url) => {
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    const download = dom.workspace.querySelector(".library-download");
+    assert.ok(download, "every collection row offers a download");
+    assert.equal(download.tagName, "A");
+    assert.equal(download.getAttribute("href"), "/api/collections/peter%20pan%20%26%20wendy/download");
+    assert.equal(download.hasAttribute("download"), true);
+    assert.equal(download.hasAttribute("data-collection-mutation"), true);
+    assert.match(download.textContent, /Download/);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("the collection screen stage-gates the capacity plan and offers the same Finish preparation route", async () => {
   const dom = installDom();
   const controller = new AbortController();
@@ -345,6 +385,64 @@ test("the collection screen stage-gates the capacity plan and offers the same Fi
     await flush();
     assert.equal(calls.filter(([url]) => url === "/api/forge").length, 1);
     assert.match(dom.workspace.textContent, /Forge queued/);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Desk sends only the playlist videos left ticked", async () => {
+  const dom = installDom();
+  globalThis.window.matchMedia = () => ({ matches: true });
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const posted = [];
+  const request = async (path, options = {}) => {
+    if (path === "/api/playlist/preview") {
+      return {
+        title: "Story Time",
+        entries: [
+          { index: 1, id: "aaa", title: "One", available: true },
+          { index: 2, id: "bbb", title: "Two", available: true },
+          { index: 3, id: "ccc", title: "Three", available: true },
+        ],
+      };
+    }
+    if (path === "/api/prepare") posted.push(JSON.parse(options.body));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    dom.document.getElementById("source-paste").value = "https://www.youtube.com/playlist?list=PL1";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+
+    await buttonWithText(dom.workspace, "Pick videos").click();
+    await flush();
+
+    const boxes = dom.workspace.querySelector(".playlist-picker").querySelectorAll("input");
+    assert.deepEqual(boxes.map((box) => box.getAttribute("aria-label")), ["1. One", "2. Two", "3. Three"]);
+    assert.equal(boxes.every((box) => box.checked), true);
+
+    boxes[1].checked = false;
+    await boxes[1].dispatchEvent({ type: "change" });
+    await flush();
+
+    await dom.workspace.querySelector(".source-intake-form").dispatchEvent({ type: "submit" });
+    await flush();
+
+    assert.deepEqual(posted[0].sources, [
+      { url: "https://www.youtube.com/playlist?list=PL1", playlist_items: [1, 3] },
+    ]);
   } finally {
     controller.abort();
     dom.restore();
