@@ -10,6 +10,7 @@ import {
   restoreFocus,
   setBusy,
   showConfirmDialog,
+  tonieJacket,
   tonieLabel,
 } from "./shared.js";
 
@@ -19,6 +20,15 @@ export function buildTonieChapterPayload(tonie, chapters) {
     base: (tonie.chapters || []).map(({ id, title }) => ({ id, title: title || "" })),
     chapters: chapters.map(({ id, title }) => ({ id, title: title || "" })),
   };
+}
+
+
+export function buildTonieNamePayload(tonie, name) {
+  // base_name is the precondition: the name this browser had on screen when
+  // the operator typed. The Tonie Cloud offers no conditional write, so this
+  // is what stops a rename from silently reverting one made in the myTonies
+  // app a moment ago. It is the same guard buildTonieChapterPayload applies.
+  return { base_name: tonie.name || "", name };
 }
 
 
@@ -197,6 +207,66 @@ export function createToniesScreen({ request = api } = {}) {
       }
     }
 
+    async function saveName(tonie, name) {
+      const path = `/api/tonies/${encodeURIComponent(tonie.householdId)}/${encodeURIComponent(tonie.id)}`;
+      try {
+        const updated = await request(path, {
+          method: "PATCH",
+          body: JSON.stringify(buildTonieNamePayload(tonie, name)),
+          ...(signal ? { signal } : {}),
+        });
+        if (!active || signal?.aborted) return;
+        // Bump the token for the same reason the chapter write does: a load
+        // already in flight must not put the pre-rename Tonie back.
+        loadToken += 1;
+        tonies = tonies.map((entry) => (tonieKey(entry) === tonieKey(tonie) ? updated : entry));
+        loadState = "loaded";
+        loadError = "";
+        render({ focusKey: `tonie-${tonie.id}-name` });
+        notify(`This Tonie is now called "${updated.name}".`, { kind: "success" });
+        announce(`Creative Tonie renamed to ${updated.name}.`);
+      } catch (error) {
+        if (!active || signal?.aborted) return;
+        notify(`${error.message} The name on screen was put back.`, { kind: "failure", timeout: 0 });
+        await load().catch(() => {});
+      }
+    }
+
+    function renameField(tonie) {
+      const nameId = `tonie-${tonie.id}-name`;
+      const nameInput = element("input", {
+        id: nameId,
+        type: "text",
+        className: "tonie-name-input",
+        value: tonie.name || "",
+        maxlength: "100",
+        "data-tonie-control": "",
+        "data-focus-key": `tonie-${tonie.id}-name`,
+      });
+      nameInput.addEventListener("change", async () => {
+        const wanted = nameInput.value.trim();
+        if (!wanted) {
+          // Blanking a chapter title keeps the old one, because a slipped
+          // keystroke must not leave a nameless chapter. A rename is a
+          // deliberate act on one field, so an empty one is refused out loud
+          // rather than being quietly ignored.
+          nameInput.value = tonie.name || "";
+          notify("A Creative Tonie needs a name.", { kind: "failure", timeout: 0 });
+          return;
+        }
+        if (wanted === (tonie.name || "")) return;
+        await saveName(tonie, nameInput.value);
+      });
+      return element("div", { className: "tonie-rename-field" }, [
+        element("label", { for: nameId, text: "Name on myTonies" }),
+        nameInput,
+        element("p", {
+          className: "tonie-rename-note",
+          text: "Renaming changes this Tonie in the myTonies app too. It does not touch its chapters.",
+        }),
+      ]);
+    }
+
     function chapterRow(tonie, chapter, index) {
       const titleId = `tonie-${tonie.id}-chapter-${chapter.id}`;
       const title = element("input", {
@@ -273,6 +343,9 @@ export function createToniesScreen({ request = api } = {}) {
 
     function tonieDetail(tonie) {
       const detail = element("div", { className: "tonie-detail" });
+      // Built before the empty-state return, so a Tonie with nothing on it can
+      // still be named. That is the Tonie most in need of one.
+      detail.append(renameField(tonie));
       if (!tonie.chapters?.length) {
         detail.append(element("div", { className: "empty-state tonie-empty" }, [
           iconNode("tonie"),
@@ -392,7 +465,7 @@ export function createToniesScreen({ request = api } = {}) {
         "data-focus-key": `tonie-${key}-summary`,
         "data-tonie-summary": "",
       }, [
-        iconNode("tonie", "tonie-summary-mark"),
+        tonieJacket(tonie, "tonie-summary-mark"),
         element("span", { className: "tonie-summary-copy" }, [
           element("strong", { text: tonie.name || "Creative Tonie" }),
           element("small", { text: tonie.householdName || "Household name unavailable" }),

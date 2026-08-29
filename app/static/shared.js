@@ -78,6 +78,33 @@ export function tonieLabel(tonie) {
   return `${tonie?.name || "Creative Tonie"}${household}`;
 }
 
+export function tonieMonogram(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return words.slice(0, 2).map((word) => word[0]?.toUpperCase() || "").join("") || "CT";
+}
+
+export function tonieJacket(tonie, className = "") {
+  // The figure's own picture is the one thing a parent and a child both
+  // recognise instantly, and it is the only difference between two boxes the
+  // Tonie Cloud is happy to call "Creative Tonie" twice. alt is empty on
+  // purpose: the name always sits beside it, so describing the image again
+  // would make a screen reader say the same thing twice.
+  const classes = ["tonie-jacket", className].filter(Boolean).join(" ");
+  if (tonie?.imageUrl) {
+    return element("img", {
+      className: classes,
+      src: tonie.imageUrl,
+      alt: "",
+      loading: "lazy",
+    });
+  }
+  return element("span", {
+    className: `${classes} tonie-jacket-fallback`,
+    text: tonieMonogram(tonie?.name),
+    "aria-hidden": "true",
+  });
+}
+
 export function replace(host, ...children) {
   host.replaceChildren(...children.flat().filter((child) => child != null));
   return host;

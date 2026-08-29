@@ -2185,8 +2185,16 @@ img.collection-detail-cover {
   width: 3rem;
   height: 3rem;
   place-items: center;
-  border: 1px solid var(--bookcloth);
+  border: 1px solid var(--rule);
   border-radius: var(--radius);
+  background: var(--paper-muted);
+}
+
+/* The plaque is the fallback only. Real Creative Tonie artwork is a
+   full-colour photograph of a painted figure, and painting it onto the dark
+   bookcloth square would fight the thing it is there to identify. */
+.tonie-summary-mark.tonie-jacket-fallback {
+  border-color: var(--bookcloth);
   background: var(--bookcloth);
   color: var(--action);
 }
@@ -3491,4 +3499,46 @@ img.collection-detail-cover {
   .library-send-actions .button {
     flex: 1;
   }
+}
+
+
+/* ---------------------------------------------------- Creative Tonie identity */
+
+.tonie-jacket {
+  flex: 0 0 auto;
+  width: 3rem;
+  height: 3rem;
+  object-fit: contain;
+  border-radius: calc(var(--radius) / 2);
+  background: var(--paper-muted);
+}
+
+.tonie-jacket-fallback {
+  display: grid;
+  place-items: center;
+  font-family: Charter, "Iowan Old Style", Georgia, serif;
+  font-weight: 800;
+  color: var(--action);
+  background: var(--bookcloth);
+}
+
+.tonie-rename-field {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.tonie-rename-field label {
+  font-size: var(--type-xs);
+  font-weight: 700;
+}
+
+.tonie-name-input {
+  min-height: 2.75rem;
+}
+
+.tonie-rename-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
 }
