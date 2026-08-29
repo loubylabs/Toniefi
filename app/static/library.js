@@ -406,9 +406,22 @@ export function createLibraryScreen({
         failure = error.message;
       }
       if (token !== targetsToken) return;
-      tonies = loaded;
-      toniesError = failure;
-      rebindTargets(selections, tonies);
+      if (failure) {
+        // A failed request is not the operator deciding anything, so it must
+        // not look like one. Leave `tonies` and every group's chosen target
+        // exactly as they were: rebindTargets on an empty list would read as
+        // "the operator's Tonie is gone" and null out a selection nobody
+        // abandoned, the picker would print no options at all, and clearing
+        // the key with it would strand a lost-response retry without the
+        // safe 409. Surface the failure and let the operator retry the
+        // refresh, the same as showStale keeps the last good collection
+        // index visible on a failed background load.
+        toniesError = failure;
+      } else {
+        tonies = loaded;
+        toniesError = "";
+        rebindTargets(selections, tonies);
+      }
       // The operation key is NOT touched here, whatever the refresh returned.
       // The key tracks the operator's intent, and a refresh reports what the
       // world did rather than what the operator decided. If the first send
@@ -526,14 +539,25 @@ export function createLibraryScreen({
       const problems = tonies ? selectionProblems(groups, selections, limitSeconds(), picked) : ["Creative Tonies are not loaded yet."];
       const validation = element("p", { className: "library-send-validation" },
         problems.length ? [element("span", { text: problems[0] })] : []);
-      if (toniesError) {
-        replace(validation, element("span", { text: `Creative Tonies could not load. ${toniesError}` }));
+      // A failed refresh with a Tonies list already on hand is not the same
+      // situation as never having loaded one: the picker still shows real
+      // choices and the chosen target is still valid, so the message says a
+      // refresh failed rather than claiming there is nothing to send to,
+      // matching how showStale reports a failed background load without
+      // implying the last good state is gone.
+      const toniesErrorMessage = toniesError
+        ? (tonies
+          ? `Creative Tonies could not refresh. ${toniesError} The last known list remains available.`
+          : `Creative Tonies could not load. ${toniesError}`)
+        : "";
+      if (toniesErrorMessage) {
+        replace(validation, element("span", { text: toniesErrorMessage }));
       }
       // The paragraph is rebuilt every render, so it can never be the live
       // region that fires: a node has to be in the document before its text
       // changes. Announcing the message itself is the only way a screen reader
       // hears it, and only on a change, or every keystroke would re-read it.
-      const spoken = toniesError ? `Creative Tonies could not load. ${toniesError}` : (problems[0] || "");
+      const spoken = toniesErrorMessage || (problems[0] || "");
       if (spoken !== announcedProblem) {
         announcedProblem = spoken;
         if (spoken) announce(spoken);

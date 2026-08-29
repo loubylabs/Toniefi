@@ -429,6 +429,140 @@ test("Refresh targets rebinds the chosen Tonie to the freshly fetched one", asyn
   }
 });
 
+test("a failed target refresh leaves the chosen target selected and the operation key intact", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [
+      [blueTonie()],
+      // The refresh request itself never lands: a lost connection, not a
+      // decision the operator made.
+      () => { throw new Error("The Tonie Cloud could not be reached."); },
+    ],
+    pushOutcomes: [new Error("The Tonie Cloud refused the batch.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+    assert.equal(screen.pushes.length, 1);
+    const firstKey = screen.pushes[0].operation_key;
+    assert.ok(firstKey.length > 0);
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    // A failed refresh must not read as "that Tonie is gone": the picker
+    // still shows the operator's choice and Send is not blocked by it.
+    assert.match(screen.node(".library-send-validation").textContent, /Creative Tonies could not refresh/);
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.equal(screen.node(".library-send-submit").disabled, false);
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    assert.equal(screen.pushes[1].operation_key, firstKey);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a lost response, a failed refresh, then a landed refresh still resend under the original key", async () => {
+  // The exact reproduction behind the finding: an append that landed but
+  // whose response was lost, one failed target refresh, then one refresh
+  // that lands and shows the appended chapter. The bug read the failed
+  // refresh as the Tonie vanishing, emptied the picker, and reselecting it
+  // cleared the key, so a retry could append the same audio a second time
+  // instead of getting the safe 409.
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [
+      [blueTonie()],
+      () => { throw new Error("The Tonie Cloud could not be reached."); },
+      // This is the refresh that lands, and it shows the append the
+      // lost-response send already made.
+      [{ ...blueTonie(), chapters: [{ id: "c1", title: "Old chapter" }, { id: "c2", title: "Night Story" }] }],
+    ],
+    pushOutcomes: [new Error("The connection dropped before the receipt arrived.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    // The server committed this one; only the receipt was lost.
+    await screen.node(".library-send-submit").click();
+    await flush();
+    assert.equal(screen.pushes.length, 1);
+    const originalKey = screen.pushes[0].operation_key;
+    assert.deepEqual(screen.pushes[0].assignments[0].remote_chapters, [{ id: "c1", title: "Old chapter" }]);
+
+    // The operator's first attempt to see what happened drops off the network.
+    await screen.node(".library-send-refresh").click();
+    await flush();
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+
+    // The second attempt lands and reveals the append.
+    await screen.node(".library-send-refresh").click();
+    await flush();
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    // The ORIGINAL key: the server's idempotency digest sees it with a
+    // payload that moved and answers 409 instead of appending twice.
+    assert.equal(screen.pushes[1].operation_key, originalKey);
+    assert.ok(screen.pushes[1].operation_key.length > 0);
+    assert.deepEqual(screen.pushes[1].assignments[0].remote_chapters, [
+      { id: "c1", title: "Old chapter" },
+      { id: "c2", title: "Night Story" },
+    ]);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a successful refresh that no longer offers the chosen Tonie still clears that target", async () => {
+  // rebindTargets is right to null a target a SUCCESSFUL refresh does not
+  // offer; the fix for a failed refresh must not take that away.
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [[blueTonie()], [{ ...blueTonie(), id: "t2" }]],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+    assert.equal(screen.node(".library-send-submit").disabled, false);
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, false]);
+    assert.equal(screen.node(".library-send-submit").disabled, true);
+    assert.match(screen.node(".library-send-validation").textContent, /Group 1 has no Creative Tonie chosen/);
+  } finally {
+    screen.stop();
+  }
+});
+
 test("a refused send leaves the selection ticked and ready to try again", async () => {
   const screen = mountLibrary({
     collections: [nightStory()],
