@@ -16,6 +16,7 @@ import {
   announce,
   createMutationController,
   element,
+  humanDuration,
   notify,
   rememberFocus,
   replace,
@@ -93,14 +94,6 @@ function collectionCover(collection) {
     text: initials(collection.title),
     "aria-hidden": "true",
   });
-}
-
-function humanSeconds(seconds) {
-  const whole = Math.max(0, Math.round(Number(seconds) || 0));
-  const minutes = Math.floor(whole / 60);
-  const rest = whole % 60;
-  if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
-  return `${minutes}m ${String(rest).padStart(2, "0")}s`;
 }
 
 function stageLabel(stage) {
@@ -208,11 +201,11 @@ export function createLibraryScreen({
       const primary = preparation.state === "ready"
         ? element("a", {
           className: "button button-primary",
-          href: `/review/${encodeURIComponent(collection.slug)}`,
-          "data-route": "review",
+          href: `/collection/${encodeURIComponent(collection.slug)}`,
+          "data-route": "collection",
           "data-focus-key": `library-${collection.slug}-open`,
           "data-collection-mutation": "",
-        }, [iconNode("review"), element("span", { text: "Open for review" })])
+        }, [iconNode("library"), element("span", { text: "Open" })])
         : element("button", {
           type: "button",
           className: "button button-primary library-finish",
@@ -435,7 +428,7 @@ export function createLibraryScreen({
       const heading = element("div", { className: "screen-heading" }, [
         element("h2", {
           id: "library-send-title",
-          text: `${picked.length} ${picked.length === 1 ? "story" : "stories"} selected · ${humanSeconds(totalSeconds)}`,
+          text: `${picked.length} ${picked.length === 1 ? "story" : "stories"} selected · ${humanDuration(totalSeconds)}`,
         }),
         element("button", { type: "button", className: "button button-secondary library-send-refresh", "data-focus-key": "library-send-refresh" }, [
           iconNode("refresh"), element("span", { text: "Refresh targets" }),

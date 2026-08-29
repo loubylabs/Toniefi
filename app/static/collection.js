@@ -5,6 +5,7 @@ import {
   announce,
   createMutationController,
   element,
+  humanDuration,
   moveItem,
   notify,
   rememberFocus,
@@ -12,15 +13,7 @@ import {
   restoreFocus,
   setBusy,
   showConfirmDialog,
-  snapshotRefreshOutcome,
 } from "./shared.js";
-
-export function forgedCollectionsNewestFirst(collections) {
-  return collections
-    .filter((collection) => collection.stage === "forged")
-    .slice()
-    .sort((left, right) => Number(right.created_at || 0) - Number(left.created_at || 0));
-}
 
 export function moveControlFocusKey(trackName, targetIndex, total, offset) {
   const control = targetIndex === 0
@@ -42,15 +35,6 @@ function initials(title) {
   return words.slice(0, 2).map((word) => word[0]?.toUpperCase() || "").join("") || "ST";
 }
 
-function formatSeconds(value) {
-  const total = Math.max(0, Math.round(Number(value) || 0));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
-  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
-}
-
 function coverNode(collection, className) {
   if (collection.cover) {
     return element("img", {
@@ -67,17 +51,6 @@ function coverNode(collection, className) {
   });
 }
 
-function factList(collection) {
-  const facts = element("ul", { className: "collection-facts", "aria-label": "Collection facts" });
-  const values = [
-    `${collection.track_count || 0} ${collection.track_count === 1 ? "chapter" : "chapters"}`,
-    collection.total_duration || "No duration yet",
-    `${collection.tonies_needed || 0} ${collection.tonies_needed === 1 ? "Tonie" : "Tonies"} needed`,
-  ];
-  replace(facts, ...values.map((value) => element("li", { text: value })));
-  return facts;
-}
-
 function forgeSummary(collection) {
   if (collection.stage !== "forged") return "Forge incomplete";
   const forge = collection.forge || {};
@@ -90,111 +63,10 @@ function forgeSummary(collection) {
 
 function loadingState(title, message) {
   return element("section", { className: "route-pending", "aria-label": title }, [
-    iconNode("review", "route-pending-mark"),
+    iconNode("library", "route-pending-mark"),
     element("h1", { text: title }),
     element("p", { text: message }),
   ]);
-}
-
-function reviewShelfRow(collection) {
-  const titleId = `review-shelf-${collection.slug}`;
-  const body = element("div", { className: "review-shelf-row-body" }, [
-    element("div", { className: "review-shelf-row-heading" }, [
-      element("h2", { id: titleId, text: collection.title || "Untitled collection" }),
-      element("span", { className: "status-stamp", "data-status": "success", text: "Forge complete" }),
-    ]),
-    factList(collection),
-    element("p", { className: "collection-forge-summary", text: forgeSummary(collection) }),
-    element("a", {
-      className: "button button-primary review-shelf-open",
-      href: `/review/${encodeURIComponent(collection.slug)}`,
-      "data-route": "review",
-      "data-focus-key": `review-${collection.slug}`,
-    }, [element("span", { text: "Open review" }), iconNode("chevronRight")]),
-  ]);
-  return element("li", { className: "review-shelf-row", "aria-labelledby": titleId }, [
-    coverNode(collection, "review-shelf-cover"),
-    body,
-  ]);
-}
-
-function createReviewShelf({ workspace, refresh, signal }) {
-  let active = true;
-  const root = element("section", { className: "review-shelf-screen", "aria-labelledby": "review-shelf-title" });
-  const heading = element("div", { className: "screen-heading" }, [
-    element("div", {}, [
-      element("h1", { id: "review-shelf-title", text: "Review Shelf" }),
-      element("p", { text: "Prepared stories wait here until you choose their Creative Tonies." }),
-    ]),
-    element("button", { type: "button", className: "button button-secondary review-refresh" }, [
-      iconNode("refresh"), element("span", { text: "Refresh shelf" }),
-    ]),
-  ]);
-  const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
-  const list = element("ol", { className: "review-shelf-list" });
-  const refreshButton = heading.querySelector("button");
-
-  function render(snapshot) {
-    if (!active || signal?.aborted) return;
-    const token = rememberFocus(root);
-    const collections = forgedCollectionsNewestFirst(snapshot.collections || []);
-    stale.hidden = !snapshot.stale?.includes("collections");
-    if (stale.hidden) {
-      replace(stale);
-    } else {
-      const retry = element("button", { type: "button", className: "button button-secondary", text: "Retry refresh" });
-      retry.addEventListener("click", () => refreshButton.click());
-      replace(stale,
-        element("strong", { text: "The shelf may be out of date" }),
-        element("p", { text: "The last available collections remain visible." }),
-        retry,
-      );
-    }
-    if (!collections.length) {
-      replace(list, element("li", { className: "empty-state review-shelf-empty" }, [
-        iconNode("review"),
-        element("strong", { text: "No stories are waiting for review" }),
-        element("p", { text: "Prepared collections appear here after Forge finishes." }),
-        element("a", { className: "button button-primary", href: "/", "data-route": "desk" }, [
-          iconNode("desk"), element("span", { text: "Prepare a story" }),
-        ]),
-      ]));
-    } else {
-      replace(list, ...collections.map(reviewShelfRow));
-    }
-    restoreFocus(token, { root, fallback: refreshButton });
-  }
-
-  refreshButton.addEventListener("click", async () => {
-    refreshButton.disabled = true;
-    try {
-      const snapshot = await refresh.request();
-      if (!active || signal?.aborted) return;
-      const outcome = snapshotRefreshOutcome(snapshot, "collections");
-      if (outcome.stale) {
-        notify("The Review Shelf could not fully refresh. Existing stories remain visible. Try again.", { kind: "failure", timeout: 0 });
-      } else {
-        notify("Review Shelf refreshed.", { kind: "success" });
-      }
-    } catch (error) {
-      if (active && !signal?.aborted) notify(error.message, { kind: "failure", timeout: 0 });
-    } finally {
-      if (active && !signal?.aborted) {
-        refreshButton.disabled = false;
-        refreshButton.focus({ preventScroll: true });
-      }
-    }
-  });
-
-  root.append(heading, stale, list);
-  replace(workspace, root);
-  render(refresh.snapshot);
-  const unsubscribe = refresh.subscribe(render);
-  refresh.request();
-  return () => {
-    active = false;
-    unsubscribe();
-  };
 }
 
 function detailFacts(collection) {
@@ -205,7 +77,7 @@ function detailFacts(collection) {
     ["Chapters", String(collection.track_count || 0)],
     ["Forge", forgeSummary(collection)],
   ];
-  return element("dl", { className: "review-detail-facts" }, facts.map(([term, description]) => (
+  return element("dl", { className: "collection-detail-facts" }, facts.map(([term, description]) => (
     element("div", {}, [element("dt", { text: term }), element("dd", { text: description })])
   )));
 }
@@ -217,7 +89,7 @@ function capacityPlan(collection, usableLimit) {
       iconNode("tonie"),
       element("div", {}, [
         element("h2", { id: "capacity-plan-title", text: "Capacity plan" }),
-        element("p", { text: `${formatSeconds(usableLimit)} usable per Creative Tonie, including safety headroom.` }),
+        element("p", { text: `${humanDuration(usableLimit)} usable per Creative Tonie, including safety headroom.` }),
       ]),
     ]),
   );
@@ -246,7 +118,7 @@ function capacityPlan(collection, usableLimit) {
         "aria-valuemin": "0",
         "aria-valuemax": String(usableLimit),
         "aria-valuenow": String(group.seconds),
-        "aria-valuetext": `${group.duration} of ${formatSeconds(usableLimit)}`,
+        "aria-valuetext": `${group.duration} of ${humanDuration(usableLimit)}`,
       }, [element("span", { style: `--capacity:${percent}%` })]),
       trackList,
     ]));
@@ -255,18 +127,17 @@ function capacityPlan(collection, usableLimit) {
   return section;
 }
 
-export function createFocusedReview({ workspace, slug, request, refresh, player, signal }) {
+export function createCollectionDetail({ workspace, slug, request, refresh, player, signal }) {
   let active = true;
   let collection = null;
   let status = refresh.snapshot.status;
   let jobs = refresh.snapshot.jobs || [];
-  const root = element("article", { className: "review-detail-screen", "aria-labelledby": "review-detail-title" });
-  replace(workspace, loadingState("Opening collection review", "Reading the collection manifest and capacity plan."));
+  const root = element("article", { className: "collection-detail-screen", "aria-labelledby": "collection-detail-title" });
+  replace(workspace, loadingState("Opening collection", "Reading the collection manifest and capacity plan."));
 
-  async function loadCollection({ rescan = false } = {}) {
-    const query = rescan ? "?refresh=true" : "";
+  async function loadCollection() {
     const [nextCollection, nextStatus] = await Promise.all([
-      request(`/api/collections/${encodeURIComponent(slug)}${query}`, { signal }),
+      request(`/api/collections/${encodeURIComponent(slug)}`, { signal }),
       status ? Promise.resolve(status) : request("/api/status", { signal }),
     ]);
     if (!active || signal.aborted) return null;
@@ -281,7 +152,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
     retry.addEventListener("click", hydrate);
     replace(workspace, element("section", { className: "route-pending", role: "alert" }, [
       iconNode("alert", "route-pending-mark"),
-      element("h1", { text: "Collection review could not open" }),
+      element("h1", { text: "This collection could not open" }),
       element("p", { text: error.message }),
       retry,
     ]));
@@ -300,7 +171,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
     });
     root.prepend(element("div", { className: "stale-notice", "data-kind": "failure", role: "alert" }, [
       element("strong", { text: "Collection state may be stale" }),
-      element("p", { text: `${error.message} The current review remains visible.` }),
+      element("p", { text: `${error.message} The current collection remains visible.` }),
       retry,
     ]));
   }
@@ -318,7 +189,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
     const preparation = forgePreparationState(collection, jobs);
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
     const titleInput = element("input", {
-      id: "review-collection-title",
+      id: "collection-title-input",
       name: "collection-title",
       value: collection.title || "",
       "data-focus-key": "collection-title",
@@ -329,8 +200,8 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
     const renameButton = element("button", { type: "submit", className: "button button-secondary", "data-collection-mutation": "" }, [
       iconNode("check"), element("span", { text: "Save title" }),
     ]);
-    const titleForm = element("form", { className: "review-title-form" }, [
-      element("label", { for: "review-collection-title", text: "Collection title" }),
+    const titleForm = element("form", { className: "collection-title-form" }, [
+      element("label", { for: "collection-title-input", text: "Collection title" }),
       titleInput,
       renameButton,
     ]);
@@ -366,12 +237,12 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
       }
     });
 
-    const header = element("header", { className: "review-detail-header" }, [
-      element("a", { className: "back-link", href: "/review", "data-route": "review" }, [
-        iconNode("chevronRight"), element("span", { text: "Back to Review Shelf" }),
+    const header = element("header", { className: "collection-detail-header" }, [
+      element("a", { className: "back-link", href: "/library", "data-route": "library" }, [
+        iconNode("chevronRight"), element("span", { text: "Back to Library" }),
       ]),
-      element("div", { className: "review-detail-heading" }, [
-        coverNode(collection, "review-detail-cover"),
+      element("div", { className: "collection-detail-heading" }, [
+        coverNode(collection, "collection-detail-cover"),
         element("div", {}, [
           element("span", {
             className: "status-stamp",
@@ -379,10 +250,10 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
               ? "success"
               : preparation.state === "failed" ? "failure" : "warning",
             text: preparation.state === "ready"
-              ? "Ready to review"
+              ? "Ready to send"
               : preparation.state === "pending" ? "Forge queued" : "Forge incomplete",
           }),
-          element("h1", { id: "review-detail-title", text: collection.title || "Untitled collection", tabindex: "-1" }),
+          element("h1", { id: "collection-detail-title", text: collection.title || "Untitled collection", tabindex: "-1" }),
           titleForm,
           detailFacts(collection),
         ]),
@@ -396,7 +267,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
         element("p", { text: "Drag with a pointer, or use the Move up and Move down buttons." }),
       ]),
     ]);
-    const chapterList = element("ol", { className: "review-chapter-list", "aria-labelledby": "chapter-list-title" });
+    const chapterList = element("ol", { className: "collection-chapter-list", "aria-labelledby": "chapter-list-title" });
 
     async function persistOrder(nextTracks, key) {
       setBusy(chapterList, true, "Saving chapter order");
@@ -424,7 +295,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
 
     function chapterRow(track, index) {
       const row = element("li", {
-        className: "review-chapter-row",
+        className: "collection-chapter-row",
         draggable: "true",
         "data-track-name": track.name,
       });
@@ -581,7 +452,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
     } else {
       replace(chapterList, ...collection.tracks.map(chapterRow));
     }
-    const chapters = element("section", { className: "review-chapters", "aria-labelledby": "chapter-list-title" }, [
+    const chapters = element("section", { className: "collection-chapters", "aria-labelledby": "chapter-list-title" }, [
       chaptersHeading,
       chapterList,
     ]);
@@ -592,10 +463,10 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
       element("h2", { id: "preparation-title", text: "Finish preparation" }),
       element("p", {
         text: preparation.state === "pending"
-          ? "Forge is queued. Assignment stays locked until the prepared collection reaches Review Shelf."
+          ? "Forge is queued. The capacity plan stays hidden until the prepared collection reaches the Library."
           : preparation.state === "failed"
             ? preparation.error
-            : "This extracted collection has not completed Forge. Finish preparation before reviewing capacity or assigning Creative Tonies.",
+            : "This extracted collection has not completed Forge. Finish preparation before its capacity plan appears.",
       }),
     ]);
     if (preparation.state !== "pending") {
@@ -638,9 +509,9 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
       });
       preparationPanel.append(finish);
     }
-    replace(root, header, element("div", { className: "review-detail-grid" }, [
-      element("div", { className: "review-detail-main" }, [chapters]),
-      element("aside", { className: "review-detail-plan" }, preparation.state === "ready"
+    replace(root, header, element("div", { className: "collection-detail-grid" }, [
+      element("div", { className: "collection-detail-main" }, [chapters]),
+      element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
         ? [capacityPlan(collection, status.usable_limit_seconds)]
         : [preparationPanel]),
     ]));
@@ -649,7 +520,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
   }
 
   async function hydrate() {
-    replace(workspace, loadingState("Opening collection review", "Reading the collection manifest and capacity plan."));
+    replace(workspace, loadingState("Opening collection", "Reading the collection manifest and capacity plan."));
     try {
       await loadCollection();
       if (!active || signal.aborted) return;
@@ -666,7 +537,7 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
     const indexed = snapshot.collections?.find((item) => item.slug === slug);
     if (indexed?.stage === "forged" && collection?.stage !== "forged") {
       loadCollection().then(() => {
-        if (active && !signal.aborted) renderDetail({ focusKey: "review-detail-title" });
+        if (active && !signal.aborted) renderDetail({ focusKey: "collection-detail-title" });
       }).catch((error) => {
         if (active && !signal.aborted) renderMutationStale(error);
       });
@@ -683,25 +554,33 @@ export function createFocusedReview({ workspace, slug, request, refresh, player,
   };
 }
 
-export function createReviewScreen({
+export function createCollectionScreen({
   request = api,
   refresh,
   player,
 } = {}) {
-  if (!refresh) throw new Error("Review Shelf requires the application refresh coordinator.");
-  if (!player) throw new Error("Review Shelf requires the persistent audio player.");
+  if (!refresh) throw new Error("The collection screen requires the application refresh coordinator.");
+  if (!player) throw new Error("The collection screen requires the persistent audio player.");
 
-  return function renderReviewRoute({ workspace, params, signal }) {
-    if (params.slug) {
-      return createFocusedReview({
-        workspace,
-        slug: params.slug,
-        request,
-        refresh,
-        player,
-        signal,
-      });
+  return function renderCollectionRoute({ workspace, params, signal }) {
+    if (!params.slug) {
+      replace(workspace, element("section", { className: "route-pending", role: "alert" }, [
+        iconNode("alert", "route-pending-mark"),
+        element("h1", { text: "No collection was named" }),
+        element("p", { text: "Open a collection from the Library." }),
+        element("a", { className: "button button-primary", href: "/library", "data-route": "library" }, [
+          iconNode("library"), element("span", { text: "Go to Library" }),
+        ]),
+      ]));
+      return () => {};
     }
-    return createReviewShelf({ workspace, refresh, signal });
+    return createCollectionDetail({
+      workspace,
+      slug: params.slug,
+      request,
+      refresh,
+      player,
+      signal,
+    });
   };
 }

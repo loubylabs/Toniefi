@@ -324,7 +324,7 @@ def run_forge(body: ForgeRequest) -> dict[str, Any]:
     return {"job_id": job_id}
 
 
-# -------------------------------------------------------------- 4. review
+# --------------------------------------------------------- 4. collections
 
 @app.get("/api/collections")
 def list_collections() -> list[dict[str, Any]]:
@@ -513,7 +513,6 @@ def healthz() -> JSONResponse:
 
 @app.get("/")
 @app.get("/desk")
-@app.get("/review")
 @app.get("/library")
 @app.get("/tonies")
 @app.get("/activity")
@@ -522,8 +521,8 @@ def application_document() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/review/{slug}")
-def collection_review_document(slug: str) -> FileResponse:
+@app.get("/collection/{slug}")
+def collection_document(slug: str) -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 

@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { filterCollectionsByTitle } from "../../app/static/library.js";
+import { moveControlFocusKey } from "../../app/static/collection.js";
 import {
-  forgedCollectionsNewestFirst,
-  moveControlFocusKey,
-} from "../../app/static/review.js";
-import { createMutationController, moveItem, snapshotRefreshOutcome } from "../../app/static/shared.js";
+  createMutationController,
+  humanDuration,
+  moveItem,
+  snapshotRefreshOutcome,
+} from "../../app/static/shared.js";
 import { rescanCollections } from "../../app/static/library.js";
 
 test("moveItem moves an item one position toward the start", () => {
@@ -38,17 +40,6 @@ test("moveItem never mutates the input array", () => {
   moveItem(chapters, 1, -1);
 
   assert.deepEqual(chapters, ["chapter-a", "chapter-b", "chapter-c"]);
-});
-
-test("forgedCollectionsNewestFirst excludes unfinished collections and uses creation time", () => {
-  const collections = [
-    { slug: "older", stage: "forged", created_at: 100 },
-    { slug: "unfinished", stage: "extracted", created_at: 300 },
-    { slug: "newer", stage: "forged", created_at: 200 },
-  ];
-
-  assert.deepEqual(forgedCollectionsNewestFirst(collections).map((item) => item.slug), ["newer", "older"]);
-  assert.deepEqual(collections.map((item) => item.slug), ["older", "unfinished", "newer"]);
 });
 
 test("mutation controller serializes controls and reloads truth after failure", async () => {
@@ -133,4 +124,15 @@ test("filterCollectionsByTitle searches titles case-insensitively without changi
 
   assert.deepEqual(filterCollectionsByTitle(collections, "  THE  ").map((item) => item.slug), ["wind", "garden"]);
   assert.deepEqual(filterCollectionsByTitle(collections, "").map((item) => item.slug), ["wind", "garden", "island"]);
+});
+
+test("one duration formatter serves every screen and matches the server's human_duration", () => {
+  // 1500 seconds is where the two retired private formatters disagreed: the
+  // collection screen padded the seconds, Settings dropped them entirely.
+  assert.equal(humanDuration(1500), "25m 00s");
+  assert.equal(humanDuration(5370), "1h 29m");
+  assert.equal(humanDuration(30), "0m 30s");
+  assert.equal(humanDuration(0), "0m 00s");
+  assert.equal(humanDuration(-5), "0m 00s");
+  assert.equal(humanDuration("not a number"), "0m 00s");
 });

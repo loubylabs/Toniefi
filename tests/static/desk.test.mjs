@@ -6,6 +6,7 @@ import {
   buildLibrivoxPayload,
   buildPreparePayload,
   buildWorkCartItems,
+  createLiveWorkCart,
   deskRefreshNotice,
   forgeDefinitionValues,
   forgeProfileStatus,
@@ -17,6 +18,8 @@ import {
   truthfulWorkProgress,
   uploadPolicyText,
 } from "../../app/static/desk.js";
+
+import { installDom } from "./mini-dom.mjs";
 
 function relativeLuminance(hex) {
   const channels = hex.match(/[a-f0-9]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -405,11 +408,11 @@ test("buildWorkCartItems honors the server retryable contract", () => {
     kind: "prepare_url",
     status: "failed",
     phase: "failed",
-    label: "Reviewed elsewhere",
+    label: "Prepared elsewhere",
     progress: "",
-    error: "Return to Review",
+    error: "Extraction stopped",
     retryable: false,
-    payload: { url: "https://example.com/reviewed" },
+    payload: { url: "https://example.com/prepared" },
     result: {},
   }], []);
 
@@ -548,12 +551,38 @@ test("queued and extracting stamps meet small-text contrast on paper surfaces", 
 
 test("collection fallback jackets compute to the shared bookcloth treatment", () => {
   const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
-  for (const componentClass of ["review-shelf-cover", "library-cover", "review-detail-cover"]) {
+  for (const componentClass of ["library-cover", "collection-detail-cover"]) {
     const style = simpleComputedDeclarations(css, "span", [componentClass, "collection-cover-fallback"]);
     assert.equal(style.display, "grid");
     assert.equal(style["place-items"], "center");
     assert.equal(style["background-color"], "var(--bookcloth)");
     assert.equal(style.color, "var(--action)");
     assert.equal(style["text-align"], "center");
+  }
+});
+
+test("a finished work cart offers one Library action, not one per story", () => {
+  const dom = installDom();
+  try {
+    const cart = createLiveWorkCart({ request: async () => ({}), requestRefresh: async () => {}, navigate: () => {} });
+    dom.workspace.append(cart.host);
+    cart.onRefresh({
+      jobs: [
+        { id: 1, kind: "prepare_url", status: "done", result: { slug: "a" }, payload: { url: "https://example.com/a" } },
+        { id: 2, kind: "prepare_url", status: "done", result: { slug: "b" }, payload: { url: "https://example.com/b" } },
+      ],
+      collections: [
+        { slug: "a", stage: "forged", title: "A" },
+        { slug: "b", stage: "forged", title: "B" },
+      ],
+    });
+
+    const libraryLinks = cart.host.querySelectorAll(".work-cart-library-link");
+    assert.equal(libraryLinks.length, 1);
+    assert.equal(cart.host.querySelectorAll(".work-cart-review-link").length, 0);
+    assert.equal(libraryLinks[0].hidden, false);
+    assert.match(libraryLinks[0].textContent, /Open Library to send 2 stories/);
+  } finally {
+    dom.restore();
   }
 });

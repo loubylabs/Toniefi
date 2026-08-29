@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createDeskScreen, createLiveWorkCart } from "../../app/static/desk.js";
 import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
-import { createFocusedReview } from "../../app/static/review.js";
+import { createCollectionDetail } from "../../app/static/collection.js";
 
 import { buttonWithText, flush, installDom } from "./mini-dom.mjs";
 
@@ -139,8 +139,8 @@ test("Desk renders forged truth instead of an obsolete failed Forge card", () =>
 
     const rows = dom.workspace.querySelectorAll(".work-cart-row");
     assert.equal(rows.length, 1);
-    assert.match(rows[0].textContent, /Ready to review/);
-    assert.match(rows[0].textContent, /Review/);
+    assert.match(rows[0].textContent, /Ready to send/);
+    assert.match(rows[0].textContent, /View details/);
     assert.doesNotMatch(rows[0].textContent, /Failed|Retry|Worker stopped/);
   } finally {
     controller.abort();
@@ -216,7 +216,7 @@ test("Library rerenders every mutation control disabled while Rescan is pending"
   }
 });
 
-test("Forge preparation state keeps extracted collections out of review and reports job truth", () => {
+test("Forge preparation state keeps extracted collections unfinished and reports job truth", () => {
   const collection = { slug: "legacy-story", stage: "extracted" };
   assert.deepEqual(forgePreparationState(collection, []), { state: "incomplete", error: "" });
   assert.deepEqual(forgePreparationState(collection, [{
@@ -235,7 +235,7 @@ test("Forge preparation state keeps extracted collections out of review and repo
   assert.deepEqual(forgePreparationState({ ...collection, stage: "forged" }, []), { state: "ready", error: "" });
 });
 
-test("Library gives extracted collections one Finish preparation action and no review action", async () => {
+test("Library gives extracted collections one Finish preparation action and no link into the collection", async () => {
   const dom = installDom();
   const controller = new AbortController();
   const collection = {
@@ -269,7 +269,8 @@ test("Library gives extracted collections one Finish preparation action and no r
   try {
     createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
     await flush();
-    assert.equal(buttonWithText(dom.workspace, "Open for review"), undefined);
+    assert.deepEqual(dom.workspace.querySelectorAll("a")
+      .filter((link) => link.getAttribute("data-route") === "collection"), []);
     const finish = buttonWithText(dom.workspace, "Finish preparation");
     assert.ok(finish);
     await finish.click();
@@ -283,7 +284,7 @@ test("Library gives extracted collections one Finish preparation action and no r
   }
 });
 
-test("focused Review stage-gates the capacity plan and offers the same Finish preparation route", async () => {
+test("the collection screen stage-gates the capacity plan and offers the same Finish preparation route", async () => {
   const dom = installDom();
   const controller = new AbortController();
   const collection = {
@@ -327,7 +328,7 @@ test("focused Review stage-gates the capacity plan and offers the same Finish pr
   };
 
   try {
-    createFocusedReview({
+    createCollectionDetail({
       workspace: dom.workspace,
       slug: collection.slug,
       request,

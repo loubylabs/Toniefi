@@ -502,7 +502,7 @@ def test_failed_push_job_cannot_be_cloned_by_generic_retry(isolated):
     response = client.post(f"/api/jobs/{job_id}/retry")
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Creative Tonie sends must be reviewed and confirmed again in Review."
+    assert response.json()["detail"] == "Creative Tonie sends must be selected and confirmed again in the Library."
     assert db.jobs_for_refresh()[0]["id"] == job_id
     assert db.get_job(job_id)["payload"] == original["payload"]
     assert jobs.present(db.get_job(job_id))["retryable"] is False

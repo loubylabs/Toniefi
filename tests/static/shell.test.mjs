@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createRouter } from "../../app/static/router.js";
-import { createFocusedReview } from "../../app/static/review.js";
+import { createCollectionDetail } from "../../app/static/collection.js";
 import { createPersistentAudioPlayer, setBusy, showConfirmDialog } from "../../app/static/shared.js";
 
 class FakeElement {
@@ -287,7 +287,7 @@ test("router retains and aborts a mounted route before cleanup", async () => {
   }
 });
 
-test("focused review renders loading synchronously and ignores hydration after cleanup", async () => {
+test("the collection screen renders loading synchronously and ignores hydration after cleanup", async () => {
   const originalDocument = globalThis.document;
   let resolveCollection;
   const workspace = new FakeElement("main");
@@ -298,7 +298,7 @@ test("focused review renders loading synchronously and ignores hydration after c
     activeElement: null,
   };
   try {
-    const cleanup = createFocusedReview({
+    const cleanup = createCollectionDetail({
       workspace,
       slug: "night-stories",
       request: async () => new Promise((resolve) => { resolveCollection = resolve; }),
@@ -311,13 +311,13 @@ test("focused review renders loading synchronously and ignores hydration after c
       signal: controller.signal,
     });
     assert.equal(typeof cleanup, "function");
-    assert.match(textOf(workspace), /Opening collection review/);
+    assert.match(textOf(workspace), /Opening collection/);
     cleanup();
     controller.abort();
     resolveCollection({ slug: "night-stories", title: "Late", tracks: [], plan: [] });
     await Promise.resolve();
     await Promise.resolve();
-    assert.match(textOf(workspace), /Opening collection review/);
+    assert.match(textOf(workspace), /Opening collection/);
     assert.doesNotMatch(textOf(workspace), /Late/);
   } finally {
     globalThis.document = originalDocument;

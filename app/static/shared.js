@@ -40,6 +40,19 @@ export function element(tagName, attributes = {}, children = []) {
   return node;
 }
 
+export function humanDuration(seconds) {
+  // The one duration format in the product. It matches `human_duration` in
+  // app/audio.py, which is what the server already sends for every duration
+  // the screens display, so a locally computed one reads the same.
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+}
+
+
 export function replace(host, ...children) {
   host.replaceChildren(...children.flat().filter((child) => child != null));
   return host;

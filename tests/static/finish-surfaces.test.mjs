@@ -166,7 +166,7 @@ test("Tonie load presentation distinguishes loading, empty, failed, and stale da
 });
 
 
-test("Activity sends successful preparation to review and failed push back to Review guidance", () => {
+test("Activity opens the collection after preparation and after a failed push", () => {
   assert.deepEqual(activityAction({
     id: 11,
     kind: "prepare_url",
@@ -174,9 +174,9 @@ test("Activity sends successful preparation to review and failed push back to Re
     result: { slug: "night-stories" },
     retryable: false,
   }), {
-    kind: "review",
-    href: "/review/night-stories",
-    label: "Open review",
+    kind: "collection",
+    href: "/collection/night-stories",
+    label: "Open collection",
     guidance: "",
   });
   assert.deepEqual(activityAction({
@@ -186,10 +186,10 @@ test("Activity sends successful preparation to review and failed push back to Re
     payload: { sources: [{ slug: "night-stories", files: ["one.mp3"] }] },
     retryable: false,
   }), {
-    kind: "review",
-    href: "/review/night-stories",
-    label: "Review assignment",
-    guidance: "Creative Tonie sends must be reviewed and confirmed again.",
+    kind: "collection",
+    href: "/collection/night-stories",
+    label: "Open collection",
+    guidance: "Select the collection in the Library and send it again.",
   });
 });
 
@@ -201,28 +201,39 @@ test("a failed single-collection push still links to its collection", () => {
     payload: { sources: [{ slug: "night-stories", files: ["one.mp3"] }] },
   });
 
-  assert.equal(action.href, "/review/night-stories");
+  assert.equal(action.href, "/collection/night-stories");
 });
 
 
 test("a failed multi-collection push offers no single collection link", () => {
-  const action = activityAction({
+  const several = activityAction({
     kind: "push",
     status: "failed",
     payload: { sources: [{ slug: "night-stories" }, { slug: "sea-tales" }] },
   });
 
-  assert.equal(action.kind, "none");
+  assert.equal(several.kind, "none");
+
+  // The positive control belongs in the same test. Without it this passes just
+  // as well against an implementation that never reads `payload.sources` and so
+  // offers no link for any push at all.
+  const one = activityAction({
+    kind: "push",
+    status: "failed",
+    payload: { sources: [{ slug: "night-stories" }] },
+  });
+
+  assert.equal(one.kind, "collection");
 });
 
 
-test("Activity only offers Review for LibriVox work whose collection is forged", () => {
+test("Activity only offers a collection link for LibriVox work whose collection is forged", () => {
   assert.equal(activityAction({
     kind: "librivox",
     status: "done",
     collection_stage: "forged",
     result: { slug: "ready-book" },
-  }).kind, "review");
+  }).kind, "collection");
   assert.deepEqual(activityAction({
     kind: "librivox",
     status: "done",
@@ -320,8 +331,8 @@ test("Settings facts derive usable headroom and tool status from server truth", 
     tools: { ffmpeg: true, ffprobe: false },
   }), {
     limit: "1h 30m",
-    usable: "1h 29m 30s",
-    headroom: "30s",
+    usable: "1h 29m",
+    headroom: "0m 30s",
     libraryPath: "/library",
     tools: [
       { name: "ffmpeg", available: true },

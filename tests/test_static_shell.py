@@ -103,15 +103,14 @@ def test_shell_retires_the_wizard_and_loads_modules():
     assert "workspace" in document.ids
     assert document.module_scripts == ["/static/app.js"]
     assert "stepper" not in document.ids
-    for label in (
+    assert set(document.navigation_labels) == {
         "Desk",
-        "Review Shelf",
         "Library",
         "Creative Tonies",
         "Activity",
         "Settings",
-    ):
-        assert label in document.navigation_labels
+        "More",
+    }
     assert "More" in document.mobile_controls
     assert "persistent-utilities" in document.class_names
     assert "activityStatus" in document.ids
@@ -123,8 +122,7 @@ def test_every_application_route_serves_the_shell_document():
     for path in (
         "/",
         "/desk",
-        "/review",
-        "/review/the-wind-in-the-willows",
+        "/collection/the-wind-in-the-willows",
         "/library",
         "/tonies",
         "/activity",
@@ -135,3 +133,23 @@ def test_every_application_route_serves_the_shell_document():
         document = ShellDocument()
         document.feed(response.text)
         assert document.module_scripts == ["/static/app.js"], path
+
+
+def test_only_the_current_screens_serve_the_shell_document():
+    """Pin the served set, so a retired screen cannot come back as an alias."""
+    shell_endpoints = {main.application_document, main.collection_document}
+    served = {
+        route.path
+        for route in main.app.routes
+        if getattr(route, "endpoint", None) in shell_endpoints
+    }
+
+    assert served == {
+        "/",
+        "/desk",
+        "/library",
+        "/tonies",
+        "/activity",
+        "/settings",
+        "/collection/{slug}",
+    }
