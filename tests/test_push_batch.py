@@ -183,6 +183,88 @@ def test_a_retired_field_inside_one_assignment_source_is_refused(isolated):
     assert db.jobs_for_refresh() == []
 
 
+def test_each_batch_refusal_names_its_own_cause_and_the_library(isolated):
+    """Five preconditions, five messages, none of them naming a review step.
+
+    The operator reads one line and has to know which of these went wrong and
+    what to do next. A shared or vague message costs a send that cannot be
+    retried blindly, because a Tonie write has no undo.
+    """
+    client = TestClient(main.app)
+
+    missing = batch_body(isolated)
+    missing["assignments"][0]["sources"][0]["slug"] = "gone-story"
+
+    unforged_slug = second_collection("Half Made", [("half.mp3", "Half", 600)])
+    unforged = batch_body(isolated)
+    unforged["assignments"][0]["sources"] = [{
+        "slug": unforged_slug,
+        "manifest_fingerprint": library.get(unforged_slug)["manifest_fingerprint"],
+        "files": ["half.mp3"],
+    }]
+    manifest_path = config.LIBRARY_DIR / unforged_slug / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["stage"] = "extracted"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    fingerprint = batch_body(isolated)
+    fingerprint["assignments"][0]["sources"][0]["manifest_fingerprint"] = "a" * 64
+
+    files = batch_body(isolated)
+    files["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
+
+    # Both tracks fit one capacity group, so splitting them across two Tonies
+    # submits the right files against the wrong plan.
+    capacity = batch_body(isolated)
+    capacity["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
+    capacity["assignments"].append({
+        "household_id": "house-1",
+        "tonie_id": "tonie-2",
+        "replace": False,
+        "remote_chapters": [],
+        "sources": [{
+            "slug": isolated,
+            "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"],
+            "files": ["two.mp3"],
+        }],
+    })
+
+    details = {}
+    for name, body in (
+        ("missing", missing),
+        ("unforged", unforged),
+        ("fingerprint", fingerprint),
+        ("files", files),
+        ("capacity", capacity),
+    ):
+        body["operation_key"] = f"send-{name}"
+        response = client.post("/api/push/batch", json=body)
+        assert response.status_code == 409, (name, response.json())
+        details[name] = response.json()["detail"]
+
+    assert details["missing"] == "The collection changed because gone-story no longer exists."
+    assert details["unforged"] == (
+        "Forge is incomplete for a selected collection. "
+        "Finish preparation before sending it."
+    )
+    assert details["fingerprint"] == (
+        "A selected collection changed after confirmation. "
+        "Select the collections in the Library again and send."
+    )
+    assert details["files"] == (
+        "The confirmed audio files no longer match the selected collections. "
+        "Select them in the Library again and send."
+    )
+    assert details["capacity"] == (
+        "The confirmed files no longer fill the capacity groups this selection plans. "
+        "Select the collections in the Library again and send."
+    )
+    assert len(set(details.values())) == len(details)
+    assert db.jobs_for_refresh() == []
+
+
+
+
 def test_every_request_body_this_application_accepts_forbids_extra_fields():
     """One rule, checked structurally, so a new model cannot quietly opt out."""
     models = [

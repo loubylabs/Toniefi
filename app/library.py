@@ -741,7 +741,7 @@ def get(slug: str, refresh: bool = False) -> dict[str, Any] | None:
 
 
 def manifest_fingerprint(manifest: dict[str, Any]) -> str:
-    """Identify the exact reviewed order and metadata used for a send."""
+    """Identify the exact confirmed order and metadata used for a send."""
     relevant = {
         "slug": manifest.get("slug"),
         "title": manifest.get("title"),

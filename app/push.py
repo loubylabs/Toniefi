@@ -355,7 +355,7 @@ def validate_confirmed_batch(
             if library.manifest_fingerprint(manifests[source["slug"]]) != source["manifest_fingerprint"]:
                 raise StalePush(
                     "A selected collection changed after confirmation. "
-                    "Review the selection again."
+                    "Select the collections in the Library again and send."
                 )
 
     expected = [
@@ -369,11 +369,17 @@ def validate_confirmed_batch(
     if [pair for flat in submitted for pair in flat] != [
         (slug, track["name"]) for slug, track in expected
     ]:
-        raise StalePush("The confirmed audio files no longer match the reviewed collections.")
+        raise StalePush(
+            "The confirmed audio files no longer match the selected collections. "
+            "Select them in the Library again and send."
+        )
 
     groups = library.plan_groups([track for _, track in expected])
     if [len(group.tracks) for group in groups] != [len(flat) for flat in submitted]:
-        raise StalePush("The confirmed files do not match the reviewed capacity plan.")
+        raise StalePush(
+            "The confirmed files no longer fill the capacity groups this selection plans. "
+            "Select the collections in the Library again and send."
+        )
 
     resolved: list[list[tuple[str, dict[str, Any]]]] = []
     cursor = 0
@@ -402,7 +408,10 @@ def confirmed_tracks(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]
                 "Finish preparation before sending it."
             )
         if library.manifest_fingerprint(manifest) != source["manifest_fingerprint"]:
-            raise StalePush("The local collection changed after confirmation. Review it again.")
+            raise StalePush(
+                "The local collection changed after confirmation. "
+                "Select it in the Library again and send."
+            )
         names = source["files"]
         by_name = {track["name"]: track for track in manifest["tracks"]}
         if len(names) != len(set(names)) or any(name not in by_name for name in names):
@@ -452,7 +461,10 @@ def _push_confirmed_tracks(
             state = client.get_tonie(payload["household_id"], payload["tonie_id"])
             current_chapters = state.get("chapters") or []
             if _remote_identity(current_chapters) != _remote_identity(payload.get("remote_chapters") or []):
-                raise StalePush("The Creative Tonie changed after confirmation. Refresh targets and review again.")
+                raise StalePush(
+                    "The Creative Tonie changed after confirmation. "
+                    "Refresh targets in the Library and send again."
+                )
             replace = payload["replace"]
             if not replace:
                 present = float(state.get("secondsPresent") or 0)
