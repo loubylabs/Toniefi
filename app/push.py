@@ -8,6 +8,7 @@ chapter per track.
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, TypedDict
@@ -358,11 +359,73 @@ def set_tonie_name(
 
 # -------------------------------------------------- sending library tracks
 
-Progress = Callable[[str], None]
+Progress = Callable[..., None]
 
 
-def _noop(_: str) -> None:
+def _noop(*_: Any, **__: Any) -> None:
     return None
+
+
+class ProgressThrottle:
+    """Rate-limit progress writes so a byte counter is not one write per chunk.
+
+    A 20 MB upload reads in thousands of chunks. Writing a row for each would
+    hammer SQLite for a bar the browser only reads every 2.5 seconds. A report
+    gets through when the figure has actually moved, or when enough time has
+    passed, and flush always writes so the end of a phase is never lost.
+    """
+
+    def __init__(
+        self,
+        progress: Progress,
+        min_interval: float = 0.5,
+        min_delta: float = 1.0,
+    ) -> None:
+        self._progress = progress
+        self._min_interval = min_interval
+        self._min_delta = min_delta
+        self._last_at = 0.0
+        self._last_percent: float | None = None
+        self._started = False
+
+    def report(self, message: str, percent: float | None) -> None:
+        now = time.monotonic()
+        moved = (
+            not self._started
+            or self._last_percent is None
+            or percent is None
+            or abs(percent - self._last_percent) >= self._min_delta
+        )
+        if not moved and (now - self._last_at) < self._min_interval:
+            return
+        self.flush(message, percent)
+
+    def flush(self, message: str, percent: float | None) -> None:
+        self._started = True
+        self._last_at = time.monotonic()
+        self._last_percent = percent
+        self._progress(message, percent)
+
+
+def upload_percent(
+    tracks: list[dict[str, Any]], done_index: int, position: int
+) -> float | None:
+    """How much of a send's audio is on the wire, by bytes.
+
+    `done_index` counts fully uploaded tracks; `position` is how far into the
+    current one the transport has read. Returns None when any track is missing
+    a size, because a partial total would understate the work and so inflate
+    the bar. An unknown percentage is the honest answer, and the front end
+    already renders it as an indeterminate meter.
+    """
+    sizes = [track.get("size") for track in tracks]
+    if any(not size for size in sizes):
+        return None
+    total = float(sum(sizes))
+    if total <= 0:
+        return None
+    done = float(sum(sizes[:done_index]))
+    return max(0.0, min(100.0, 100.0 * (done + float(position)) / total))
 
 
 def _flatten(assignment: dict[str, Any]) -> list[tuple[str, str]]:
@@ -536,15 +599,31 @@ def _push_confirmed_tracks(
                 client.clear_tonie(payload["household_id"], payload["tonie_id"])
 
             uploaded = []
+            tracks = [track for _, track in resolved]
+            throttle = ProgressThrottle(progress)
             for position, (slug, track) in enumerate(resolved, start=1):
                 path = library.track_path(slug, track["name"])
                 label = track.get("title") or Path(track["name"]).stem
-                progress(f"Uploading {position}/{len(resolved)}: {label}")
-                file_id = client.upload_file(path)
+                message = f"Uploading {position}/{len(resolved)}: {label}"
+                done_index = position - 1
+                throttle.flush(message, upload_percent(tracks, done_index, 0))
+                # The default arguments bind this iteration's values. A bare
+                # closure over `message` would report every chunk of every file
+                # under the last file's name once the loop moved on.
+                file_id = client.upload_file(
+                    path,
+                    on_bytes=lambda at, m=message, d=done_index: throttle.report(
+                        m, upload_percent(tracks, d, at)
+                    ),
+                )
                 client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
                 uploaded.append({"title": label, "file": file_id})
 
-            progress("Confirming")
+            # The bar measures audio uploaded, and by here it really is all up.
+            # Sign-in and Clear report no percentage at all, because neither has
+            # a size to measure and an invented figure is what this whole column
+            # exists to avoid.
+            progress("Confirming", upload_percent(tracks, len(tracks), 0))
             state = client.get_tonie(payload["household_id"], payload["tonie_id"])
             return {
                 "tonie": state.get("name", payload["tonie_id"]),

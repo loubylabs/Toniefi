@@ -404,7 +404,7 @@ class StubCloud:
         self.calls.append("clear")
         self.chapters = []
 
-    def upload_file(self, path):
+    def upload_file(self, path, on_bytes=None):
         self.calls.append(f"upload:{path.name}")
         return f"file-{path.name}"
 
@@ -882,7 +882,7 @@ def test_worker_uploads_tracks_from_two_collections(isolated, monkeypatch):
     class FakeClient:
         def check_login(self): return None
         def get_tonie(self, *_): return {"chapters": [], "secondsPresent": 0, "name": "Emily"}
-        def upload_file(self, path):
+        def upload_file(self, path, on_bytes=None):
             uploaded.append(path.name)
             return f"file-{path.name}"
         def add_chapter(self, *_): return None

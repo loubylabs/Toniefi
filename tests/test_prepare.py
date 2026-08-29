@@ -164,7 +164,7 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
             "stage_id": "librivox-stage42",
             "options": prepare.DEFAULT_OPTIONS,
         }}),
-        (41, {"progress": "extracting: Downloading 1/2: Chapter one"}),
+        (41, {"progress": "extracting: Downloading 1/2: Chapter one", "progress_percent": None}),
         (41, {"payload": {
             "book_id": "180",
             "stage_id": "librivox-stage42",
@@ -178,7 +178,7 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
                 "split_oversized": True,
             },
         }}),
-        (41, {"progress": "forging: Levelling 1/2: Chapter one"}),
+        (41, {"progress": "forging: Levelling 1/2: Chapter one", "progress_percent": None}),
     ]
 
 

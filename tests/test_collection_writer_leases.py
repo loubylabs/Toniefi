@@ -113,7 +113,7 @@ class PushCloud:
         self.events.append("remote-clear")
         self.chapters = []
 
-    def upload_file(self, path):
+    def upload_file(self, path, on_bytes=None):
         self.events.append(f"upload-start:{path.name}")
         self.race_checkpoint.set()
         assert self.writer_write.wait(5)
