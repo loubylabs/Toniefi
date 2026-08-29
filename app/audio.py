@@ -190,3 +190,15 @@ def slugify(value: str, max_length: int = 60) -> str:
 
 def have_tools() -> dict[str, bool]:
     return {name: shutil.which(name) is not None for name in ("ffmpeg", "ffprobe")}
+
+
+def step_percent(index: int, total: int) -> float | None:
+    """A percentage for a phase that counts whole steps.
+
+    Returns None when there is nothing to count, so an unknown figure stays
+    unknown rather than becoming a zero that reads as measured progress.
+    """
+    if not total or total <= 0:
+        return None
+    return max(0.0, min(100.0, 100.0 * float(index) / float(total)))
+

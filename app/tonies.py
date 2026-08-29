@@ -29,6 +29,28 @@ CLIENT_ID = "my-tonies"
 TOKEN_SKEW_SECONDS = 60
 
 
+class _CountingReader:
+    """Wrap a file so an upload can say how far through it is.
+
+    It reports the file's absolute position rather than a running total of
+    chunk lengths. httpx seeks the file to measure its length before posting
+    it, so a delta-based counter would count the same bytes twice; a position
+    is correct however many times the file is rewound.
+    """
+
+    def __init__(self, fh: Any, on_position: Any) -> None:
+        self._fh = fh
+        self._on_position = on_position
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._fh.read(size)
+        self._on_position(self._fh.tell())
+        return chunk
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._fh, name)
+
+
 class TonieCloudError(RuntimeError):
     """Any failure talking to the Tonie Cloud, with a human-readable message."""
 
@@ -150,8 +172,15 @@ class TonieCloud:
 
     # ----------------------------------------------------------- upload
 
-    def upload_file(self, path: Path) -> str:
-        """Upload one audio file, returning the Tonie Cloud file id."""
+    def upload_file(self, path: Path, on_bytes: Any = None) -> str:
+        """Upload one audio file, returning the Tonie Cloud file id.
+
+        `on_bytes`, when given, is called with the file's absolute byte
+        position as the upload reads it. That is the only honest source of a
+        send percentage: the caller knows every file's size up front, so bytes
+        read is measured progress, where a chapter count would treat a 30
+        second intro and a 20 minute chapter as equal work.
+        """
         ticket = self._request("POST", "/file")
         if not ticket or "request" not in ticket:
             raise TonieCloudError("Tonie Cloud did not return an upload ticket.")
@@ -161,12 +190,13 @@ class TonieCloud:
         fields = ticket["request"]["fields"]
 
         with path.open("rb") as fh:
+            source = _CountingReader(fh, on_bytes) if on_bytes else fh
             try:
                 # Deliberately unauthenticated: this is a presigned S3 POST.
                 resp = httpx.post(
                     target,
                     data=fields,
-                    files={"file": (path.name, fh, "audio/mpeg")},
+                    files={"file": (path.name, source, "audio/mpeg")},
                     timeout=600.0,
                 )
             except httpx.RequestError as exc:
@@ -195,6 +225,19 @@ class TonieCloud:
             "PATCH",
             f"/households/{household_id}/creativetonies/{tonie_id}",
             json={"chapters": chapters},
+        )
+
+    def set_name(self, household_id: str, tonie_id: str, name: str) -> Any:
+        """Rename a Creative Tonie, and touch nothing else.
+
+        The body is deliberately only the name. The upstream documents that
+        including "chapters" triggers a fresh transcoding, so a rename that
+        carried the chapter list would re-transcode a box for a text change.
+        """
+        return self._request(
+            "PATCH",
+            f"/households/{household_id}/creativetonies/{tonie_id}",
+            json={"name": name},
         )
 
     def clear_tonie(self, household_id: str, tonie_id: str) -> Any:

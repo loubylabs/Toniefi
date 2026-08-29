@@ -56,7 +56,7 @@ def test_prepare_extracts_checkpoints_then_forges(monkeypatch):
 
     result = prepare.run(
         {"url": "https://example.com/alice", "options": {}},
-        progress=lambda message: calls.append(("progress", message)),
+        progress=lambda message, percent=None: calls.append(("progress", message)),
         checkpoint=lambda payload: checkpoints.append(dict(payload)),
     )
 
@@ -91,7 +91,7 @@ def test_prepare_resumes_forge_from_an_extracted_stage(monkeypatch):
 
     result = prepare.run(
         {"url": "https://example.com/alice", "stage_id": "url-stage41", "slug": "alice", "options": {"trim_head": 3}},
-        progress=lambda message: None,
+        progress=lambda message, percent=None: None,
         checkpoint=lambda payload: None,
     )
 
@@ -109,7 +109,7 @@ def test_prepare_returns_an_already_forged_collection(monkeypatch):
 
     assert prepare.run(
         {"url": "https://example.com/alice", "stage_id": "url-stage41", "slug": "alice", "options": {}},
-        progress=lambda message: None,
+        progress=lambda message, percent=None: None,
         checkpoint=lambda payload: None,
     ) == forged
 
@@ -164,7 +164,7 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
             "stage_id": "librivox-stage42",
             "options": prepare.DEFAULT_OPTIONS,
         }}),
-        (41, {"progress": "extracting: Downloading 1/2: Chapter one"}),
+        (41, {"progress": "extracting: Downloading 1/2: Chapter one", "progress_percent": None}),
         (41, {"payload": {
             "book_id": "180",
             "stage_id": "librivox-stage42",
@@ -178,7 +178,7 @@ def test_librivox_job_imports_checkpoints_and_forges_in_one_background_job(monke
                 "split_oversized": True,
             },
         }}),
-        (41, {"progress": "forging: Levelling 1/2: Chapter one"}),
+        (41, {"progress": "forging: Levelling 1/2: Chapter one", "progress_percent": None}),
     ]
 
 
@@ -291,7 +291,7 @@ def test_prepare_restarts_extraction_when_checkpoint_is_missing(monkeypatch):
 
     result = prepare.run(
         {"url": "https://example.com/alice", "stage_id": "url-missing", "slug": "missing-alice", "options": {}},
-        progress=lambda message: None,
+        progress=lambda message, percent=None: None,
         checkpoint=lambda payload: checkpoints.append(dict(payload)),
     )
 

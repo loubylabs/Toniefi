@@ -85,7 +85,7 @@ export const router = createRouter(routeDefinitions, {
 router.register("desk", scopedScreen(createDeskScreen, { request: api, refresh }));
 router.register("collection", scopedScreen(createCollectionScreen, { request: api, refresh, player }));
 router.register("library", scopedScreen(createLibraryScreen, { request: api, refresh }));
-router.register("tonies", scopedScreen(createToniesScreen, { request: api }));
+router.register("tonies", scopedScreen(createToniesScreen, { request: api, refresh }));
 router.register("activity", scopedScreen(createActivityScreen, { request: api, refresh }));
 router.register("settings", scopedScreen(createSettingsScreen, { request: api, refresh }));
 injectIcons();

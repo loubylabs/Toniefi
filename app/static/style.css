@@ -615,12 +615,14 @@ textarea::placeholder {
 }
 
 .status-stamp[data-status="ready"],
+.status-stamp[data-status="sent"],
 .status-stamp[data-status="success"] {
   color: var(--success);
 }
 
 .status-stamp[data-status="queued"],
-.status-stamp[data-status="extracting"] {
+.status-stamp[data-status="extracting"],
+.status-stamp[data-status="sending"] {
   color: var(--info);
 }
 
@@ -632,22 +634,6 @@ textarea::placeholder {
 .status-stamp[data-status="failed"],
 .status-stamp[data-status="failure"] {
   color: var(--failure);
-}
-
-.progress-track {
-  width: 100%;
-  height: 0.5rem;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--paper-muted);
-}
-
-.progress-fill {
-  display: block;
-  width: var(--progress, 0%);
-  height: 100%;
-  border-radius: inherit;
-  background: var(--info);
 }
 
 .empty-state {
@@ -2185,8 +2171,16 @@ img.collection-detail-cover {
   width: 3rem;
   height: 3rem;
   place-items: center;
-  border: 1px solid var(--bookcloth);
+  border: 1px solid var(--rule);
   border-radius: var(--radius);
+  background: var(--paper-muted);
+}
+
+/* The plaque is the fallback only. Real Creative Tonie artwork is a
+   full-colour photograph of a painted figure, and painting it onto the dark
+   bookcloth square would fight the thing it is there to identify. */
+.tonie-summary-mark.tonie-jacket-fallback {
+  border-color: var(--bookcloth);
   background: var(--bookcloth);
   color: var(--action);
 }
@@ -2376,7 +2370,11 @@ img.collection-detail-cover {
   display: grid;
   min-width: 0;
   padding: var(--space-5);
-  grid-template-columns: minmax(16rem, 1.5fr) minmax(14rem, 1fr) minmax(14rem, 1.1fr);
+  /* auto-fit with a min() floor, so the columns can never demand more width
+     than the row has. The fixed 16rem + 14rem + 14rem minimums overflowed by
+     273px at 768px, which fell into an 8.02px gap above the 759.98px
+     collapse rule. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
   align-items: start;
   gap: var(--space-4) var(--space-6);
   border: var(--rule-thin);
@@ -3316,15 +3314,21 @@ img.collection-detail-cover {
   grid-template-columns: auto clamp(7rem, 16vw, 10rem) minmax(0, 1fr);
 }
 
+/* The cell is the hit target, not the box. A 20x20 checkbox fails WCAG 2.2 AA
+   2.5.8, and the chapter checkboxes in the same workflow are already 44x44. */
 .library-select-cell {
   display: flex;
   align-items: flex-start;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
   padding: var(--space-5) var(--space-2) var(--space-5) var(--space-4);
+  cursor: pointer;
 }
 
 .library-select {
-  width: 1.25rem;
-  min-height: 1.25rem;
+  width: 1.375rem;
+  height: 1.375rem;
+  min-height: 1.375rem;
   margin: 0;
   accent-color: var(--bookcloth);
 }
@@ -3333,13 +3337,37 @@ img.collection-detail-cover {
   position: sticky;
   z-index: 10;
   bottom: 0;
+  display: flex;
   min-width: 0;
+  /* Capped at every width, not only on a phone. Uncapped, two ticked
+     collections measured 1469px tall inside a 900px viewport: the heading sat
+     above the top edge and the picker, the effect radios and Send were all
+     below the fold. The bar covers the very rows it is sending, so it must
+     never be able to swallow the screen. */
+  max-height: min(55svh, 34rem);
+  flex-direction: column;
   margin-top: var(--space-5);
   padding: var(--space-5);
+  overflow: hidden;
   border: var(--rule-thin);
   border-radius: var(--radius);
   background: var(--paper-raised);
   box-shadow: 0 -0.5rem 1.5rem rgba(11, 42, 32, 0.12), 0 -0.125rem 0.4rem rgba(11, 42, 32, 0.08);
+}
+
+/* Every child holds its size, so nothing but the scrolling list can be
+   squeezed out of a bar that has run out of room. The heading says what is
+   being sent, the groups carry the Tonie and the effect, and the buttons are
+   the point of the whole surface. */
+.library-send-bar > * {
+  flex: 0 0 auto;
+}
+
+.library-send-groups,
+.library-receipt {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .library-send-bar h2 {
@@ -3378,12 +3406,6 @@ img.collection-detail-cover {
   justify-content: space-between;
   gap: var(--space-3);
   overflow-wrap: anywhere;
-}
-
-.library-send-target-field {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-2);
 }
 
 .library-send-effect {
@@ -3442,41 +3464,13 @@ img.collection-detail-cover {
   }
 
   .library-send-bar {
-    display: flex;
-    /* Half the screen at most, for two reasons. The bar covers the very rows
-       it is sending, so a phone needs to keep seeing and unticking them; and
-       a bar as tall as the room its containing block has is pinned to the top
-       of that block, where the sticky bottom offset below can no longer lift
-       its buttons clear of the navigation. Taking the whole height budget did
-       both, and put the last 15px of Send behind the nav. A long chapter list
-       scrolls inside the bar instead of growing it.
-
-       svh is the viewport with the browser toolbar showing, which is the
-       height a phone actually gives a page. vh is the toolbar-collapsed one,
-       so it measures screen the reader cannot see yet. 55svh leaves room for
-       the 4.5rem navigation on any viewport worth rendering to. */
-    max-height: 55svh;
     padding: var(--space-4);
     /* Sits above the fixed .mobile-navigation (min-height: calc(4.5rem +
        env(safe-area-inset-bottom)), z-index: 70) rather than under it, so a
-       tap on Send lands on the send button, not the nav painted over it. */
+       tap on Send lands on the send button, not the nav painted over it.
+       The height cap itself lives in the base rule: it is needed at every
+       width, and stating it twice is how the desktop bar went uncapped. */
     bottom: calc(4.5rem + env(safe-area-inset-bottom));
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  /* Every child holds its size, so nothing but the list below can be squeezed
-     out of a bar that has run out of room. The heading says what is being
-     sent, the groups carry the Tonie and the effect, and the buttons are the
-     point of the whole surface. */
-  .library-send-bar > * {
-    flex: 0 0 auto;
-  }
-
-  .library-send-groups {
-    overflow-y: auto;
-    flex: 1 1 auto;
-    min-height: 0;
   }
 
   .library-send-membership li {
@@ -3491,4 +3485,294 @@ img.collection-detail-cover {
   .library-send-actions .button {
     flex: 1;
   }
+}
+
+
+/* ---------------------------------------------------- Creative Tonie identity */
+
+.tonie-jacket {
+  flex: 0 0 auto;
+  width: 3rem;
+  height: 3rem;
+  object-fit: contain;
+  border-radius: calc(var(--radius) / 2);
+  background: var(--paper-muted);
+}
+
+.tonie-jacket-fallback {
+  display: grid;
+  place-items: center;
+  font-family: Charter, "Iowan Old Style", Georgia, serif;
+  font-weight: 800;
+  color: var(--action);
+  background: var(--bookcloth);
+}
+
+.tonie-rename-field {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.tonie-rename-field label {
+  font-size: var(--type-xs);
+  font-weight: 700;
+}
+
+.tonie-name-input {
+  min-height: 2.75rem;
+}
+
+.tonie-rename-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+.dialog-subjects {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3);
+  list-style: none;
+  border: 1px solid var(--rule);
+  border-radius: calc(var(--radius) / 2);
+  background: var(--paper-muted);
+}
+
+.dialog-subjects li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.dialog-subject-jacket {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.dialog-subjects strong { display: block; }
+
+.dialog-subjects small {
+  display: block;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+
+/* ------------------------------------------------- live send on a Tonie row */
+
+.tonie-send-panel {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--rule);
+  background: var(--paper-muted);
+}
+
+.tonie-send-panel h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tonie-send-panel ol {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tonie-send-row-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tonie-send-percent {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.tonie-send-message {
+  margin: var(--space-2) 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+/* A send fills the same meter Forge does, in the information ink its stamp
+   uses, so the two phases stay tellable apart at a glance. */
+.tonie-send-row .work-cart-progress-fill {
+  background: var(--info);
+}
+
+
+/* ------------------------------------------------------- send target cards */
+
+.library-send-targets {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+
+.library-send-target-card {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+  min-height: 3.75rem;
+  padding: var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: calc(var(--radius) / 2);
+  background: var(--paper-raised);
+  cursor: pointer;
+}
+
+.library-send-target-card:has(input:checked) {
+  border-color: var(--info);
+  box-shadow: inset 0 0 0 1px var(--info);
+}
+
+/* Never colour alone: a card that cannot take this group says so in words in
+   its own free-space line, and dims to back that up. */
+.library-send-target-card[data-fits="false"] {
+  opacity: 0.75;
+}
+
+.library-send-target-jacket {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+/* A global field rule gives inputs a 2.75rem minimum height, which is right
+   for a text box and wrong for a radio: it stretched the control into a large
+   circle and pushed the jacket and the name across the card. */
+.library-send-target-card > input[type="radio"] {
+  width: 1.375rem;
+  height: 1.375rem;
+  min-height: 1.375rem;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--info);
+}
+
+.library-send-target-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.library-send-target-copy strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.library-send-target-copy small {
+  display: block;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+.library-send-validation {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0;
+  padding-left: var(--space-5);
+}
+
+
+/* ------------------------------------------------------------ send receipt */
+
+.library-receipt {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-receipt-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.library-receipt-jacket {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.library-receipt-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.library-receipt-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.library-receipt-facts,
+.library-receipt-message {
+  margin: var(--space-2) 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+}
+
+.library-receipt-row .work-cart-progress-fill {
+  background: var(--info);
+}
+
+
+/* --------------------------------------------- active work on a phone's nav */
+
+/* The closed More menu hides the Activity count, so the button itself carries
+   a marker. It is a dot, not a number: the exact figure lives one tap away on
+   the item it belongs to, and a dot never has to be read to be understood. */
+#mobileMoreButton {
+  position: relative;
+}
+
+.mobile-more-dot {
+  position: absolute;
+  top: 0.375rem;
+  right: 50%;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: -1rem;
+  border: 1px solid var(--bookcloth-deep);
+  border-radius: 999px;
+  background: var(--action);
+}
+
+.mobile-more-menu .nav-job-status {
+  margin-left: auto;
+}
+
+
+/* ------------------------------------------- collapsed chapter membership */
+
+.library-send-membership-disclosure {
+  min-width: 0;
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-2);
+}
+
+.library-send-membership-disclosure > summary {
+  min-height: 2.75rem;
+  padding: var(--space-2) 0;
+  display: flex;
+  align-items: center;
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.library-send-membership-disclosure[open] > summary {
+  color: var(--ink);
+  font-weight: 700;
 }

@@ -277,8 +277,8 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 ### Status Stamps
 
 - **Style:** White paper, a 1px current-color edge, the stamp radius, uppercase 0.75rem text, and 800 weight.
-- **State:** Queued and Extracting use information ink. Forging and Warning use warning ink. Ready and Success use success ink. Failed and Failure use failure ink.
-- **Content:** The visible phase names are `Queued`, `Extracting`, `Forging`, `Ready to send`, and `Failed`.
+- **State:** Queued, Extracting and Sending use information ink. Forging and Warning use warning ink. Ready, Sent and Success use success ink. Failed and Failure use failure ink.
+- **Content:** The visible phase names are `Queued`, `Extracting`, `Forging`, `Ready to send`, `Sending`, `Sent`, and `Failed`.
 
 ### Cards / Containers
 
@@ -308,6 +308,22 @@ Work-cart records pair a cover jacket with a compact operational body. Each reco
 ### Library Selection Bar
 
 Ticking a finished collection's row in the Library reveals a raised paper bar beneath the list. Its heading states the count selected and the total duration, with a Refresh targets control beside it. Each capacity group is a compact record: a heading naming the group, its exact chapter membership as a ruled list, a Creative Tonie picker with no preselected option, and a two-choice effect control (**Append to the back**, the default, or **Replace everything**). Picker options carry the Tonie's name, its household, and its free space. The Send action stays disabled, and a validation line explains why, until every group names a distinct Tonie whose free space fits the group.
+
+### Tonie Jackets
+
+Use the Creative Tonie's own `imageUrl` wherever a Tonie is named: its row on the Creative Tonies screen, the Library's target cards, the Library's send receipt, and every irreversible confirmation. Where no artwork exists, render the bookcloth square with chartreuse serif initials, matching the Cover Jackets fallback. The picture carries `alt=""`, because the Tonie's name always sits beside it. This is not decoration: the Tonie Cloud ships every Creative Tonie named "Creative Tonie", so two boxes in one household read identically, and the figure is the only thing that tells them apart before an operator renames them.
+
+### Tonie Rename
+
+An expanded Creative Tonie offers its name as an inline field, capped at the upstream 100 characters, saved on change against the name the browser had on screen. A Tonie with no chapters still offers it, because that is the Tonie most in need of a name. The field states plainly that renaming also changes the Tonie in the myTonies app and does not touch its chapters. An emptied name is refused in the browser and never reaches the network.
+
+### Live Send Panel
+
+A Tonie row that is the target of a queued or running send carries a panel beneath its summary, whether or not the row is expanded. It shows the phase stamp, the worker's own progress sentence verbatim, a real percentage when the worker reported one, and a meter in information ink. An unknown percentage stays indeterminate; it is never estimated, and a percentage is never parsed back out of a progress sentence.
+
+### Library Send Receipt
+
+On a successful submit the selection bar does not clear. It becomes a receipt listing each capacity group's target jacket and name, its chapter count, its live phase and its meter, with one Done action for the whole batch. A send that has left the queue reads "Activity holds its result" rather than claiming an outcome the bar never saw.
 
 ### Cover Jackets
 
@@ -345,5 +361,7 @@ Each chapter row on a Tonie carries a checkbox using the standard field styling.
 - **Don't** exchange chartreuse action ink with periwinkle preparation ink.
 - **Don't** turn square status stamps into filled pills or use color as the only state signal.
 - **Don't** invent cover art, counts, durations, storage totals, sync times, account claims, or progress percentages.
+- **Don't** leave a stale percentage on screen when the current phase cannot measure itself; report no percentage and let the meter go indeterminate.
+- **Don't** name a Creative Tonie in a destructive confirmation without also showing its figure.
 - **Don't** label extracted work ready, label configured credentials connected, or hide stale data behind an empty state.
 - **Don't** remove explicit keyboard alternatives for drag ordering or animate accepted slips and progress against reduced-motion preference.

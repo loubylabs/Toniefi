@@ -202,3 +202,48 @@ export function rebindTargets(selections, tonies) {
 export function newOperationKey() {
   return globalThis.crypto?.randomUUID?.() || `push-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
+
+
+export function tonieJobKey(householdId, tonieId) {
+  return `${householdId}/${tonieId}`;
+}
+
+
+export function activeSendsByTonie(jobs) {
+  // A push payload already names its target, so nothing new has to be stored
+  // to put a running send on the row it is sending to.
+  const map = new Map();
+  for (const job of jobs || []) {
+    if (job?.kind !== "push") continue;
+    if (job.status !== "queued" && job.status !== "running") continue;
+    const payload = job.payload || {};
+    if (!payload.household_id || !payload.tonie_id) continue;
+    const key = tonieJobKey(payload.household_id, payload.tonie_id);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(job);
+  }
+  for (const entries of map.values()) entries.sort((a, b) => a.id - b.id);
+  return map;
+}
+
+
+export function sendJobView(job) {
+  // The message is the worker's own sentence, shown verbatim. Nothing here
+  // parses "7/30" back out of it: the bar's number comes from the column the
+  // worker wrote, so the words and the figure can never disagree.
+  const reported = job?.progress_percent;
+  // Number(null) is 0, not NaN, so a null column would otherwise render as a
+  // determinate bar sitting at 0%: a measured figure where there is none.
+  // Absent has to be rejected before the range check, not by it.
+  const percent = Number(reported);
+  const determinate = reported != null
+    && Number.isFinite(percent) && percent >= 0 && percent <= 100;
+  const queued = job?.status === "queued";
+  return {
+    phase: job?.phase || job?.status || "queued",
+    label: queued ? "Queued" : "Sending",
+    message: job?.progress || (queued ? "Waiting for a worker" : "Working"),
+    mode: determinate ? "determinate" : "indeterminate",
+    percent: determinate ? percent : null,
+  };
+}

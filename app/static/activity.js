@@ -31,7 +31,10 @@ export function activityAction(job) {
       kind: "collection",
       href: `/collection/${encodeURIComponent(slug)}`,
       label: "Open collection",
-      guidance: "Select the collection in the Library and send it again.",
+      // Never "send it again". Every chapter this job managed to add is
+      // already on the Tonie for good, so re-sending the whole collection
+      // would duplicate them, and a Tonie write has no undo.
+      guidance: "Some chapters may already be on the Tonie. Open the Tonie, check what landed, then send only the rest.",
     };
   }
   const completedPreparation = PREPARATION_KINDS.has(job.kind)
@@ -81,6 +84,8 @@ function phaseLabel(phase) {
     extracting: "Extracting",
     forging: "Forging",
     ready: "Ready to send",
+    sending: "Sending",
+    sent: "Sent",
     running: "Running",
     failed: "Failed",
     done: "Finished",
@@ -112,12 +117,21 @@ function timestamp(job) {
 
 
 export function activityFacts(job, formatTime = timestamp) {
-  return [
+  const facts = [
     ["Type", kindLabel(job.kind)],
     ["Phase", phaseLabel(job.phase)],
     ["Status", phaseLabel(job.status)],
     ["Updated", formatTime(job)],
   ];
+  // A finished send already stores what it delivered. Printing it is what
+  // lets someone returning in two weeks tell which figure got which stories.
+  const result = job.result || {};
+  if (job.kind === "push" && result.tonie && result.chapters) {
+    const plural = result.chapters === 1 ? "chapter" : "chapters";
+    const duration = result.duration ? ` (${result.duration})` : "";
+    facts.push(["Delivered", `${result.chapters} ${plural}${duration} to ${result.tonie}`]);
+  }
+  return facts;
 }
 
 

@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     result      TEXT NOT NULL DEFAULT '{}',
     error       TEXT NOT NULL DEFAULT '',
     created_at  REAL NOT NULL,
-    updated_at  REAL NOT NULL
+    updated_at  REAL NOT NULL,
+    progress_percent REAL
 );
 CREATE TABLE IF NOT EXISTS settings (
     key    TEXT PRIMARY KEY,
@@ -41,6 +42,7 @@ CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
 FORGE_OPERATION_IDS_MIGRATION = "2026-08-28-forge-operation-ids"
 PUSH_BATCH_SOURCES_MIGRATION = "2026-08-29-push-batch-sources"
 EMPTY_PLAYLIST_PICKS_MIGRATION = "2026-08-29-empty-playlist-picks"
+JOB_PROGRESS_PERCENT_MIGRATION = "2026-08-29-job-progress-percent"
 
 
 def connect() -> sqlite3.Connection:
@@ -63,10 +65,35 @@ def init() -> None:
             _migrate_forge_operation_ids(conn)
             _migrate_push_batch_sources(conn)
             _migrate_empty_playlist_picks(conn)
+            _migrate_job_progress_percent(conn)
             conn.commit()
         except BaseException:
             conn.rollback()
             raise
+
+
+def _migrate_job_progress_percent(conn: sqlite3.Connection) -> None:
+    """Give an existing database the nullable percentage column.
+
+    CREATE TABLE IF NOT EXISTS never alters a table that already exists, so a
+    database created before this column needs the ALTER. NULL is the right
+    default and the right absent value: it means the worker has not reported a
+    figure, which is exactly what the front end already renders as an
+    indeterminate bar rather than as zero progress.
+    """
+    applied = conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE name=?",
+        (JOB_PROGRESS_PERCENT_MIGRATION,),
+    ).fetchone()
+    if applied:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+    if "progress_percent" not in columns:
+        conn.execute("ALTER TABLE jobs ADD COLUMN progress_percent REAL")
+    conn.execute(
+        "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
+        (JOB_PROGRESS_PERCENT_MIGRATION, time.time()),
+    )
 
 
 def _migrate_forge_operation_ids(conn: sqlite3.Connection) -> None:

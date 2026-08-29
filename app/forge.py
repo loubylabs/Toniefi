@@ -16,10 +16,17 @@ from typing import Any, Callable
 
 from . import audio, config, library
 
-Progress = Callable[[str], None]
+Progress = Callable[..., None]
+"""A progress reporter: progress(message) or progress(message, percent).
+
+`percent` is a float 0-100 when the phase can measure itself, and None when it
+cannot. It is always passed through rather than remembered, so a phase with
+nothing to measure clears the last figure instead of leaving a full bar over
+work that is still running.
+"""
 
 
-def _noop(_: str) -> None:
+def _noop(*_: Any, **__: Any) -> None:
     return None
 
 
@@ -224,12 +231,18 @@ def _run_at_path(
 
     if trim_head or trim_tail:
         for index, track in enumerate(tracks, start=1):
-            progress(f"Trimming {index}/{total}: {track['title']}")
+            progress(
+                f"Trimming {index}/{total}: {track['title']}",
+                audio.step_percent(index - 1, total),
+            )
             trim_track(path / track["name"], trim_head, trim_tail)
 
     if normalize:
         for index, track in enumerate(tracks, start=1):
-            progress(f"Levelling {index}/{total}: {track['title']}")
+            progress(
+                f"Levelling {index}/{total}: {track['title']}",
+                audio.step_percent(index - 1, total),
+            )
             normalize_track(path / track["name"])
 
     if clean_titles:

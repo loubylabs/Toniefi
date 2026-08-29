@@ -204,6 +204,10 @@ def present(job: dict) -> dict:
         displayed["phase"] = "failed"
     elif separator and prefix in {"extracting", "forging"}:
         displayed["phase"] = prefix
+    elif status == "done" and kind == "push":
+        displayed["phase"] = "sent"
+    elif status == "running" and kind == "push":
+        displayed["phase"] = "sending"
     elif status == "done" and (
         kind in {"prepare_url", "upload_prepare", "forge"}
         or (kind == "librivox" and collection_stage == "forged")
@@ -223,8 +227,11 @@ def _handle(job: dict) -> dict:
     payload = job["payload"]
     job_id = job["id"]
 
-    def progress(message: str) -> None:
-        db.update_job(job_id, progress=message)
+    def progress(message: str, percent: float | None = None) -> None:
+        # The percentage is written every time, including as NULL. Leaving a
+        # stale figure behind would show a full bar during a phase that cannot
+        # measure itself, which is a lie the indeterminate bar does not tell.
+        db.update_job(job_id, progress=message, progress_percent=percent)
 
     if kind == "librivox":
         current = dict(payload)
@@ -243,7 +250,7 @@ def _handle(job: dict) -> dict:
             extracted = ingest.import_librivox(
                 current["book_id"],
                 stage_id=stage_id,
-                progress=lambda message: progress(f"extracting: {message}"),
+                progress=lambda message, percent=None: progress(f"extracting: {message}", percent),
             )
             current["slug"] = extracted["slug"]
             db.update_job(job_id, payload=current)
@@ -254,7 +261,7 @@ def _handle(job: dict) -> dict:
             trim_head=options["trim_head"],
             trim_tail=options["trim_tail"],
             split_oversized=options["split_oversized"],
-            progress=lambda message: progress(f"forging: {message}"),
+            progress=lambda message, percent=None: progress(f"forging: {message}", percent),
         )
 
     if kind == "prepare_url":
@@ -329,7 +336,7 @@ def _handle(job: dict) -> dict:
                 trim_head=options["trim_head"],
                 trim_tail=options["trim_tail"],
                 split_oversized=options["split_oversized"],
-                progress=lambda message: progress(f"forging: {message}"),
+                progress=lambda message, percent=None: progress(f"forging: {message}", percent),
             )
         except Exception:
             mark_upload_stage(stage)

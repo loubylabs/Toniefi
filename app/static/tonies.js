@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
+import { activeSendsByTonie, sendJobView, tonieJobKey } from "./send.js";
 import {
   announce,
   element,
@@ -10,6 +11,7 @@ import {
   restoreFocus,
   setBusy,
   showConfirmDialog,
+  tonieJacket,
   tonieLabel,
 } from "./shared.js";
 
@@ -19,6 +21,15 @@ export function buildTonieChapterPayload(tonie, chapters) {
     base: (tonie.chapters || []).map(({ id, title }) => ({ id, title: title || "" })),
     chapters: chapters.map(({ id, title }) => ({ id, title: title || "" })),
   };
+}
+
+
+export function buildTonieNamePayload(tonie, name) {
+  // base_name is the precondition: the name this browser had on screen when
+  // the operator typed. The Tonie Cloud offers no conditional write, so this
+  // is what stops a rename from silently reverting one made in the myTonies
+  // app a moment ago. It is the same guard buildTonieChapterPayload applies.
+  return { base_name: tonie.name || "", name };
 }
 
 
@@ -93,6 +104,17 @@ function iconNode(name, className = "") {
 }
 
 
+export function tonieSubject(tonie, detail) {
+  // What a no-undo dialog has to carry: the figure, its name, and what this
+  // particular action will do to it.
+  return {
+    imageUrl: tonie.imageUrl,
+    name: tonieLabel(tonie),
+    detail,
+  };
+}
+
+
 function tonieKey(tonie) {
   return `${tonie.householdId}:${tonie.id}`;
 }
@@ -109,7 +131,7 @@ export function chapterDrafts(list) {
 }
 
 
-export function createToniesScreen({ request = api } = {}) {
+export function createToniesScreen({ request = api, refresh = null } = {}) {
   return function renderToniesScreen({ workspace, signal }) {
     let active = true;
     let tonies = [];
@@ -120,6 +142,11 @@ export function createToniesScreen({ request = api } = {}) {
     // Keyed by chapter id and cleared on every reload, so a tick that predates
     // a remote change can never reach a write.
     const selectedChapters = new Set();
+    // The jobs the refresh coordinator last published. A send names its target
+    // in its own payload, so this is everything needed to put a running
+    // transfer on the row it is transferring to.
+    let jobs = [];
+    let sendingKeys = new Set();
 
     const root = element("section", { className: "tonies-screen", "aria-labelledby": "tonies-title" });
     const refreshButton = element("button", {
@@ -195,6 +222,66 @@ export function createToniesScreen({ request = api } = {}) {
           : "TonieFi could not reload remote truth. The visible Tonie information is marked stale.";
         notify(`${error.message} ${recovery}`, { kind: "failure", timeout: 0 });
       }
+    }
+
+    async function saveName(tonie, name) {
+      const path = `/api/tonies/${encodeURIComponent(tonie.householdId)}/${encodeURIComponent(tonie.id)}`;
+      try {
+        const updated = await request(path, {
+          method: "PATCH",
+          body: JSON.stringify(buildTonieNamePayload(tonie, name)),
+          ...(signal ? { signal } : {}),
+        });
+        if (!active || signal?.aborted) return;
+        // Bump the token for the same reason the chapter write does: a load
+        // already in flight must not put the pre-rename Tonie back.
+        loadToken += 1;
+        tonies = tonies.map((entry) => (tonieKey(entry) === tonieKey(tonie) ? updated : entry));
+        loadState = "loaded";
+        loadError = "";
+        render({ focusKey: `tonie-${tonie.id}-name` });
+        notify(`This Tonie is now called "${updated.name}".`, { kind: "success" });
+        announce(`Creative Tonie renamed to ${updated.name}.`);
+      } catch (error) {
+        if (!active || signal?.aborted) return;
+        notify(`${error.message} The name on screen was put back.`, { kind: "failure", timeout: 0 });
+        await load().catch(() => {});
+      }
+    }
+
+    function renameField(tonie) {
+      const nameId = `tonie-${tonie.id}-name`;
+      const nameInput = element("input", {
+        id: nameId,
+        type: "text",
+        className: "tonie-name-input",
+        value: tonie.name || "",
+        maxlength: "100",
+        "data-tonie-control": "",
+        "data-focus-key": `tonie-${tonie.id}-name`,
+      });
+      nameInput.addEventListener("change", async () => {
+        const wanted = nameInput.value.trim();
+        if (!wanted) {
+          // Blanking a chapter title keeps the old one, because a slipped
+          // keystroke must not leave a nameless chapter. A rename is a
+          // deliberate act on one field, so an empty one is refused out loud
+          // rather than being quietly ignored.
+          nameInput.value = tonie.name || "";
+          notify("A Creative Tonie needs a name.", { kind: "failure", timeout: 0 });
+          return;
+        }
+        if (wanted === (tonie.name || "")) return;
+        await saveName(tonie, nameInput.value);
+      });
+      return element("div", { className: "tonie-rename-field" }, [
+        element("label", { for: nameId, text: "Name on myTonies" }),
+        nameInput,
+        element("p", {
+          className: "tonie-rename-note",
+          text: "Renaming changes this Tonie in the myTonies app too. It does not touch its chapters.",
+        }),
+      ]);
     }
 
     function chapterRow(tonie, chapter, index) {
@@ -273,6 +360,9 @@ export function createToniesScreen({ request = api } = {}) {
 
     function tonieDetail(tonie) {
       const detail = element("div", { className: "tonie-detail" });
+      // Built before the empty-state return, so a Tonie with nothing on it can
+      // still be named. That is the Tonie most in need of one.
+      detail.append(renameField(tonie));
       if (!tonie.chapters?.length) {
         detail.append(element("div", { className: "empty-state tonie-empty" }, [
           iconNode("tonie"),
@@ -291,6 +381,7 @@ export function createToniesScreen({ request = api } = {}) {
         const confirmed = await showConfirmDialog({
           title: `Clear ${tonieLabel(tonie)}?`,
           message: `Clear all ${tonie.chapters.length} chapters from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          subject: tonieSubject(tonie, `${tonie.chapter_count || tonie.chapters.length} chapters will be cleared`),
           confirmLabel: "Clear every chapter",
           destructive: true,
         });
@@ -340,6 +431,7 @@ export function createToniesScreen({ request = api } = {}) {
         const confirmed = await showConfirmDialog({
           title: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"}?`,
           message: `Remove ${removing.size} ${removing.size === 1 ? "chapter" : "chapters"} from "${tonieLabel(tonie)}"?\n\nThis cannot be undone. Your library on disk is not touched.`,
+          subject: tonieSubject(tonie, `${removing.size} of ${tonie.chapters.length} chapters will be removed`),
           confirmLabel: removing.size === 1 ? "Remove chapter" : `Remove ${removing.size} chapters`,
           destructive: true,
         });
@@ -382,6 +474,44 @@ export function createToniesScreen({ request = api } = {}) {
       return detail;
     }
 
+    function sendPanel(tonie) {
+      const entries = activeSendsByTonie(jobs).get(tonieJobKey(tonie.householdId, tonie.id)) || [];
+      if (!entries.length) return null;
+      const rows = entries.map((job) => {
+        const view = sendJobView(job);
+        const meterAttributes = view.mode === "determinate"
+          ? {
+            role: "progressbar",
+            "aria-label": `Send to ${tonie.name || "this Creative Tonie"}`,
+            "aria-valuemin": "0",
+            "aria-valuemax": "100",
+            "aria-valuenow": String(Math.round(view.percent)),
+            style: `--work-progress:${view.percent}%`,
+          }
+          : { "aria-label": `${view.label}, progress amount is not available` };
+        return element("li", { className: "tonie-send-row" }, [
+          element("div", { className: "tonie-send-row-head" }, [
+            element("span", { className: "status-stamp", "data-status": view.phase, text: view.label }),
+            view.mode === "determinate"
+              ? element("span", { className: "tonie-send-percent", text: `${Math.round(view.percent)}%` })
+              : null,
+          ].filter(Boolean)),
+          element("p", { className: "tonie-send-message", text: view.message }),
+          element("span", {
+            className: "work-cart-progress-track",
+            "data-mode": view.mode,
+            ...meterAttributes,
+          }, [element("span", { className: "work-cart-progress-fill" })]),
+        ]);
+      });
+      return element("div", { className: "tonie-send-panel", role: "status", "aria-live": "polite" }, [
+        element("h3", {
+          text: entries.length === 1 ? "Sending to this Tonie" : `${entries.length} sends to this Tonie`,
+        }),
+        element("ol", {}, rows),
+      ]);
+    }
+
     function tonieRow(tonie) {
       const key = tonieKey(tonie);
       const open = key === openKey;
@@ -392,7 +522,7 @@ export function createToniesScreen({ request = api } = {}) {
         "data-focus-key": `tonie-${key}-summary`,
         "data-tonie-summary": "",
       }, [
-        iconNode("tonie", "tonie-summary-mark"),
+        tonieJacket(tonie, "tonie-summary-mark"),
         element("span", { className: "tonie-summary-copy" }, [
           element("strong", { text: tonie.name || "Creative Tonie" }),
           element("small", { text: tonie.householdName || "Household name unavailable" }),
@@ -409,6 +539,11 @@ export function createToniesScreen({ request = api } = {}) {
         render({ focusKey: `tonie-${key}-summary` });
       });
       const children = [button];
+      // Shown whether or not the row is expanded: a transfer is the reason to
+      // look at this screen, and hiding it behind a disclosure is what left
+      // the operator with nothing to watch.
+      const sending = sendPanel(tonie);
+      if (sending) children.push(sending);
       if (open) children.push(tonieDetail(tonie));
       return element("li", { className: "tonie-row", "data-open": String(open) }, children);
     }
@@ -475,6 +610,20 @@ export function createToniesScreen({ request = api } = {}) {
       restoreFocus(token, { root, fallback: refreshButton });
     }
 
+    function onRefresh(snapshot) {
+      if (!active || signal?.aborted) return;
+      if (snapshot.stale?.includes("jobs")) return;
+      jobs = snapshot.jobs || [];
+      const nextKeys = new Set(activeSendsByTonie(jobs).keys());
+      // A send that has left the active set has finished or failed, and this
+      // Tonie's chapter count and free space are now wrong. Re-read once,
+      // rather than leaving stale figures beside a bar that just filled.
+      const finished = [...sendingKeys].some((key) => !nextKeys.has(key));
+      sendingKeys = nextKeys;
+      render();
+      if (finished) load().catch(() => {});
+    }
+
     refreshButton.addEventListener("click", async () => {
       refreshButton.disabled = true;
       try {
@@ -492,9 +641,12 @@ export function createToniesScreen({ request = api } = {}) {
     load().catch((error) => {
       if (active && !signal?.aborted) notify(error.message, { kind: "failure", timeout: 0 });
     });
+    const unsubscribe = refresh ? refresh.subscribe(onRefresh) : () => {};
+    if (refresh) refresh.request();
     return () => {
       active = false;
       loadToken += 1;
+      unsubscribe();
     };
   };
 }

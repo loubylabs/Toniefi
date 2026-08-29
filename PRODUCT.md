@@ -35,6 +35,8 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 - Default Forge processing normalizes perceived loudness to −16 LUFS with a −1.5 dBTP ceiling, cleans source-title noise, and splits oversized tracks. This is the strongest safe loudness target currently supported without clipping.
 - Each collection progresses and fails independently so one bad source does not block the rest of a batch.
 - Nothing is sent to a Creative Tonie without explicit user selection and confirmation.
+- A Creative Tonie can be renamed from TonieFi. The rename writes only the name through the Tonie Cloud, so it changes nothing about the Tonie's chapters and triggers no re-transcoding, and it is visible in the myTonies app as well.
+- A send reports a real percentage, measured by audio bytes uploaded rather than by chapter count. Phases with nothing to measure, such as signing in, report no percentage rather than an estimate.
 - myTonies uses a private, unsupported API. Two-factor accounts are not supported by the current login method.
 - Credentials may come from environment variables or the local SQLite settings store. Credentials saved through the UI are stored as plain text and must be described honestly.
 - A complete credential pair is Configured. Connected is reserved for a successful connection test in the current browser session.

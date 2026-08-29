@@ -197,11 +197,19 @@ export function updateShell(snapshot) {
   }
 
   const active = snapshot.jobs.filter((job) => job.status === "queued" || job.status === "running").length;
-  const activityStatus = document.getElementById("activityStatus");
-  const activityCount = document.getElementById("activityCount");
-  if (activityStatus && activityCount) {
-    activityCount.textContent = String(active);
-    activityStatus.hidden = active === 0;
-    activityStatus.setAttribute("aria-label", `${active} ${active === 1 ? "job" : "jobs"} active`);
+  // Both navigations, because only one of them is on screen at a time and the
+  // phone was the one showing nothing.
+  for (const [statusId, countId] of [
+    ["activityStatus", "activityCount"],
+    ["mobileActivityStatus", "mobileActivityCount"],
+  ]) {
+    const status = document.getElementById(statusId);
+    const count = document.getElementById(countId);
+    if (!status || !count) continue;
+    count.textContent = String(active);
+    status.hidden = active === 0;
+    status.setAttribute("aria-label", `${active} ${active === 1 ? "job" : "jobs"} active`);
   }
+  const moreStatus = document.getElementById("mobileMoreStatus");
+  if (moreStatus) moreStatus.hidden = active === 0;
 }

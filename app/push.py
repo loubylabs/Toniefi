@@ -8,6 +8,7 @@ chapter per track.
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, TypedDict
@@ -75,6 +76,10 @@ def client_from_settings() -> tonies.TonieCloud:
 # ------------------------------------------------------ chapter management
 
 TITLE_LIMIT = 128
+# The Tonie Cloud documents maxLength 100 for a Creative Tonie's name. That is a
+# different limit from TITLE_LIMIT, which caps a chapter title at 128. They are
+# different fields on different resources; do not unify them.
+NAME_LIMIT = 100
 _target_locks_guard = threading.Lock()
 _target_locks: dict[tuple[str, str], threading.RLock] = {}
 
@@ -93,8 +98,38 @@ class StaleChapters(RuntimeError):
     """The Tonie's chapters changed since the browser last looked at them."""
 
 
+class StaleTonieName(RuntimeError):
+    """This Tonie was renamed somewhere else since the browser last read it."""
+
+
 class StalePush(RuntimeError):
     """A confirmed local or remote send precondition no longer holds."""
+
+
+class PartialSend(RuntimeError):
+    """A send stopped after writing some chapters to the Tonie.
+
+    Each chapter is an immediate remote write, so a failure at chapter 18 of 30
+    leaves 17 on the box for good. Push jobs are deliberately not retryable,
+    and telling the operator to send it again would duplicate those 17. This
+    error carries what actually landed, so the guidance can name the real next
+    safe action instead of guessing.
+    """
+
+    def __init__(self, underlying: str, uploaded: int, total: int, tonie: str) -> None:
+        self.underlying = underlying
+        self.uploaded = uploaded
+        self.total = total
+        self.tonie = tonie
+        if uploaded:
+            landed = (
+                f"Stopped at chapter {uploaded + 1} of {total}. "
+                f"Chapters 1 to {uploaded} are already on {tonie}. "
+                f"Open that Tonie, check what landed, then send only the rest."
+            )
+        else:
+            landed = f"Nothing was added to {tonie}."
+        super().__init__(f"{underlying} {landed}")
 
 
 def _identity(chapter: dict) -> tuple[str, str]:
@@ -296,13 +331,127 @@ def _set_tonie_chapters_locked(
         client.close()
 
 
+def set_tonie_name(
+    household_id: str,
+    tonie_id: str,
+    base_name: str,
+    name: str,
+) -> dict[str, Any]:
+    """Rename one Creative Tonie, without touching its chapters.
+
+    `base_name` is the name the browser had on screen when the operator
+    decided. The upstream offers no conditional write, so comparing it here
+    narrows the lost-update window to a single round trip rather than the life
+    of an open tab. It is the same guard merge_chapters applies, for the same
+    reason.
+    """
+    wanted = (name or "").strip()[:NAME_LIMIT]
+    if not wanted:
+        # A chapter title keeps its old value when blanked, because a slipped
+        # keystroke there must not leave a nameless chapter on a Tonie. A
+        # rename is the opposite case: it is a deliberate act on one field, so
+        # silently keeping the old name would report success for a write that
+        # was never made.
+        raise ValueError("A Creative Tonie needs a name.")
+
+    with target_lease(household_id, tonie_id):
+        client = client_from_settings()
+        try:
+            tonie = client.get_tonie(household_id, tonie_id)
+            if (tonie.get("name") or "") != (base_name or ""):
+                raise StaleTonieName("This Tonie was renamed somewhere else. Reloading.")
+
+            # get_tonie does not carry the household, but a GET /api/tonies
+            # entry does, and this response has to match it for every caller.
+            household_name = ""
+            for house in client.households():
+                if house.get("id") == household_id:
+                    household_name = house.get("name", "")
+                    break
+
+            tonie["name"] = wanted
+            tonie["householdId"] = household_id
+            tonie["householdName"] = household_name
+
+            # Built BEFORE the write. Nothing that can raise may run after a
+            # landed PATCH, or a rename the Tonie Cloud accepted is reported as
+            # a failure and the operator retries a change already made.
+            answer = describe_tonie(tonie)
+            client.set_name(household_id, tonie_id, wanted)
+            return answer
+        finally:
+            client.close()
+
+
 # -------------------------------------------------- sending library tracks
 
-Progress = Callable[[str], None]
+Progress = Callable[..., None]
 
 
-def _noop(_: str) -> None:
+def _noop(*_: Any, **__: Any) -> None:
     return None
+
+
+class ProgressThrottle:
+    """Rate-limit progress writes so a byte counter is not one write per chunk.
+
+    A 20 MB upload reads in thousands of chunks. Writing a row for each would
+    hammer SQLite for a bar the browser only reads every 2.5 seconds. A report
+    gets through when the figure has actually moved, or when enough time has
+    passed, and flush always writes so the end of a phase is never lost.
+    """
+
+    def __init__(
+        self,
+        progress: Progress,
+        min_interval: float = 0.5,
+        min_delta: float = 1.0,
+    ) -> None:
+        self._progress = progress
+        self._min_interval = min_interval
+        self._min_delta = min_delta
+        self._last_at = 0.0
+        self._last_percent: float | None = None
+        self._started = False
+
+    def report(self, message: str, percent: float | None) -> None:
+        now = time.monotonic()
+        moved = (
+            not self._started
+            or self._last_percent is None
+            or percent is None
+            or abs(percent - self._last_percent) >= self._min_delta
+        )
+        if not moved and (now - self._last_at) < self._min_interval:
+            return
+        self.flush(message, percent)
+
+    def flush(self, message: str, percent: float | None) -> None:
+        self._started = True
+        self._last_at = time.monotonic()
+        self._last_percent = percent
+        self._progress(message, percent)
+
+
+def upload_percent(
+    tracks: list[dict[str, Any]], done_index: int, position: int
+) -> float | None:
+    """How much of a send's audio is on the wire, by bytes.
+
+    `done_index` counts fully uploaded tracks; `position` is how far into the
+    current one the transport has read. Returns None when any track is missing
+    a size, because a partial total would understate the work and so inflate
+    the bar. An unknown percentage is the honest answer, and the front end
+    already renders it as an indeterminate meter.
+    """
+    sizes = [track.get("size") for track in tracks]
+    if any(not size for size in sizes):
+        return None
+    total = float(sum(sizes))
+    if total <= 0:
+        return None
+    done = float(sum(sizes[:done_index]))
+    return max(0.0, min(100.0, 100.0 * (done + float(position)) / total))
 
 
 def _flatten(assignment: dict[str, Any]) -> list[tuple[str, str]]:
@@ -476,15 +625,43 @@ def _push_confirmed_tracks(
                 client.clear_tonie(payload["household_id"], payload["tonie_id"])
 
             uploaded = []
-            for position, (slug, track) in enumerate(resolved, start=1):
-                path = library.track_path(slug, track["name"])
-                label = track.get("title") or Path(track["name"]).stem
-                progress(f"Uploading {position}/{len(resolved)}: {label}")
-                file_id = client.upload_file(path)
-                client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
-                uploaded.append({"title": label, "file": file_id})
+            tracks = [track for _, track in resolved]
+            throttle = ProgressThrottle(progress)
+            tonie_name = state.get("name") or payload["tonie_id"]
+            try:
+                for position, (slug, track) in enumerate(resolved, start=1):
+                    path = library.track_path(slug, track["name"])
+                    label = track.get("title") or Path(track["name"]).stem
+                    message = f"Uploading {position}/{len(resolved)}: {label}"
+                    done_index = position - 1
+                    throttle.flush(message, upload_percent(tracks, done_index, 0))
+                    # The default arguments bind this iteration's values. A bare
+                    # closure over `message` would report every chunk of every
+                    # file under the last file's name once the loop moved on.
+                    file_id = client.upload_file(
+                        path,
+                        on_bytes=lambda at, m=message, d=done_index: throttle.report(
+                            m, upload_percent(tracks, d, at)
+                        ),
+                    )
+                    client.add_chapter(payload["household_id"], payload["tonie_id"], label, file_id)
+                    uploaded.append({"title": label, "file": file_id})
+            except Exception as exc:
+                # Every add_chapter above already landed. Reporting a bare
+                # transport error here is what let the recovery guidance say
+                # "send it again", which would duplicate whatever survived.
+                raise PartialSend(
+                    underlying=str(exc) or exc.__class__.__name__,
+                    uploaded=len(uploaded),
+                    total=len(resolved),
+                    tonie=tonie_name,
+                ) from exc
 
-            progress("Confirming")
+            # The bar measures audio uploaded, and by here it really is all up.
+            # Sign-in and Clear report no percentage at all, because neither has
+            # a size to measure and an invented figure is what this whole column
+            # exists to avoid.
+            progress("Confirming", upload_percent(tracks, len(tracks), 0))
             state = client.get_tonie(payload["household_id"], payload["tonie_id"])
             return {
                 "tonie": state.get("name", payload["tonie_id"]),

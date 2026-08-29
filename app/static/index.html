@@ -94,11 +94,19 @@
     <button type="button" id="mobileMoreButton" aria-expanded="false" aria-controls="mobileMoreMenu">
       <span data-icon="more" aria-hidden="true"></span>
       <span>More</span>
+      <!-- The desktop sidebar is hidden below 759.98px, and its badge went with
+           it, so a phone showed no sign at all that a send was running. The dot
+           marks the closed menu; the count lives on the item inside it. -->
+      <span class="mobile-more-dot" id="mobileMoreStatus" hidden aria-hidden="true"></span>
     </button>
     <div class="mobile-more-menu" id="mobileMoreMenu" hidden>
       <a href="/activity" data-route="activity">
         <span data-icon="activity" aria-hidden="true"></span>
         <span>Activity</span>
+        <span class="nav-job-status" id="mobileActivityStatus" hidden aria-label="jobs active">
+          <span data-icon="clock" aria-hidden="true"></span>
+          <span id="mobileActivityCount"></span>
+        </span>
       </a>
       <a href="/settings" data-route="settings">
         <span data-icon="settings" aria-hidden="true"></span>
