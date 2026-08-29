@@ -47,6 +47,12 @@ jobs:
 
       - run: pytest tests/ -q
 
+      # The browser half of the suite. It has no dependencies beyond the node
+      # the runner already carries, and it was documented in the README while
+      # nothing here ran it, so 161 tests were guarding a pull request only if
+      # somebody remembered to run them by hand.
+      - run: node --test tests/static/*.test.mjs
+
   publish:
     needs: test
     runs-on: ubuntu-latest
