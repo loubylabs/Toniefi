@@ -420,11 +420,11 @@ def download_collection(slug: str):
     to fit in memory or in the small RAM-backed scratch directory.
     """
     try:
-        members = library.open_download(slug)
+        entries = library.download_entries(slug)
     except FileNotFoundError as exc:
         raise fail(404, str(exc)) from exc
     return StreamingResponse(
-        archive.stream(members),
+        archive.stream(entries),
         media_type="application/zip",
         headers={"Content-Disposition": content_disposition(f"{slug}.zip")},
     )

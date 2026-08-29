@@ -11,6 +11,7 @@ import io
 import json
 import os
 import zipfile
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -199,7 +200,7 @@ def test_stream_emits_the_archive_in_chunks_rather_than_one_buffer(isolated):
     slug = make_collection()
     (config.LIBRARY_DIR / slug / "001-chapter.mp3").write_bytes(b"x" * (3 * archive.CHUNK_BYTES))
 
-    chunks = list(archive.stream(library.open_download(slug)))
+    chunks = list(archive.stream(library.download_entries(slug)))
 
     assert len(chunks) > 3
     assert zipfile.ZipFile(io.BytesIO(b"".join(chunks))).testzip() is None
@@ -283,24 +284,46 @@ def test_archive_accepts_a_file_stamped_before_the_zip_epoch(isolated):
     assert bundle.getinfo("001-the-boy-who-would-not-grow-up.mp3").date_time == archive.ZIP_EPOCH
 
 
-def test_an_accepted_download_survives_the_collection_being_deleted(isolated):
-    """Delete unlinks the folder. An already-open download still completes."""
+def test_a_download_opens_one_file_at_a_time(isolated):
+    """A 500-track collection is legal intake. Opening all of it is not."""
     slug = make_collection()
-    members = library.open_download(slug)
+    open_now = 0
+    peak = 0
+    real_open = Path.open
 
-    library.delete(slug)
-    bundle = zipfile.ZipFile(io.BytesIO(b"".join(archive.stream(members))))
+    def counting_open(self, *args, **kwargs):
+        nonlocal open_now, peak
+        handle = real_open(self, *args, **kwargs)
+        close = handle.close
+        open_now += 1
+        peak = max(peak, open_now)
 
-    assert not (config.LIBRARY_DIR / slug).exists()
-    assert bundle.testzip() is None
-    assert bundle.read("002-the-shadow.mp3") == b"audio for The Shadow"
+        def counted_close():
+            nonlocal open_now
+            if not handle.closed:
+                open_now -= 1
+            close()
+
+        handle.close = counted_close
+        return handle
+
+    Path.open = counting_open
+    try:
+        list(archive.stream(library.download_entries(slug)))
+    finally:
+        Path.open = real_open
+
+    assert peak == 1
+    assert open_now == 0
 
 
-def test_streaming_closes_every_handle_it_was_handed(isolated):
+def test_a_file_deleted_mid_download_fails_the_download_rather_than_truncating_it(isolated):
+    """A zip that stops early must not look like a zip that finished."""
     slug = make_collection()
-    members = library.open_download(slug)
-    handles = [source for source, _ in members if not isinstance(source, bytes)]
+    entries = library.download_entries(slug)
+    chunks = archive.stream(entries)
+    next(chunks)
+    (config.LIBRARY_DIR / slug / "002-chapter.mp3").unlink()
 
-    list(archive.stream(members))
-
-    assert handles and all(handle.closed for handle in handles)
+    with pytest.raises(FileNotFoundError):
+        list(chunks)

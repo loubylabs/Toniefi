@@ -190,7 +190,7 @@ The library is deliberately plain:
 
 Download on any Library row returns that collection as one zip of audio, cover art, and `collection.json`, so the files are reachable without shell access to the host. Track order lives in the manifest rather than in the filenames, so the archive renumbers its tracks from the manifest and a collection reordered during Review still unpacks in the reviewed order. The archived `collection.json` is rewritten to name the files the archive actually holds, so the index never points at a filename the archive lacks.
 
-The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed. Every file is opened before the response starts, which makes an accepted download a snapshot: a delete landing mid-download unlinks the folder, and the download still completes.
+The archive is streamed as it is built and stores its members uncompressed, so it never has to fit in memory and never re-compresses audio that is already compressed. One file is open at a time, so a collection at the 500-file intake limit cannot exhaust the process descriptor budget and an abandoned download strands nothing. Deleting a collection while it is downloading aborts that download, and the browser reports it as interrupted rather than saving a truncated archive that looks complete.
 
 Library deletion is intentionally destructive. Its confirmation names the local collection folder and audio files that will be removed.
 

@@ -1,7 +1,7 @@
-"""Turn open files into a zip archive that is sent while it is built.
+"""Turn a list of files into a zip archive that is sent while it is built.
 
 Three decisions shape this module, and all of them come from what a collection
-is and how the rest of the application treats one.
+is and how large one is allowed to get.
 
 Nothing is compressed. MP3, JPEG, and the rest of a collection are already
 compressed formats, so deflating them costs CPU and saves close to nothing.
@@ -13,22 +13,28 @@ to 2 GB. Building the whole archive anywhere before sending it would trade a
 download for an out-of-memory error, so the archive is yielded in chunks and
 only a chunk is ever held.
 
-Members arrive already open, and this module closes them. A caller opens the
-whole collection at once while it holds the manifest lock, which is what makes
-an accepted download a snapshot: a delete landing mid-stream unlinks the folder,
-but an already-open file still reads to its end.
+One file is open at a time. A collection may hold up to the 500-file intake
+limit, so opening every member up front would run a legitimate download into
+the process descriptor limit, and a client that disconnects before the first
+chunk would strand every one of those handles. Opening inside the loop bounds
+both at a single descriptor.
 
-Streaming means the total size is not known when the response starts, so the
+The cost of opening late is that a file deleted mid-stream is not found, and
+the archive cannot be finished. That failure is raised rather than papered
+over: the response is already chunked, so an aborted stream never receives its
+terminating chunk and the browser reports an interrupted download instead of
+saving a truncated file that looks complete.
+
+Streaming also means the total size is unknown when the response starts, so the
 reply carries no Content-Length and the browser shows an unknown-size download.
 That is the accepted price for never buffering the archive.
 """
 from __future__ import annotations
 
-import os
 import time
 import zipfile
 from collections.abc import Iterable, Iterator
-from typing import BinaryIO
+from pathlib import Path
 
 # Read size for source files, and therefore the rough size of a yielded chunk.
 CHUNK_BYTES = 512 * 1024
@@ -78,32 +84,22 @@ def _member_info(name: str, mtime: float | None) -> zipfile.ZipInfo:
     return info
 
 
-def stream(members: Iterable[tuple[BinaryIO | bytes, str]]) -> Iterator[bytes]:
-    """Yield one zip archive of `members`, each an open reader or literal bytes.
-
-    Every open reader passed in is closed before this generator finishes, on
-    the success path and on an abandoned download alike.
-    """
-    held = list(members)
+def stream(entries: Iterable[tuple[Path | bytes, str]]) -> Iterator[bytes]:
+    """Yield one zip archive of `entries`, each a source file or literal bytes."""
     sink = _Sink()
-    try:
-        with zipfile.ZipFile(sink, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as bundle:
-            for source, name in held:
-                if isinstance(source, bytes):
-                    with bundle.open(_member_info(name, None), mode="w") as member:
-                        member.write(source)
-                else:
-                    info = _member_info(name, os.fstat(source.fileno()).st_mtime)
-                    with bundle.open(info, mode="w") as member:
-                        while block := source.read(CHUNK_BYTES):
-                            member.write(block)
-                            if payload := sink.drain():
-                                yield payload
-                if payload := sink.drain():
-                    yield payload
-        if payload := sink.drain():
-            yield payload
-    finally:
-        for source, _ in held:
-            if not isinstance(source, bytes):
-                source.close()
+    with zipfile.ZipFile(sink, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as bundle:
+        for source, name in entries:
+            if isinstance(source, bytes):
+                with bundle.open(_member_info(name, None), mode="w") as member:
+                    member.write(source)
+            else:
+                info = _member_info(name, source.stat().st_mtime)
+                with bundle.open(info, mode="w") as member, source.open("rb") as handle:
+                    while block := handle.read(CHUNK_BYTES):
+                        member.write(block)
+                        if payload := sink.drain():
+                            yield payload
+            if payload := sink.drain():
+                yield payload
+    if payload := sink.drain():
+        yield payload

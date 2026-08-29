@@ -26,7 +26,7 @@ import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
 from uuid import uuid4
 
 from . import audio, config
@@ -1003,29 +1003,6 @@ def download_entries(slug: str) -> list[tuple[Path | bytes, str]]:
             archived.pop("cover", None)
         entries.append((json.dumps(archived, indent=2).encode("utf-8"), MANIFEST))
         return entries
-
-
-def open_download(slug: str) -> list[tuple[BinaryIO | bytes, str]]:
-    """Open every file of one collection at once, so a download is a snapshot.
-
-    Opening under the manifest lock is what keeps an accepted download honest.
-    A delete landing mid-stream unlinks the folder, but an already-open file
-    still reads to its end, so the browser never receives a truncated archive
-    that only looks like a complete one.
-
-    Ownership of the handles passes to the caller, which is `archive.stream`.
-    """
-    with _manifest_lock:
-        members: list[tuple[BinaryIO | bytes, str]] = []
-        try:
-            for source, name in download_entries(slug):
-                members.append((source if isinstance(source, bytes) else source.open("rb"), name))
-        except BaseException:
-            for handle, _ in members:
-                if not isinstance(handle, bytes):
-                    handle.close()
-            raise
-        return members
 
 
 def next_index(path: Path) -> int:
