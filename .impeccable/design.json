@@ -48,7 +48,7 @@
       { "name": "reduced-motion", "value": "0.01ms, one iteration", "purpose": "Global reduced-motion fallback; the indeterminate meter becomes a static centered bar." }
     ],
     "breakpoints": [
-      { "name": "focused-review-stack", "value": "1279.98px" },
+      { "name": "collection-page-stack", "value": "1279.98px" },
       { "name": "desk-stack", "value": "1199px" },
       { "name": "service-index-compact", "value": "1199.98px" },
       { "name": "mobile-bottom-navigation", "value": "759.98px" }

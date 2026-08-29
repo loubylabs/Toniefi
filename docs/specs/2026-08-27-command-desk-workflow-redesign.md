@@ -222,7 +222,7 @@ Settings also reports the 90-minute Tonie limit, usable headroom, library path, 
 
 **THESIS:** TonieFi is a working circulation desk for stories. It refuses the generic dark dashboard and the linear setup wizard.
 **OWN-WORLD:** Deep bottle-green bookcloth, cool utility paper, chartreuse action ink, periwinkle information ink, square status stamps, thin rules, full-color cover jackets, and compact service labels.
-**STORY:** Add several sources, watch each move independently through preparation, review the ready jackets, and choose their Creative Tonies.
+**STORY:** Add several sources, watch each move independently through preparation, then pick the ready jackets in the Library and send them to their Creative Tonies.
 **FIRST VIEWPORT:** The service index occupies the left, batch intake owns the center, and the live work cart remains visible at right. The count-aware preparation action closes the intake tray.
 **FORM:** Command Desk, selected from three Circulation Desk compositions. Seed key `17e3c753`.
 **FINISH:** unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
@@ -308,7 +308,7 @@ The SQLite schema does not change. Existing job rows and collection manifests re
 2. Every successful preparation runs extraction and default Forge processing, then appears in the Library, ready to send.
 3. One failed source does not block another source from reaching the Library.
 4. A Forge failure can retry from its extracted slug without downloading again.
-5. No Creative Tonie changes until the user reviews a collection and confirms a target.
+5. No Creative Tonie changes without an explicit selection and an explicit Send, and a confirmation dialog is required before any replace.
 6. Account status and credential source remain visible and truthful.
 7. All existing Tonie chapter safety tests continue to pass.
 8. Desktop and mobile implementations preserve the Command Desk hierarchy and Circulation Desk visual system.

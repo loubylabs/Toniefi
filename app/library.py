@@ -9,10 +9,10 @@ Layout, deliberately boring so nothing is trapped in this app:
 
 Delete Toniefi tomorrow and you still have plain folders of MP3s.
 
-Track ORDER lives in collection.json, not in the filenames -- the Review step
-lets you drag chapters around, and renaming files to match would churn the
-whole folder every time. Files found on disk that the manifest doesn't know
-about get appended at the end, in filename order.
+Track ORDER lives in collection.json, not in the filenames -- the collection
+page lets you drag chapters around, and renaming files to match would churn
+the whole folder every time. Files found on disk that the manifest doesn't
+know about get appended at the end, in filename order.
 """
 from __future__ import annotations
 
