@@ -63,10 +63,14 @@ export async function api(path, options = {}) {
 
   const body = await responseBody(response);
   if (!response.ok) {
-    const message = typeof body === "object" && body?.detail
-      ? formatDetail(body.detail)
-      : `${response.status} ${response.statusText || "Request failed"}`;
-    throw new ApiError(message, {
+    const statusMessage = `${response.status} ${response.statusText || "Request failed"}`;
+    // `detail` can be present and still carry nothing readable, e.g. FastAPI's
+    // `{"detail": []}`: the array is truthy, but joining zero entries yields
+    // "". An ApiError with an empty message is unhelpful everywhere it
+    // surfaces, so a blank join falls back to the status line rather than
+    // handing every caller an empty string to display or to test for failure.
+    const detailMessage = typeof body === "object" && body?.detail ? formatDetail(body.detail) : "";
+    throw new ApiError(detailMessage || statusMessage, {
       status: response.status,
       details: body,
       url: response.url || path,

@@ -399,14 +399,22 @@ export function createLibraryScreen({
       const token = targetsToken + 1;
       targetsToken = token;
       let loaded = null;
-      let failure = "";
+      let rejected = false;
+      let failureMessage = "";
       try {
         loaded = await request("/api/tonies", { signal });
       } catch (error) {
-        failure = error.message;
+        // Whether the request failed is its own fact, tracked independently
+        // of the error's message text. A rejection can carry an empty
+        // message (an ApiError built from a 503 body of `{"detail": []}`,
+        // say), and testing `if (failure)` against that text would read the
+        // empty string as no failure at all and fall into the success branch
+        // below with `loaded` still null.
+        rejected = true;
+        failureMessage = error.message || "The Tonie Cloud did not explain what went wrong.";
       }
       if (token !== targetsToken) return;
-      if (failure) {
+      if (rejected) {
         // A failed request is not the operator deciding anything, so it must
         // not look like one. Leave `tonies` and every group's chosen target
         // exactly as they were: rebindTargets on an empty list would read as
@@ -416,7 +424,7 @@ export function createLibraryScreen({
         // safe 409. Surface the failure and let the operator retry the
         // refresh, the same as showStale keeps the last good collection
         // index visible on a failed background load.
-        toniesError = failure;
+        toniesError = failureMessage;
       } else {
         tonies = loaded;
         toniesError = "";

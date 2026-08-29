@@ -67,6 +67,30 @@ test("api() falls back to JSON.stringify for a detail entry with no msg", () => 
   ));
 });
 
+test("api() falls back to the status line when detail is an empty list", () => {
+  // FastAPI can answer a 503 with {"detail": []}. The array is truthy, but
+  // joining zero entries yields "", and an ApiError with no message is
+  // unreadable and, worse, indistinguishable from no error at all to a
+  // caller that tests the message's truthiness.
+  const response = new Response(JSON.stringify({ detail: [] }), {
+    status: 503,
+    headers: { "content-type": "application/json" },
+  });
+
+  return withFetch(response, () => (
+    assert.rejects(
+      () => api("/api/tonies"),
+      (error) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.status, 503);
+        assert.notEqual(error.message, "");
+        assert.match(error.message, /503/);
+        return true;
+      },
+    )
+  ));
+});
+
 test("api() still reads a plain string detail", () => {
   const response = new Response(JSON.stringify({ detail: "Not found" }), {
     status: 404,

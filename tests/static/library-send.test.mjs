@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { ApiError } from "../../app/static/api.js";
 import { createLibraryScreen, createSelectionState, selectableCollections } from "../../app/static/library.js";
 
 import { buttonWithText, flush, installDom } from "./mini-dom.mjs";
@@ -469,6 +470,79 @@ test("a failed target refresh leaves the chosen target selected and the operatio
 
     assert.equal(screen.pushes.length, 2);
     assert.equal(screen.pushes[1].operation_key, firstKey);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a rejection with an empty message is still a failure: the chosen target and operation key survive a retry", async () => {
+  // A 503 body of {"detail": []} joins to an empty string, so the ApiError
+  // that reaches loadTargets can carry no text at all. Deciding failure from
+  // whether error.message is truthy would misread this rejection as success.
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [
+      [blueTonie()],
+      () => { throw new ApiError("", { status: 503 }); },
+    ],
+    pushOutcomes: [new Error("The Tonie Cloud refused the batch.")],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+    assert.equal(screen.pushes.length, 1);
+    const firstKey = screen.pushes[0].operation_key;
+    assert.ok(firstKey.length > 0);
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    // The empty-message rejection must still read as a failure: the picker
+    // keeps the operator's choice and Send is not blocked by it.
+    assert.deepEqual(screen.node(".library-send-target").childNodes.map((option) => option.selected), [false, true]);
+    assert.equal(screen.node(".library-send-submit").disabled, false);
+
+    await screen.node(".library-send-submit").click();
+    await flush();
+
+    assert.equal(screen.pushes.length, 2);
+    assert.equal(screen.pushes[1].operation_key, firstKey);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a rejection with an empty message still shows non-empty text in the validation bar", async () => {
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    toniesQueue: [
+      [blueTonie()],
+      () => { throw new ApiError("", { status: 503 }); },
+    ],
+  });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const picker = screen.node(".library-send-target");
+    picker.value = "h1/t1";
+    await picker.dispatchEvent({ type: "change" });
+    await flush();
+
+    await screen.node(".library-send-refresh").click();
+    await flush();
+
+    const text = screen.node(".library-send-validation").textContent;
+    assert.match(text, /Creative Tonies could not refresh\. \S/);
+    assert.equal(screen.dom.spoken.at(-1), text);
   } finally {
     screen.stop();
   }
