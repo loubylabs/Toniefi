@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import archive, audio, config, db, ingest, jobs, library, push, tonies
+from . import archive, audio, config, db, ingest, jobs, library, push, tonies, version
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -26,7 +26,7 @@ async def lifespan(_: FastAPI):
     jobs.stop()
 
 
-app = FastAPI(title="Toniefi", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Toniefi", version=version.APP_VERSION, lifespan=lifespan)
 
 
 def invalid_collection_slug_response() -> JSONResponse:
@@ -218,6 +218,8 @@ class Credentials(RequestModel):
 @app.get("/api/status")
 def status() -> dict[str, Any]:
     return {
+        "version": version.APP_VERSION,
+        "build": version.BUILD,
         "library_dir": str(config.LIBRARY_DIR),
         "tonie_limit_seconds": config.TONIE_LIMIT_SECONDS,
         "usable_limit_seconds": config.usable_limit(),

@@ -7,7 +7,7 @@ access control, so treat network reachability as the only gate and do not expose
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/status` | Paths, capacity, tool availability, credential source |
+| `GET` | `/api/status` | Version, build, paths, capacity, tool availability, credential source |
 | `POST` | `/api/settings/credentials` | Save a myTonies credential pair locally |
 | `DELETE` | `/api/settings/credentials` | Remove locally saved credentials (idempotent) |
 | `POST` | `/api/settings/test` | Test the active credentials against the Tonie Cloud |
@@ -36,6 +36,12 @@ access control, so treat network reachability as the only gate and do not expose
 | `GET` | `/api/jobs/{id}` | One job |
 | `POST` | `/api/jobs/{id}/retry` | Retry one eligible failed job |
 | `GET` | `/healthz` | Liveness |
+
+## Application status
+
+`GET /api/status` includes `version`, the semantic application release, and `build`, the
+seven-character label for the deployed Git commit. Source checkouts with no injected commit report
+`development` for `build`.
 
 ## Prepare several source URLs
 
