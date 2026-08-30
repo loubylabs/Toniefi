@@ -939,7 +939,7 @@ def test_url_job_retry_restarts_an_incomplete_hidden_extraction(
             "stage_id": stage.identity,
             "options": {},
         },
-        progress=lambda _: None,
+        progress=lambda _, percent=None: None,
         checkpoint=lambda _: None,
     )
 
@@ -1010,12 +1010,12 @@ def test_url_retry_after_publish_interruption_returns_exactly_one_collection(
     payload = {"url": "https://video.test/story"}
 
     with pytest.raises(KeyboardInterrupt, match="after publication"):
-        prepare.run(payload, progress=lambda _: None, checkpoint=checkpoints.append)
+        prepare.run(payload, progress=lambda _, percent=None: None, checkpoint=checkpoints.append)
 
     resumed_payload = checkpoints[-1]
     result = prepare.run(
         resumed_payload,
-        progress=lambda _: None,
+        progress=lambda _, percent=None: None,
         checkpoint=checkpoints.append,
     )
 
