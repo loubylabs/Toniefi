@@ -2580,11 +2580,11 @@ img.collection-detail-cover {
   border-bottom: var(--rule-thin);
 }
 
-.settings-path-fact {
+.settings-code-fact {
   grid-column: 1 / -1;
 }
 
-.settings-path-fact dd {
+.settings-code-fact dd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--type-sm);
 }
@@ -3272,7 +3272,7 @@ img.collection-detail-cover {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .settings-path-fact {
+  .settings-code-fact {
     grid-column: auto;
   }
 

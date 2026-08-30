@@ -324,12 +324,16 @@ test("Settings credential view makes environment precedence explicit", () => {
 
 test("Settings facts derive usable headroom and tool status from server truth", () => {
   assert.deepEqual(settingsFacts({
+    version: "1.0.0",
+    build: "bd9d91b",
     library_dir: "/library",
     tonie_limit_seconds: 5400,
     usable_limit_seconds: 5370,
     tonie_limit_human: "1h 30m",
     tools: { ffmpeg: true, ffprobe: false },
   }), {
+    version: "1.0.0",
+    build: "bd9d91b",
     limit: "1h 30m",
     usable: "1h 29m 30s",
     headroom: "30s",
@@ -349,6 +353,42 @@ test("Settings facts derive usable headroom and tool status from server truth", 
     label: "Missing",
     state: "missing",
   });
+});
+
+
+test("Settings shows application version and build from status", () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = {
+    activeElement: null,
+    createElement: (tagName) => new TinyElement(tagName),
+    getElementById: () => null,
+  };
+  const workspace = new TinyElement("main");
+  const status = {
+    version: "1.0.0",
+    build: "bd9d91b",
+    credentials: { configured: false, source: "none", username: "" },
+    tonie_limit_seconds: 5400,
+    usable_limit_seconds: 5370,
+    tools: {},
+  };
+  const refresh = {
+    snapshot: { status },
+    subscribe: () => () => {},
+    request: async () => ({ status, stale: [], errors: {} }),
+  };
+
+  try {
+    createSettingsScreen({ request: async () => ({}), refresh })({
+      workspace,
+      signal: new AbortController().signal,
+    });
+    const system = descendants(workspace).find((node) => node.className === "settings-section system-settings");
+    assert.match(textOf(system), /Version1\.0\.0/);
+    assert.match(textOf(system), /Buildbd9d91b/);
+  } finally {
+    globalThis.document = originalDocument;
+  }
 });
 
 
