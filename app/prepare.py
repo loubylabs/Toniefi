@@ -45,7 +45,7 @@ def run(payload: dict[str, Any], *, progress: Progress, checkpoint: Checkpoint) 
             stage_id=stage_id,
             use_chapters=options["use_chapters"],
             playlist_items=current.get("playlist_items"),
-            progress=lambda message: progress(f"extracting: {message}"),
+            progress=lambda message, percent=None: progress(f"extracting: {message}", percent),
         )
         current["slug"] = extracted["slug"]
         checkpoint(current)
@@ -56,5 +56,5 @@ def run(payload: dict[str, Any], *, progress: Progress, checkpoint: Checkpoint) 
         trim_head=options["trim_head"],
         trim_tail=options["trim_tail"],
         split_oversized=options["split_oversized"],
-        progress=lambda message: progress(f"forging: {message}"),
+        progress=lambda message, percent=None: progress(f"forging: {message}", percent),
     )

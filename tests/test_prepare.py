@@ -38,13 +38,13 @@ def test_prepare_extracts_checkpoints_then_forges(monkeypatch):
     monkeypatch.setattr(
         prepare.ingest,
         "import_url",
-        lambda url, **kw: kw["progress"]("Fetching audio") or {"slug": "alice"},
+        lambda url, **kw: kw["progress"]("Fetching audio", 25.0) or {"slug": "alice"},
     )
     monkeypatch.setattr(
         prepare.forge,
         "run_collection_stage",
         lambda stage_id, **kw: (
-            kw["progress"]("Levelling 1/1: Alice")
+            kw["progress"]("Levelling 1/1: Alice", 50.0)
             or calls.append(("forge", stage_id))
             or {"slug": "alice", "stage": "forged"}
         ),
@@ -56,7 +56,7 @@ def test_prepare_extracts_checkpoints_then_forges(monkeypatch):
 
     result = prepare.run(
         {"url": "https://example.com/alice", "options": {}},
-        progress=lambda message, percent=None: calls.append(("progress", message)),
+        progress=lambda message, percent=None: calls.append(("progress", message, percent)),
         checkpoint=lambda payload: checkpoints.append(dict(payload)),
     )
 
@@ -65,8 +65,8 @@ def test_prepare_extracts_checkpoints_then_forges(monkeypatch):
     assert checkpoints[-1]["slug"] == "alice"
     assert checkpoints[-1]["options"] == prepare.DEFAULT_OPTIONS
     assert calls == [
-        ("progress", "extracting: Fetching audio"),
-        ("progress", "forging: Levelling 1/1: Alice"),
+        ("progress", "extracting: Fetching audio", 25.0),
+        ("progress", "forging: Levelling 1/1: Alice", 50.0),
         ("forge", "url-stage41"),
     ]
     assert result["stage"] == "forged"
