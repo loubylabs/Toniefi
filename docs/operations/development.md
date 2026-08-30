@@ -86,6 +86,9 @@ look simplifiable and are not:
   to start in push order and the emulated arm64 leg runs for minutes, so an older build can finish
   last. The build publishes only immutable per-commit tags; a later step re-fetches the default
   branch, checks this commit is still the tip, and only then retags `latest` from the build digest.
+- **Published builds have no release-tag path.** The workflow does not run for Git tags and emits
+  only immutable `sha-` image tags. `latest` comes only from the guarded retag after a default
+  branch build.
 - **Concurrency is per-ref, not per-commit.** A per-commit group lets two `main` builds run at
   once, so `latest` can move backwards. The accepted cost is that three quick pushes can leave the
   middle one without a `sha-` tag.

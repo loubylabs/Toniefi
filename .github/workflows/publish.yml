@@ -8,7 +8,6 @@ name: publish
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -94,15 +93,12 @@ jobs:
           # later, by the guarded retag step, so a build that main has moved
           # past cannot claim it.
           images: ghcr.io/${{ github.repository }}
-          # The default flavor emits latest on a semver tag push. Turn that
-          # off: nothing here may write latest at all. The guarded retag step
-          # is the only thing that moves it, so a v0.9.1 pushed after v1.0.0
-          # cannot move it backwards and neither can a stale build.
+          # Disable the default latest tag. Nothing here may write latest at
+          # all. The guarded retag step is the only thing that moves it, so a
+          # stale build cannot move it backwards.
           flavor: latest=false
           tags: |
             type=sha,prefix=sha-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push
         id: build

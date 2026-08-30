@@ -1,6 +1,7 @@
 import importlib
+from pathlib import Path
 
-from app import version
+from app import main, version
 
 
 def test_build_label_shortens_a_commit():
@@ -20,3 +21,15 @@ def test_build_uses_development_when_the_commit_environment_is_empty(monkeypatch
             assert version.BUILD == "development"
     finally:
         importlib.reload(version)
+
+
+def test_fastapi_metadata_uses_the_canonical_application_version():
+    assert main.app.version == version.APP_VERSION
+
+
+def test_publish_workflow_only_creates_sha_image_tags():
+    workflow = (Path(__file__).parents[1] / ".github/workflows/publish.yml").read_text()
+
+    assert "type=sha,prefix=sha-" in workflow
+    assert "type=semver" not in workflow
+    assert 'tags: ["v*"]' not in workflow
