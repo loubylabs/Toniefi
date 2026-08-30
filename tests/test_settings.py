@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config, db, main, push, tonies
+from app import config, db, main, push, tonies, version
 
 
 @pytest.fixture
@@ -29,6 +29,17 @@ def isolated_settings(monkeypatch, tmp_path):
 @pytest.fixture
 def client(isolated_settings) -> TestClient:
     return TestClient(main.app)
+
+
+def test_status_reports_the_application_version_and_build(client, monkeypatch):
+    monkeypatch.setattr(version, "APP_VERSION", "2.3.4")
+    monkeypatch.setattr(version, "BUILD", "abc1234")
+
+    response = client.get("/api/status")
+
+    assert response.status_code == 200
+    assert response.json()["version"] == "2.3.4"
+    assert response.json()["build"] == "abc1234"
 
 
 def test_delete_credentials_removes_both_saved_values_and_reports_none(client):

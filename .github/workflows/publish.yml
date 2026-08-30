@@ -119,6 +119,7 @@ jobs:
           # number is what tells that retry apart from the run it retries.
           build-args: |
             YTDLP_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            TONIEFI_BUILD_COMMIT=${{ github.sha }}
           # Without a cache every run reinstalls ffmpeg and every wheel twice,
           # once per architecture.
           cache-from: type=gha

@@ -60,6 +60,7 @@ pattern until the scan goes quiet.
 ```text
 app/
   main.py       FastAPI routes and application shell
+  version.py    Semantic application release and normalized build label
   prepare.py    Extract-to-Forge preparation orchestration
   ingest.py     URL, LibriVox, and staged upload extraction
   forge.py      Trim, loudness, title cleanup, and splitting
@@ -91,6 +92,11 @@ look simplifiable and are not:
 - **`YTDLP_REFRESH` is keyed on the run, not on the commit.** `requirements.txt` leaves `yt-dlp`
   unpinned on purpose, but the pip layer keys on that file, which never changes, so the build cache
   would silently reintroduce the pin.
+
+The semantic application version has one authority: `app/version.py`. The publish workflow passes
+the full Git commit to Docker as `TONIEFI_BUILD_COMMIT`. Docker makes it available to the
+application, which reports the first seven characters as its build label. A source checkout with
+no commit injection reports `development`.
 
 One step cannot be automated: a GHCR package is created private even from a public repository, and
 no workflow can change that. It is set once in the package settings.

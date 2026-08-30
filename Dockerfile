@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir --upgrade yt-dlp
 
 COPY app ./app
 
+ARG TONIEFI_BUILD_COMMIT=development
+ENV TONIEFI_BUILD_COMMIT=$TONIEFI_BUILD_COMMIT
+
 ENV LIBRARY_DIR=/library \
     WORK_DIR=/work \
     DATA_DIR=/data \
