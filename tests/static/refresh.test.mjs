@@ -145,6 +145,7 @@ test("refresh publishes jobs to the live shell and cart while collections is unr
     }]),
     "/api/jobs/history": Promise.resolve([]),
     "/api/collections": collections.promise,
+    "/api/desk/dismissals": Promise.resolve({}),
   };
   const coordinator = createRefreshCoordinator({
     request: (path) => resources[path],
@@ -189,6 +190,7 @@ test("refresh retains fulfilled slices and records stale errors per resource", a
       if (path === "/api/status") return { configured: true };
       if (path === "/api/jobs") return [{ id: 1 }];
       if (path === "/api/jobs/history") return [{ id: 2 }];
+      if (path === "/api/desk/dismissals") return {};
       if (collectionsFail) throw new Error("collection lease busy");
       return [{ slug: "story" }];
     },

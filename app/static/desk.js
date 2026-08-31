@@ -250,6 +250,15 @@ function workPhase(job, collection) {
   return "queued";
 }
 
+// A row is dismissible once nothing more will happen to it on its own.
+// Work still in flight has no dismiss control at all: the cart must never
+// let the operator hide something that is running.
+const DISMISSIBLE_PHASES = new Set(["failed", "ready", "sent"]);
+
+function workStartedSince(jobs, slug, moment) {
+  return jobs.some((job) => jobSlug(job) === slug && Number(job.created_at) > moment);
+}
+
 function workRelevance(job, collection) {
   if (job.status === "queued" || job.status === "running") return "active";
   // A finished send has no collection of its own to open, and the collection
@@ -267,7 +276,7 @@ function sourceLabel(job, collection) {
   return job.payload?.url || collection?.url || collection?.source || job.label || "Local collection";
 }
 
-export function buildWorkCartItems(jobs, collections, limit = 7) {
+export function buildWorkCartItems(jobs, collections, dismissals = {}, limit = 7) {
   const collectionBySlug = new Map(collections.map((collection) => [collection.slug, collection]));
   const represented = new Set();
   const items = [];
@@ -287,10 +296,15 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
     // A push must not claim the slug, or sending a collection would hide the
     // collection's own row: the one thing the operator needs to still see.
     if (slug && job.kind !== "push") represented.add(slug);
+    const key = `job-${job.id}`;
+    // The slug is claimed above before this returns, so hiding one failure
+    // cannot put an older failure for the same collection in its place.
+    // Skipping here also spends none of the row limit on a hidden row.
+    if (dismissals[key] !== undefined) continue;
     const phase = workPhase(job, collection);
     const workProgress = truthfulWorkProgress(job);
     items.push({
-      key: `job-${job.id}`,
+      key,
       jobId: job.id,
       kind: job.kind,
       phase,
@@ -300,6 +314,7 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
       error: job.error || "",
       slug,
       canRetry: Boolean(job.retryable),
+      canDismiss: DISMISSIBLE_PHASES.has(phase),
       trackCount: Number(collection?.track_count) || 0,
       duration: collection?.total_duration || "",
       hasCover: Boolean(collection?.cover),
@@ -311,9 +326,15 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
   for (const collection of collections) {
     if (items.length >= limit) break;
     if (collection.stage !== "forged" || represented.has(collection.slug)) continue;
+    const key = `collection-${collection.slug}`;
     represented.add(collection.slug);
+    // A collection keeps its slug for life, so a dismissal alone would hide it
+    // for good. Newer work on that slug is what earns the row back, which is
+    // what makes re-preparing a story visible again.
+    const dismissedAt = dismissals[key];
+    if (dismissedAt !== undefined && !workStartedSince(jobs, collection.slug, dismissedAt)) continue;
     items.push({
-      key: `collection-${collection.slug}`,
+      key,
       jobId: null,
       kind: "collection",
       phase: "ready",
@@ -323,6 +344,7 @@ export function buildWorkCartItems(jobs, collections, limit = 7) {
       error: "",
       slug: collection.slug,
       canRetry: false,
+      canDismiss: true,
       trackCount: Number(collection.track_count) || 0,
       duration: collection.total_duration || "",
       hasCover: Boolean(collection.cover),
@@ -437,7 +459,7 @@ function readForgeOptions(root) {
   });
 }
 
-function workCartRow(item, { request, requestRefresh, navigate, signal }) {
+function workCartRow(item, { request, requestRefresh, navigate, dismiss, signal }) {
   const details = phaseDetails(item.phase);
   const row = element("li", { className: "work-cart-row", "data-phase": item.phase });
   const cover = item.hasCover && item.slug
@@ -495,6 +517,7 @@ function workCartRow(item, { request, requestRefresh, navigate, signal }) {
     "data-route": "activity",
     "data-focus-key": `${item.key}-primary`,
   }, [element("span", { text: "View details" }), iconNode("chevronRight")]));
+  const trailing = element("div", { className: "work-cart-row-buttons" });
   if (item.canRetry) {
     const retry = element("button", {
       type: "button",
@@ -517,8 +540,31 @@ function workCartRow(item, { request, requestRefresh, navigate, signal }) {
         notify(error.message, { kind: "failure", timeout: 0 });
       }
     });
-    actions.append(retry);
+    trailing.append(retry);
   }
+  if (item.canDismiss) {
+    const dismissRow = element("button", {
+      type: "button",
+      className: "button button-secondary work-cart-dismiss",
+      // The row already names the collection, so the visible control is the
+      // mark alone. Assistive technology gets the whole sentence.
+      "aria-label": `Dismiss ${item.title} from the work cart`,
+      title: "Dismiss from the work cart",
+      "data-focus-key": `${item.key}-dismiss`,
+    }, [iconNode("close")]);
+    dismissRow.addEventListener("click", async () => {
+      dismissRow.disabled = true;
+      try {
+        await dismiss([item.key]);
+      } catch (error) {
+        if (signal?.aborted) return;
+        dismissRow.disabled = false;
+        notify(error.message, { kind: "failure", timeout: 0 });
+      }
+    });
+    trailing.append(dismissRow);
+  }
+  if (trailing.childNodes.length) actions.append(trailing);
   body.append(actions);
   row.append(cover, body);
   return row;
@@ -533,11 +579,52 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
   ]);
   const count = element("span", { className: "work-cart-count", text: "0" });
   const heading = element("h2", { id: "work-cart-title", text: "Live work cart" });
+  // One button for the whole batch, and only once there is a batch to clear.
+  // Below two finished rows the per-row control is already the shorter path.
+  const clearFinished = element("button", {
+    type: "button",
+    className: "button button-secondary work-cart-clear",
+    "data-focus-key": "work-cart-clear",
+    hidden: true,
+  }, [iconNode("close"), element("span", { text: "Clear finished" })]);
   const header = element("header", { className: "work-cart-heading" }, [
     iconNode("desk", "desk-section-icon"),
     heading,
     count,
+    clearFinished,
   ]);
+  let finishedKeys = [];
+
+  async function dismiss(keys) {
+    // Nothing is deleted. The jobs keep their errors in Activity and the
+    // collections keep their place in the Library; only these rows go.
+    await request("/api/desk/dismissals", {
+      method: "POST",
+      body: JSON.stringify({ keys }),
+    });
+    if (signal?.aborted) return;
+    notify(
+      keys.length === 1
+        ? "Dismissed from the work cart. It is still in Activity."
+        : `${keys.length} rows dismissed from the work cart. They are still in Activity.`,
+      { kind: "success" },
+    );
+    await requestRefresh();
+  }
+
+  clearFinished.addEventListener("click", async () => {
+    const keys = finishedKeys.slice();
+    if (!keys.length) return;
+    clearFinished.disabled = true;
+    try {
+      await dismiss(keys);
+    } catch (error) {
+      if (signal?.aborted) return;
+      notify(error.message, { kind: "failure", timeout: 0 });
+    } finally {
+      if (!signal?.aborted) clearFinished.disabled = false;
+    }
+  });
   const staleLabel = element("strong", { text: "Work cart may be out of date" });
   const staleMessage = element("span");
   const retryRefresh = element("button", {
@@ -588,7 +675,7 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
 
   function onRefresh(snapshot) {
     if (signal?.aborted) return;
-    const items = buildWorkCartItems(snapshot.jobs, snapshot.collections);
+    const items = buildWorkCartItems(snapshot.jobs, snapshot.collections, snapshot.dismissals || {});
     const notice = deskRefreshNotice(snapshot);
     const staleAnnouncement = staleRefreshAnnouncement(priorStaleKey, notice);
     priorStaleKey = staleAnnouncement.key;
@@ -600,8 +687,10 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
     empty.hidden = items.length > 0;
     list.hidden = items.length === 0;
     withFocusRestored(() => {
-      replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate, signal })));
+      replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate, dismiss, signal })));
     }, { root: host });
+    finishedKeys = items.filter((item) => item.canDismiss).map((item) => item.key);
+    clearFinished.hidden = finishedKeys.length < 2;
     const ready = items.filter((item) => item.phase === "ready").length;
     libraryAction.hidden = ready === 0;
     libraryActionLabel.textContent = ready === 1

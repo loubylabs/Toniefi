@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -211,6 +212,12 @@ class TonieNamePatch(RequestModel):
 class Credentials(RequestModel):
     username: str
     password: str
+
+
+class DeskDismissals(RequestModel):
+    """The work cart rows to hide, named by the keys the cart itself builds."""
+
+    keys: list[str] = Field(min_length=1, max_length=db.DESK_DISMISSAL_LIMIT)
 
 
 # ------------------------------------------------------------------ status
@@ -621,6 +628,43 @@ def retry_job(job_id: int) -> dict[str, Any]:
     if not job:
         raise fail(404, "No such job.")
     return jobs.present(job)
+
+
+# --------------------------------------------------------------- work cart
+
+DESK_DISMISSAL_KEY_DETAIL = (
+    "A work cart row is dismissed by its own key: job-<number> or collection-<slug>."
+)
+
+
+def _validated_dismissal_key(key: str) -> str:
+    """Return one key the work cart could have built, or refuse the request."""
+    kind, separator, rest = key.partition("-")
+    if not separator:
+        raise fail(400, DESK_DISMISSAL_KEY_DETAIL)
+    if kind == "job":
+        # The work cart writes `job-${job.id}`, and an id is an ASCII integer.
+        # str.isdigit() alone would accept other scripts' digits.
+        if not (rest.isascii() and rest.isdigit()):
+            raise fail(400, DESK_DISMISSAL_KEY_DETAIL)
+        return key
+    if kind == "collection":
+        library.validate_public_collection_slug(rest)
+        return key
+    raise fail(400, DESK_DISMISSAL_KEY_DETAIL)
+
+
+@app.get("/api/desk/dismissals")
+def list_desk_dismissals() -> dict[str, float]:
+    return db.desk_dismissals()
+
+
+@app.post("/api/desk/dismissals")
+def dismiss_desk_rows(body: DeskDismissals) -> dict[str, float]:
+    """Hide finished work cart rows. Nothing is deleted: the jobs stay in
+    Activity with their real errors, and the collections stay in the Library."""
+    keys = [_validated_dismissal_key(key) for key in body.keys]
+    return db.add_desk_dismissals(keys, time.time())
 
 
 # ------------------------------------------------------------------- pages
