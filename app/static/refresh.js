@@ -9,6 +9,7 @@ const RESOURCES = [
   ["jobs", "/api/jobs"],
   ["history", "/api/jobs/history"],
   ["collections", "/api/collections"],
+  ["dismissals", "/api/desk/dismissals"],
 ];
 
 function hasActiveJobs(jobs) {
@@ -71,6 +72,7 @@ export function createRefreshCoordinator({
     jobs: [],
     history: [],
     collections: [],
+    dismissals: {},
     stale: [],
     errors: {},
     loadedAt: null,

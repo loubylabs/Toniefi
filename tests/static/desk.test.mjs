@@ -21,7 +21,7 @@ import {
   uploadPolicyText,
 } from "../../app/static/desk.js";
 
-import { installDom } from "./mini-dom.mjs";
+import { flush, installDom } from "./mini-dom.mjs";
 
 function relativeLuminance(hex) {
   const channels = hex.match(/[a-f0-9]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -408,11 +408,11 @@ test("buildWorkCartItems keeps every active job ahead of failed and completed wo
   const collections = [9, 8].map((id) => ({ slug: `story-${id}`, title: `Story ${id}`, stage: "forged" }));
 
   assert.deepEqual(
-    buildWorkCartItems(jobs, collections, 5).map((item) => item.jobId),
+    buildWorkCartItems(jobs, collections, {}, 5).map((item) => item.jobId),
     [6, 5, 4, 7, null],
   );
   assert.deepEqual(
-    buildWorkCartItems([job(6, "running"), job(5, "queued"), job(4, "running")], [], 2).map((item) => item.jobId),
+    buildWorkCartItems([job(6, "running"), job(5, "queued"), job(4, "running")], [], {}, 2).map((item) => item.jobId),
     [6, 5, 4],
   );
 });
@@ -716,4 +716,220 @@ test("a send never hides its own collection's row", () => {
     },
   ], [collection]);
   assert.deepEqual(items.map((item) => item.kind).sort(), ["collection", "push"]);
+});
+
+
+// ------------------------------------------------------- work cart dismissal
+
+function preparedJob(id, status, slug, extra = {}) {
+  return {
+    id,
+    kind: "prepare_url",
+    status,
+    retryable: status === "failed",
+    label: `Story ${id}`,
+    error: status === "failed" ? "yt-dlp gave up" : "",
+    payload: { url: `https://story.test/${id}` },
+    result: slug ? { slug } : {},
+    created_at: 100,
+    ...extra,
+  };
+}
+
+function mountedCart(request = async () => ({})) {
+  const dom = installDom();
+  const posted = [];
+  const cart = createLiveWorkCart({
+    request: async (path, options) => {
+      posted.push([path, options]);
+      return request(path, options);
+    },
+    requestRefresh: async () => {},
+    navigate: () => {},
+  });
+  dom.workspace.append(cart.host);
+  return { dom, cart, posted };
+}
+
+test("a dismissed failure leaves the work cart and spends none of the row limit", () => {
+  const jobs = [
+    preparedJob(3, "failed", "three"),
+    preparedJob(2, "failed", "two"),
+    preparedJob(1, "failed", "one"),
+  ];
+
+  const kept = buildWorkCartItems(jobs, [], { "job-2": 500 }, 7);
+
+  assert.deepEqual(kept.map((item) => item.key), ["job-3", "job-1"]);
+  // Two of three rows still show under a limit of two, which is what proves the
+  // hidden row was never counted.
+  assert.deepEqual(
+    buildWorkCartItems(jobs, [], { "job-3": 500 }, 2).map((item) => item.key),
+    ["job-2", "job-1"],
+  );
+});
+
+test("dismissing a failure does not surface an older failure for the same collection", () => {
+  const jobs = [preparedJob(9, "failed", "moon"), preparedJob(4, "failed", "moon")];
+
+  assert.deepEqual(buildWorkCartItems(jobs, [], {}, 7).map((item) => item.key), ["job-9"]);
+  assert.deepEqual(buildWorkCartItems(jobs, [], { "job-9": 500 }, 7), []);
+});
+
+test("a dismissed ready collection stays gone until new work touches its slug", () => {
+  const collections = [{ slug: "moon", stage: "forged", title: "Moon Story" }];
+  const dismissals = { "collection-moon": 500 };
+
+  assert.deepEqual(buildWorkCartItems([], collections, dismissals, 7), []);
+  // A job created before the dismissal is the work the operator dismissed.
+  assert.deepEqual(
+    buildWorkCartItems([preparedJob(1, "done", "moon", { created_at: 400 })], collections, dismissals, 7),
+    [],
+  );
+  // A job created after it is new work, and the row is owed a second showing.
+  assert.deepEqual(
+    buildWorkCartItems(
+      [preparedJob(2, "done", "moon", { created_at: 600 })],
+      collections,
+      dismissals,
+      7,
+    ).map((item) => item.key),
+    ["collection-moon"],
+  );
+});
+
+test("only finished rows are dismissible, and running work never is", () => {
+  const items = buildWorkCartItems(
+    [
+      preparedJob(1, "running", ""),
+      preparedJob(2, "queued", ""),
+      preparedJob(3, "failed", "broken"),
+      { ...preparedJob(4, "done", "sent-one"), kind: "push", label: "Send" },
+    ],
+    [
+      { slug: "ready-one", stage: "forged", title: "Ready" },
+      { slug: "sent-one", stage: "forged", title: "Sent" },
+    ],
+    {},
+    7,
+  );
+
+  assert.deepEqual(
+    items.map((item) => [item.phase, item.canDismiss]),
+    [
+      ["extracting", false],
+      ["queued", false],
+      ["failed", true],
+      ["sent", true],
+      ["ready", true],
+      ["ready", true],
+    ],
+  );
+});
+
+test("a running row renders no dismiss control and a failed row does", () => {
+  const { dom, cart } = mountedCart();
+  try {
+    cart.onRefresh({
+      jobs: [preparedJob(1, "running", ""), preparedJob(2, "failed", "broken")],
+      collections: [],
+      dismissals: {},
+    });
+
+    const rows = cart.host.querySelectorAll(".work-cart-row");
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].querySelectorAll(".work-cart-dismiss").length, 0);
+    assert.equal(rows[1].querySelectorAll(".work-cart-dismiss").length, 1);
+    assert.equal(
+      rows[1].querySelector(".work-cart-dismiss").getAttribute("aria-label"),
+      "Dismiss Story 2 from the work cart",
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+test("dismissing a row posts its own key and nothing else", async () => {
+  const { dom, cart, posted } = mountedCart();
+  try {
+    cart.onRefresh({
+      jobs: [preparedJob(1, "failed", "broken"), preparedJob(2, "failed", "worse")],
+      collections: [],
+      dismissals: {},
+    });
+
+    await cart.host.querySelectorAll(".work-cart-dismiss")[0].click();
+    await flush();
+
+    assert.deepEqual(posted, [[
+      "/api/desk/dismissals",
+      { method: "POST", body: JSON.stringify({ keys: ["job-1"] }) },
+    ]]);
+    assert.ok(dom.spoken.some((line) => line.includes("still in Activity")));
+  } finally {
+    dom.restore();
+  }
+});
+
+test("Clear finished waits for a batch, then dismisses every finished row at once", async () => {
+  const { dom, cart, posted } = mountedCart();
+  try {
+    cart.onRefresh({
+      jobs: [preparedJob(1, "failed", "broken"), preparedJob(2, "running", "")],
+      collections: [],
+      dismissals: {},
+    });
+    const clear = cart.host.querySelector(".work-cart-clear");
+    assert.equal(clear.hidden, true);
+
+    cart.onRefresh({
+      jobs: [preparedJob(1, "failed", "broken"), preparedJob(2, "running", "")],
+      collections: [{ slug: "moon", stage: "forged", title: "Moon Story" }],
+      dismissals: {},
+    });
+    assert.equal(clear.hidden, false);
+
+    await clear.click();
+    await flush();
+
+    assert.deepEqual(posted, [[
+      "/api/desk/dismissals",
+      { method: "POST", body: JSON.stringify({ keys: ["job-1", "collection-moon"] }) },
+    ]]);
+  } finally {
+    dom.restore();
+  }
+});
+
+test("a refused dismissal re-enables its button and says why", async () => {
+  const { dom, cart } = mountedCart(async () => {
+    throw new Error("TonieFi could not reach the server.");
+  });
+  try {
+    cart.onRefresh({
+      jobs: [preparedJob(1, "failed", "broken")],
+      collections: [],
+      dismissals: {},
+    });
+    const dismissButton = cart.host.querySelector(".work-cart-dismiss");
+
+    await dismissButton.click();
+    await flush();
+
+    assert.equal(dismissButton.disabled, false);
+    assert.ok(dom.spoken.some((line) => line.includes("could not reach the server")));
+  } finally {
+    dom.restore();
+  }
+});
+
+test("a work cart snapshot with no dismissals field still renders", () => {
+  const { dom, cart } = mountedCart();
+  try {
+    cart.onRefresh({ jobs: [preparedJob(1, "failed", "broken")], collections: [] });
+
+    assert.equal(cart.host.querySelectorAll(".work-cart-row").length, 1);
+  } finally {
+    dom.restore();
+  }
 });

@@ -264,6 +264,75 @@ def delete_credentials() -> None:
             raise
 
 
+# --------------------------------------------------------- work cart state
+
+DESK_DISMISSALS_KEY = "desk_dismissals"
+DESK_DISMISSAL_LIMIT = 200
+
+
+def _stored_desk_dismissals(conn: sqlite3.Connection) -> dict[str, float]:
+    """Read the dismissal set, discarding anything that is not a timestamp.
+
+    This value is one JSON object in `settings`, so it can be edited by hand or
+    written by an older build. A row the work cart cannot use is dropped rather
+    than raised: a corrupt blob must not take the Desk down with it.
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key=?", (DESK_DISMISSALS_KEY,)
+    ).fetchone()
+    if not row:
+        return {}
+    try:
+        stored = json.loads(row["value"])
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(stored, dict):
+        return {}
+    return {
+        key: float(value)
+        for key, value in stored.items()
+        if isinstance(key, str)
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    }
+
+
+def desk_dismissals() -> dict[str, float]:
+    """Return every hidden work cart row key with the time it was hidden."""
+    with _lock:
+        return _stored_desk_dismissals(connect())
+
+
+def add_desk_dismissals(keys: list[str], now: float) -> dict[str, float]:
+    """Hide the named rows and return the whole set, newest last.
+
+    A key already in the set is removed and re-added, so insertion order is
+    dismissal order. That is what makes the trim below keep the newest.
+    """
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            merged = {
+                key: value
+                for key, value in _stored_desk_dismissals(conn).items()
+                if key not in set(keys)
+            }
+            merged.update({key: float(now) for key in keys})
+            if len(merged) > DESK_DISMISSAL_LIMIT:
+                merged = dict(list(merged.items())[-DESK_DISMISSAL_LIMIT:])
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (DESK_DISMISSALS_KEY, json.dumps(merged)),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return merged
+
+
 # -------------------------------------------------------------------- jobs
 
 def create_job(kind: str, label: str, payload: dict[str, Any]) -> int:
