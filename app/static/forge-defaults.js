@@ -2,6 +2,7 @@ export function createForgeDefaultsCoordinator({ request, onSaveError = () => {}
   let confirmed = null;
   let readPromise = null;
   let writeTail = Promise.resolve();
+  let writeGeneration = 0;
   let uncertain = false;
 
   const copy = (options) => ({ ...options });
@@ -12,19 +13,21 @@ export function createForgeDefaultsCoordinator({ request, onSaveError = () => {}
     if (observedTail !== writeTail) return load();
     if (confirmed && !uncertain) return copy(confirmed);
     if (!readPromise) {
+      const observedGeneration = writeGeneration;
       readPromise = request("/api/settings/forge-defaults")
-        .then((options) => {
-          confirmed = copy(options);
-          uncertain = false;
-          return copy(confirmed);
-        })
+        .then((options) => ({ options: copy(options), generation: observedGeneration }))
         .finally(() => { readPromise = null; });
     }
-    return readPromise.then(copy);
+    const read = await readPromise;
+    if (read.generation !== writeGeneration) return load();
+    confirmed = copy(read.options);
+    uncertain = false;
+    return copy(confirmed);
   }
 
   function save(options) {
     const selected = copy(options);
+    writeGeneration += 1;
     const write = writeTail.then(async () => {
       const saved = await request("/api/settings/forge-defaults", {
         method: "PUT",
@@ -37,7 +40,9 @@ export function createForgeDefaultsCoordinator({ request, onSaveError = () => {}
     });
     writeTail = write.catch((error) => {
       uncertain = true;
-      onSaveError(error);
+      try {
+        onSaveError(error);
+      } catch {}
       return null;
     });
     return writeTail;

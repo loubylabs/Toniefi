@@ -117,6 +117,64 @@ test("Forge default load drains a write queued while it waits", async () => {
   assert.equal(requests.length, 2);
 });
 
+test("a stale Forge default load cannot replace a newer saved profile", async () => {
+  const staleRead = deferred();
+  const pendingWrite = deferred();
+  const requests = [];
+  const coordinator = createForgeDefaultsCoordinator({
+    request(path, options) {
+      requests.push({ path, options });
+      return options?.method === "PUT" ? pendingWrite.promise : staleRead.promise;
+    },
+  });
+
+  const load = coordinator.load();
+  await nextTurn();
+  const save = coordinator.save(profile(true));
+  await nextTurn();
+
+  assert.deepEqual(requests.map(({ options }) => options?.method || "GET"), ["GET", "PUT"]);
+
+  pendingWrite.resolve(profile(true));
+  await save;
+  staleRead.resolve(profile(false));
+
+  assert.deepEqual(await load, profile(true));
+  assert.deepEqual(await coordinator.load(), profile(true));
+  assert.equal(requests.length, 2);
+});
+
+test("a stale Forge default load cannot clear later write uncertainty", async () => {
+  const staleRead = deferred();
+  const pendingWrite = deferred();
+  const refreshedRead = deferred();
+  const requests = [];
+  let getCount = 0;
+  const coordinator = createForgeDefaultsCoordinator({
+    request(path, options) {
+      requests.push({ path, options });
+      if (options?.method === "PUT") return pendingWrite.promise;
+      getCount += 1;
+      return getCount === 1 ? staleRead.promise : refreshedRead.promise;
+    },
+  });
+
+  const load = coordinator.load();
+  await nextTurn();
+  const save = coordinator.save(profile(false));
+  await nextTurn();
+  pendingWrite.reject(new Error("offline"));
+  assert.equal(await save, null);
+
+  staleRead.resolve(profile(false));
+  refreshedRead.resolve(profile(true));
+
+  assert.deepEqual(await load, profile(true));
+  assert.deepEqual(await coordinator.load(), profile(true));
+  assert.deepEqual(requests.map(({ options }) => options?.method || "GET"), ["GET", "PUT", "GET"]);
+  assert.equal(requests.length, 3);
+});
+
 test("a failed Forge default write refreshes before the next load", async () => {
   const writeFailure = new Error("save failed");
   const requests = [];
@@ -171,6 +229,37 @@ test("Forge default writes continue after a failed write", async () => {
   assert.deepEqual(await laterSave, profile(true));
   assert.deepEqual(await coordinator.load(), profile(true));
   assert.deepEqual(saveErrors, [error]);
+  assert.equal(requests.length, 2);
+});
+
+test("throwing save error observers cannot break the write queue", async () => {
+  const firstWrite = deferred();
+  const secondWrite = deferred();
+  const requests = [];
+  const observerError = new Error("observer failed");
+  const coordinator = createForgeDefaultsCoordinator({
+    request(path, options) {
+      requests.push({ path, options });
+      return requests.length === 1 ? firstWrite.promise : secondWrite.promise;
+    },
+    onSaveError() {
+      throw observerError;
+    },
+  });
+
+  const failedSave = coordinator.save(profile(false));
+  await nextTurn();
+  firstWrite.reject(new Error("offline"));
+
+  assert.equal(await failedSave, null);
+
+  const laterSave = coordinator.save(profile(true));
+  await nextTurn();
+  assert.equal(requests.length, 2);
+  secondWrite.resolve(profile(true));
+
+  assert.deepEqual(await laterSave, profile(true));
+  assert.deepEqual(await coordinator.load(), profile(true));
   assert.equal(requests.length, 2);
 });
 
