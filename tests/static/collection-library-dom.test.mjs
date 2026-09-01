@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDeskScreen, createLiveWorkCart } from "../../app/static/desk.js";
+import { createForgeDefaultsCoordinator } from "../../app/static/forge-defaults.js";
 import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
 import { createCollectionDetail } from "../../app/static/collection.js";
 
@@ -138,6 +139,7 @@ test("Desk loads saved Forge defaults and automatically persists later edits", a
       signal: controller.signal,
     });
     await flush();
+    await flush();
 
     const forgeInputs = dom.workspace.querySelector(".forge-option-controls").querySelectorAll("input");
     const chapterMarkers = forgeInputs.find((input) => input.name === "use_chapters");
@@ -163,102 +165,90 @@ test("Desk loads saved Forge defaults and automatically persists later edits", a
   }
 });
 
-test("Forge default saves finish after the Desk route is abandoned", async () => {
+test("one Forge defaults coordinator orders edits across Desk mounts", async () => {
   const dom = installDom();
-  const controller = new AbortController();
+  const firstController = new AbortController();
+  const secondController = new AbortController();
   const refresh = {
     snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
     subscribe: () => () => {},
     request: async () => refresh.snapshot,
   };
-  let releaseSave;
-  const savedBodies = [];
+  const firstWrite = deferred();
+  const events = [];
+  let persisted = forgeSettings(true);
+  let writes = 0;
   const request = async (path, options = {}) => {
     if (path === "/api/settings/forge-defaults" && options.method === "PUT") {
-      throw new Error("A preference write must outlive the route request scope.");
+      writes += 1;
+      const selected = JSON.parse(options.body);
+      events.push(`start ${selected.use_chapters}`);
+      if (writes === 1) await firstWrite.promise;
+      assert.equal(writes === 1 || events.includes("finish false"), true);
+      persisted = selected;
+      events.push(`finish ${selected.use_chapters}`);
+      return selected;
     }
     if (path === "/api/settings/forge-defaults") {
-      return {
-        use_chapters: true,
-        normalize: true,
-        clean_titles: true,
-        trim_head: 0,
-        trim_tail: 0,
-        split_oversized: true,
-      };
+      events.push("load");
+      return { ...persisted };
     }
     return {};
   };
-  const persistentRequest = async (path, options = {}) => {
-    savedBodies.push({ path, options });
-    await new Promise((resolve) => { releaseSave = resolve; });
-    return JSON.parse(options.body);
-  };
+  const forgeDefaults = createForgeDefaultsCoordinator({ request });
 
   try {
-    createDeskScreen({ request, persistentRequest, refresh })({
+    const cleanFirst = createDeskScreen({ request, forgeDefaults, refresh })({
       workspace: dom.workspace,
       navigate() {},
-      signal: controller.signal,
+      signal: firstController.signal,
+    });
+    await flush();
+    await flush();
+
+    const firstChapterMarkers = dom.workspace.querySelector(".forge-option-controls")
+      .querySelectorAll("input")
+      .find((input) => input.name === "use_chapters");
+    assert.equal(firstChapterMarkers.checked, true);
+    firstChapterMarkers.checked = false;
+    const firstChange = firstChapterMarkers.dispatchEvent({ type: "change" });
+    await flush();
+    assert.deepEqual(events, ["load", "start false"]);
+    firstController.abort();
+    cleanFirst();
+
+    createDeskScreen({ request, forgeDefaults, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: secondController.signal,
     });
     await flush();
 
-    const chapterMarkers = dom.workspace.querySelector(".forge-option-controls")
+    const secondControls = dom.workspace.querySelector(".forge-option-controls");
+    const secondChapterMarkers = secondControls
       .querySelectorAll("input")
       .find((input) => input.name === "use_chapters");
-    chapterMarkers.checked = false;
-    const changing = chapterMarkers.dispatchEvent({ type: "change" });
-    await flush();
-    controller.abort();
-    releaseSave?.();
-    await changing;
+    assert.equal(secondControls.disabled, true);
+    assert.deepEqual(events, ["load", "start false"]);
 
-    assert.equal(savedBodies.length, 1);
-    assert.equal(savedBodies[0].path, "/api/settings/forge-defaults");
-    assert.equal(savedBodies[0].options.signal, undefined);
-    assert.equal(JSON.parse(savedBodies[0].options.body).use_chapters, false);
+    firstWrite.resolve();
+    await firstChange;
+    await flush();
+    assert.equal(secondControls.disabled, false);
+    assert.equal(secondChapterMarkers.checked, false);
+
+    secondChapterMarkers.checked = true;
+    await secondChapterMarkers.dispatchEvent({ type: "change" });
+    assert.deepEqual(events, [
+      "load",
+      "start false",
+      "finish false",
+      "start true",
+      "finish true",
+    ]);
   } finally {
-    controller.abort();
-    dom.restore();
-  }
-});
-
-test("a Forge default save that fails after navigation still reports the failure", async () => {
-  const dom = installDom();
-  const controller = new AbortController();
-  const refresh = {
-    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
-    subscribe: () => () => {},
-    request: async () => refresh.snapshot,
-  };
-  let rejectSave;
-  const persistentRequest = async () => new Promise((_, reject) => { rejectSave = reject; });
-
-  try {
-    createDeskScreen({
-      request: async (path) => path === "/api/settings/forge-defaults" ? forgeSettings(true) : {},
-      persistentRequest,
-      refresh,
-    })({
-      workspace: dom.workspace,
-      navigate() {},
-      signal: controller.signal,
-    });
-    await flush();
-
-    const chapterMarkers = dom.workspace.querySelector(".forge-option-controls")
-      .querySelectorAll("input")
-      .find((input) => input.name === "use_chapters");
-    chapterMarkers.checked = false;
-    const changing = chapterMarkers.dispatchEvent({ type: "change" });
-    await flush();
-    controller.abort();
-    rejectSave(new Error("The settings database is read-only."));
-    await changing;
-
-    assert.match(dom.spoken.at(-1), /Forge defaults were not saved.*settings database is read-only/);
-  } finally {
-    controller.abort();
+    firstController.abort();
+    secondController.abort();
     dom.restore();
   }
 });
@@ -456,6 +446,7 @@ test("Desk reports when saved Forge defaults cannot be loaded", async () => {
       navigate() {},
       signal: controller.signal,
     });
+    await flush();
     await flush();
 
     assert.match(dom.spoken.at(-1), /Forge defaults could not be loaded.*Settings are unavailable/);
@@ -802,6 +793,7 @@ test("Desk sends only the playlist videos left ticked", async () => {
     dom.document.getElementById("source-paste").value = "https://www.youtube.com/playlist?list=PL1";
     await buttonWithText(dom.workspace, "Add to tray").click();
     await flush();
+    await flush();
 
     await buttonWithText(dom.workspace, "Pick videos").click();
     await flush();
@@ -861,6 +853,7 @@ test("Desk holds back a playlist row with nothing ticked instead of sending it",
     });
     dom.document.getElementById("source-paste").value = "https://www.youtube.com/playlist?list=PL1";
     await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
     await flush();
     await buttonWithText(dom.workspace, "Pick videos").click();
     await flush();

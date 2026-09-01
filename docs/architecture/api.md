@@ -47,15 +47,17 @@ seven-character label for the deployed Git commit. Source checkouts with no inje
 
 ## Saved Forge defaults
 
-`GET /api/settings/forge-defaults` returns the complete profile that prefills Desk preparation.
-When no profile has been saved, it returns the built-in profile. `PUT` requires every field, uses
-strict booleans and finite nonnegative trim values, then replaces the whole profile as one SQLite
-setting. It changes future defaults only; every preparation request still carries its own editable
-`options` object.
+`GET /api/settings/forge-defaults` returns the complete local profile that prefills URL, LibriVox,
+and upload preparation. The profile remains editable for each batch and never enforces chapter
+behavior. When no profile has been saved, `GET` returns the built-in profile. `PUT` requires every
+field, uses strict booleans and finite nonnegative trim values, then replaces the whole profile as
+one SQLite setting.
 
-An existing profile that is unreadable or fails validation returns an explicit server error rather
-than silently reverting the Desk. Editing any Forge control writes a complete valid profile and
-repairs that stored value.
+The browser saves each complete edit automatically. Its application-owned coordinator keeps those
+saves ordered across Desk navigation and uses unload-safe delivery.
+
+An existing profile that is unreadable or fails validation returns an explicit server error.
+Editing any Forge control later writes a complete valid profile and repairs that stored value.
 
 ```json
 {

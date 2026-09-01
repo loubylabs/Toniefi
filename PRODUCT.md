@@ -39,7 +39,8 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 - A send reports a real percentage, measured by audio bytes uploaded rather than by chapter count. Phases with nothing to measure, such as signing in, report no percentage rather than an estimate.
 - myTonies uses a private, unsupported API. Two-factor accounts are not supported by the current login method.
 - Credentials may come from environment variables or the local SQLite settings store. Credentials saved through the UI are stored as plain text and must be described honestly.
-- Forge defaults are stored locally as one validated profile, save automatically when edited, and prefill rather than enforce each preparation.
+- Forge defaults save automatically as one complete local profile. They prefill URL, LibriVox, and upload preparation, remain editable for each batch, and never enforce chapter behavior.
+- Forge default saves remain ordered across navigation and use unload-safe delivery. An invalid stored profile surfaces an error, and a later complete edit repairs it.
 - A complete credential pair is Configured. Connected is reserved for a successful connection test in the current browser session.
 - Legacy extracted collections use the persisted Forge job as their only migration path to the Library.
 - Appending to a Creative Tonie is recoverable, because the added chapters can be removed afterwards, so it posts without a confirmation dialog and **Append to the back** is the preselected default for every capacity group. Replacing a Creative Tonie's chapters destroys its current cloud audio with no undo, so it always confirms and is never the default; the operator has to choose **Replace everything** deliberately.

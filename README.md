@@ -30,10 +30,11 @@ Every source is downloaded and then run through **Forge**, which is the automati
 | Split | Cuts any track too long to fit one Tonie into even parts |
 | Trim | Off by default. Set it if your source has an intro to cut |
 
-Changes in **Forge defaults** save automatically on this TonieFi installation. They prefill the
-next URL, LibriVox, or upload preparation and remain editable for every later batch. For example,
-you can usually ignore source chapter markers without preventing a particular story from keeping
-them.
+**Forge defaults** save automatically as one complete local profile. They prefill URL, LibriVox,
+and upload preparation and remain editable for each batch. Saves stay ordered when you navigate
+away and use unload-safe delivery. An invalid stored profile surfaces an error; a later complete
+edit repairs it. The saved profile supplies starting values only. It does not enforce chapter
+behavior, so one batch can ignore source chapter markers while another keeps them.
 
 A link with `list=` in it gets a **Pick videos** control. It lists the playlist without
 downloading anything, and you untick what you do not want. Only the ticked entries are

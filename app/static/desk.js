@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { createForgeDefaultsCoordinator } from "./forge-defaults.js";
 import { icon } from "./icons.js";
 import {
   announce,
@@ -382,7 +383,7 @@ function optionControl({ name, label, checked }) {
   return element("label", { className: "forge-option-toggle" }, [input, element("span", { text: label })]);
 }
 
-function createForgeSummary({ request, persistentRequest, signal }) {
+function createForgeSummary({ forgeDefaults, signal }) {
   const heading = element("h2", { id: "forge-summary-title", text: "Forge defaults" });
   const profileBadge = element("span", {
     className: "status-stamp",
@@ -441,28 +442,11 @@ function createForgeSummary({ request, persistentRequest, signal }) {
     profileBadge.textContent = profile.label;
     profileBadge.dataset.status = profile.status;
   };
-  let saveSequence = Promise.resolve();
-  const persistDefaults = () => {
-    const options = readForgeOptions(section);
-    saveSequence = saveSequence.then(async () => {
-      section.setAttribute("aria-busy", "true");
-      try {
-        await persistentRequest("/api/settings/forge-defaults", {
-          method: "PUT",
-          body: JSON.stringify(options),
-        });
-      } catch (error) {
-        notify(`Forge defaults were not saved. ${error.message}`, { kind: "failure", timeout: 0 });
-      } finally {
-        section.removeAttribute("aria-busy");
-      }
-    });
-    return saveSequence;
-  };
+  const persistDefaults = () => forgeDefaults.save(readForgeOptions(section));
   const loadDefaults = async () => {
     controls.disabled = true;
     try {
-      const saved = await request("/api/settings/forge-defaults", signal ? { signal } : {});
+      const saved = await forgeDefaults.load();
       if (signal?.aborted) return;
       writeForgeOptions(section, saved);
       updateDefinitions();
@@ -937,10 +921,19 @@ function createSecondaryIntake({ root, request, requestRefresh, forgeReady, sign
 
 export function createDeskScreen({
   request = api,
-  persistentRequest = request,
+  forgeDefaults,
   refresh,
 } = {}) {
   if (!refresh) throw new Error("Desk requires the application refresh coordinator.");
+  const defaults = forgeDefaults || createForgeDefaultsCoordinator({
+    request,
+    onSaveError(error) {
+      notify(`Forge defaults were not saved. ${error.message}`, {
+        kind: "failure",
+        timeout: 0,
+      });
+    },
+  });
 
   return function renderDesk({ workspace, navigate, signal }) {
     let entries = [];
@@ -1224,16 +1217,16 @@ export function createDeskScreen({
       element("div", {}, [sourceCount, clearSources]),
     ]);
     const pasteControls = element("div", { className: "source-paste-controls" }, [paste, addSources]);
-    const forgeDefaults = createForgeSummary({ request, persistentRequest, signal });
+    const forgeSummary = createForgeSummary({ forgeDefaults: defaults, signal });
     const actionNote = element("p", { className: "desk-action-note" }, [
       iconNode("info"),
       element("span", { text: "Prepared stories appear in the Library. No Creative Tonie changes happen here." }),
     ]);
-    form.append(sourceHeading, pasteLabel, pasteControls, validation, sourceList, prepareButton, forgeDefaults.host, actionNote);
+    form.append(sourceHeading, pasteLabel, pasteControls, validation, sourceList, prepareButton, forgeSummary.host, actionNote);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (submitting) return;
-      await forgeDefaults.ready;
+      await forgeSummary.ready;
       if (signal.aborted) return;
       let payload;
       try {
@@ -1274,7 +1267,7 @@ export function createDeskScreen({
       root,
       request,
       requestRefresh: () => refresh.request(),
-      forgeReady: forgeDefaults.ready,
+      forgeReady: forgeSummary.ready,
       signal,
     });
     intake.append(heading, lead, form, secondary.host);
@@ -1282,7 +1275,7 @@ export function createDeskScreen({
     root.append(intake, cart.host);
     replace(workspace, root);
     renderSources();
-    forgeDefaults.ready.then(() => {
+    forgeSummary.ready.then(() => {
       forgeDefaultsLoaded = true;
       if (!signal.aborted) renderSources();
     });
