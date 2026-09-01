@@ -286,9 +286,12 @@ def get_forge_defaults() -> PrepareOptions:
     if stored is None:
         return PrepareOptions()
     try:
-        return PrepareOptions.model_validate(stored)
+        selected = PrepareOptions.model_validate(stored)
     except ValidationError as exc:
         raise fail(500, db.INVALID_FORGE_DEFAULTS_DETAIL) from exc
+    if selected.model_fields_set != set(PrepareOptions.model_fields):
+        raise fail(500, db.INVALID_FORGE_DEFAULTS_DETAIL)
+    return selected
 
 
 @app.put("/api/settings/forge-defaults")

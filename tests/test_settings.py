@@ -151,6 +151,7 @@ def test_prepare_requests_use_the_same_strict_forge_validation(client):
     [
         "not-json",
         "[]",
+        json.dumps({"use_chapters": False}),
         json.dumps({"use_chapters": False, "force_chapters": False}),
         json.dumps({"trim_head": -1}),
     ],
