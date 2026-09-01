@@ -12,19 +12,23 @@ export function createForgeDefaultsCoordinator({ request, onSaveError = () => {}
     await observedTail;
     if (observedTail !== writeTail) return load();
     if (confirmed && !uncertain) return copy(confirmed);
-    if (!readPromise) {
-      const observedGeneration = writeGeneration;
-      readPromise = request("/api/settings/forge-defaults")
+    let read = readPromise;
+    if (!read || read.generation !== writeGeneration) {
+      read = { generation: writeGeneration, promise: null };
+      read.promise = request("/api/settings/forge-defaults")
         .then(
-          (options) => ({ options: copy(options), generation: observedGeneration }),
-          (error) => ({ error, generation: observedGeneration }),
+          (options) => ({ options: copy(options) }),
+          (error) => ({ error }),
         )
-        .finally(() => { readPromise = null; });
+        .finally(() => {
+          if (readPromise === read) readPromise = null;
+        });
+      readPromise = read;
     }
-    const read = await readPromise;
+    const result = await read.promise;
     if (read.generation !== writeGeneration) return load();
-    if (Object.hasOwn(read, "error")) throw read.error;
-    confirmed = copy(read.options);
+    if (Object.hasOwn(result, "error")) throw result.error;
+    confirmed = copy(result.options);
     uncertain = false;
     return copy(confirmed);
   }

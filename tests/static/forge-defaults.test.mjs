@@ -200,6 +200,46 @@ test("a stale Forge default load cannot clear later write uncertainty", async ()
   assert.equal(requests.length, 3);
 });
 
+test("a load after a failed write does not share an obsolete pending read", async () => {
+  const staleRead = deferred();
+  const pendingWrite = deferred();
+  const refreshedRead = deferred();
+  const requests = [];
+  let getCount = 0;
+  const coordinator = createForgeDefaultsCoordinator({
+    request(path, options) {
+      requests.push({ path, options });
+      if (options?.method === "PUT") return pendingWrite.promise;
+      getCount += 1;
+      return getCount === 1 ? staleRead.promise : refreshedRead.promise;
+    },
+  });
+
+  const staleLoad = coordinator.load();
+  await nextTurn();
+  const save = coordinator.save(profile(false));
+  await nextTurn();
+  pendingWrite.reject(new Error("offline"));
+  assert.equal(await save, null);
+
+  const refreshedLoad = coordinator.load();
+  await nextTurn();
+
+  assert.deepEqual(requests.map(({ options }) => options?.method || "GET"), ["GET", "PUT", "GET"]);
+
+  staleRead.resolve(profile(false));
+  await nextTurn();
+  await nextTurn();
+  assert.equal(requests.length, 3);
+
+  refreshedRead.resolve(profile(true));
+
+  assert.deepEqual(await refreshedLoad, profile(true));
+  assert.deepEqual(await staleLoad, profile(true));
+  assert.deepEqual(await coordinator.load(), profile(true));
+  assert.equal(requests.length, 3);
+});
+
 test("an obsolete failed Forge default load cannot suppress a write failure refresh", async () => {
   const staleRead = deferred();
   const pendingWrite = deferred();

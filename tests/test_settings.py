@@ -172,6 +172,79 @@ def test_invalid_stored_forge_defaults_are_reported_instead_of_reset(client, sto
     )
 
 
+def test_complete_stored_forge_defaults_refuse_an_unknown_field(client):
+    stored = {
+        "use_chapters": False,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": 0,
+        "trim_tail": 0,
+        "split_oversized": True,
+        "force_chapters": False,
+    }
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, json.dumps(stored)),
+    )
+    connection.commit()
+
+    response = client.get("/api/settings/forge-defaults")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+    )
+
+
+def test_complete_stored_forge_defaults_refuse_a_non_boolean_boolean_field(client):
+    stored = {
+        "use_chapters": 0,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": 0,
+        "trim_tail": 0,
+        "split_oversized": True,
+    }
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, json.dumps(stored)),
+    )
+    connection.commit()
+
+    response = client.get("/api/settings/forge-defaults")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+    )
+
+
+def test_complete_stored_forge_defaults_refuse_a_non_finite_numeric_field(client):
+    stored = {
+        "use_chapters": False,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": float("nan"),
+        "trim_tail": 0,
+        "split_oversized": True,
+    }
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, json.dumps(stored)),
+    )
+    connection.commit()
+
+    response = client.get("/api/settings/forge-defaults")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+    )
+
+
 def test_a_complete_forge_defaults_write_repairs_invalid_stored_data(client):
     connection = db.connect()
     connection.execute(
