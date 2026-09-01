@@ -144,6 +144,31 @@ test("a stale Forge default load cannot replace a newer saved profile", async ()
   assert.equal(requests.length, 2);
 });
 
+test("an obsolete failed Forge default load cannot override a newer saved profile", async () => {
+  const staleRead = deferred();
+  const pendingWrite = deferred();
+  const requests = [];
+  const coordinator = createForgeDefaultsCoordinator({
+    request(path, options) {
+      requests.push({ path, options });
+      return options?.method === "PUT" ? pendingWrite.promise : staleRead.promise;
+    },
+  });
+
+  const load = coordinator.load();
+  await nextTurn();
+  const save = coordinator.save(profile(true));
+  await nextTurn();
+
+  pendingWrite.resolve(profile(true));
+  await save;
+  staleRead.reject(new Error("obsolete read failed"));
+
+  assert.deepEqual(await load, profile(true));
+  assert.deepEqual(await coordinator.load(), profile(true));
+  assert.deepEqual(requests.map(({ options }) => options?.method || "GET"), ["GET", "PUT"]);
+});
+
 test("a stale Forge default load cannot clear later write uncertainty", async () => {
   const staleRead = deferred();
   const pendingWrite = deferred();
@@ -173,6 +198,36 @@ test("a stale Forge default load cannot clear later write uncertainty", async ()
   assert.deepEqual(await coordinator.load(), profile(true));
   assert.deepEqual(requests.map(({ options }) => options?.method || "GET"), ["GET", "PUT", "GET"]);
   assert.equal(requests.length, 3);
+});
+
+test("an obsolete failed Forge default load cannot suppress a write failure refresh", async () => {
+  const staleRead = deferred();
+  const pendingWrite = deferred();
+  const refreshedRead = deferred();
+  const requests = [];
+  let getCount = 0;
+  const coordinator = createForgeDefaultsCoordinator({
+    request(path, options) {
+      requests.push({ path, options });
+      if (options?.method === "PUT") return pendingWrite.promise;
+      getCount += 1;
+      return getCount === 1 ? staleRead.promise : refreshedRead.promise;
+    },
+  });
+
+  const load = coordinator.load();
+  await nextTurn();
+  const save = coordinator.save(profile(false));
+  await nextTurn();
+  pendingWrite.reject(new Error("offline"));
+  assert.equal(await save, null);
+
+  staleRead.reject(new Error("obsolete read failed"));
+  refreshedRead.resolve(profile(true));
+
+  assert.deepEqual(await load, profile(true));
+  assert.deepEqual(await coordinator.load(), profile(true));
+  assert.deepEqual(requests.map(({ options }) => options?.method || "GET"), ["GET", "PUT", "GET"]);
 });
 
 test("a failed Forge default write refreshes before the next load", async () => {

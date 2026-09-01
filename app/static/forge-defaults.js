@@ -15,11 +15,15 @@ export function createForgeDefaultsCoordinator({ request, onSaveError = () => {}
     if (!readPromise) {
       const observedGeneration = writeGeneration;
       readPromise = request("/api/settings/forge-defaults")
-        .then((options) => ({ options: copy(options), generation: observedGeneration }))
+        .then(
+          (options) => ({ options: copy(options), generation: observedGeneration }),
+          (error) => ({ error, generation: observedGeneration }),
+        )
         .finally(() => { readPromise = null; });
     }
     const read = await readPromise;
     if (read.generation !== writeGeneration) return load();
+    if (Object.hasOwn(read, "error")) throw read.error;
     confirmed = copy(read.options);
     uncertain = false;
     return copy(confirmed);
