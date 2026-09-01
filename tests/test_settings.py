@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -40,6 +42,229 @@ def test_status_reports_the_application_version_and_build(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["version"] == "2.3.4"
     assert response.json()["build"] == "abc1234"
+
+
+def test_forge_defaults_persist_as_one_complete_validated_profile(client):
+    current = client.get("/api/settings/forge-defaults")
+
+    assert current.status_code == 200
+    assert current.json() == {
+        "use_chapters": True,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": 0,
+        "trim_tail": 0,
+        "split_oversized": True,
+    }
+
+    selected = {
+        "use_chapters": False,
+        "normalize": True,
+        "clean_titles": False,
+        "trim_head": 1.5,
+        "trim_tail": 2.5,
+        "split_oversized": True,
+    }
+    saved = client.put("/api/settings/forge-defaults", json=selected)
+
+    assert saved.status_code == 200
+    assert saved.json() == selected
+    assert client.get("/api/settings/forge-defaults").json() == selected
+
+
+def test_forge_defaults_refuse_unknown_settings(client):
+    response = client.put(
+        "/api/settings/forge-defaults",
+        json={"use_chapters": False, "force_chapters": False},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("use_chapters", "false"),
+        ("trim_head", -0.1),
+        ("trim_tail", "1.5"),
+    ],
+)
+def test_forge_defaults_refuse_coerced_or_negative_values(client, field, value):
+    selected = {
+        "use_chapters": False,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": 0,
+        "trim_tail": 0,
+        "split_oversized": True,
+    }
+    selected[field] = value
+
+    response = client.put("/api/settings/forge-defaults", json=selected)
+
+    assert response.status_code == 422
+
+
+def test_forge_defaults_refuse_non_finite_numbers(client):
+    response = client.put(
+        "/api/settings/forge-defaults",
+        content=(
+            '{"use_chapters":false,"normalize":true,"clean_titles":true,'
+            '"trim_head":0,"trim_tail":NaN,"split_oversized":true}'
+        ),
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_forge_defaults_update_requires_the_complete_profile(client):
+    response = client.put(
+        "/api/settings/forge-defaults",
+        json={"use_chapters": False},
+    )
+
+    assert response.status_code == 422
+
+
+def test_prepare_requests_use_the_same_strict_forge_validation(client):
+    response = client.post(
+        "/api/prepare",
+        json={
+            "sources": [{"url": "https://example.test/story"}],
+            "options": {
+                "use_chapters": False,
+                "normalize": "false",
+                "clean_titles": True,
+                "trim_head": 0,
+                "trim_tail": 0,
+                "split_oversized": True,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "not-json",
+        "[]",
+        json.dumps({"use_chapters": False}),
+        json.dumps({"use_chapters": False, "force_chapters": False}),
+        json.dumps({"trim_head": -1}),
+    ],
+)
+def test_invalid_stored_forge_defaults_are_reported_instead_of_reset(client, stored):
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, stored),
+    )
+    connection.commit()
+
+    response = client.get("/api/settings/forge-defaults")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+    )
+
+
+def test_complete_stored_forge_defaults_refuse_an_unknown_field(client):
+    stored = {
+        "use_chapters": False,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": 0,
+        "trim_tail": 0,
+        "split_oversized": True,
+        "force_chapters": False,
+    }
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, json.dumps(stored)),
+    )
+    connection.commit()
+
+    response = client.get("/api/settings/forge-defaults")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+    )
+
+
+def test_complete_stored_forge_defaults_refuse_a_non_boolean_boolean_field(client):
+    stored = {
+        "use_chapters": 0,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": 0,
+        "trim_tail": 0,
+        "split_oversized": True,
+    }
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, json.dumps(stored)),
+    )
+    connection.commit()
+
+    response = client.get("/api/settings/forge-defaults")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+    )
+
+
+def test_complete_stored_forge_defaults_refuse_a_non_finite_numeric_field(client):
+    stored = {
+        "use_chapters": False,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": float("nan"),
+        "trim_tail": 0,
+        "split_oversized": True,
+    }
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, json.dumps(stored)),
+    )
+    connection.commit()
+
+    response = client.get("/api/settings/forge-defaults")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == (
+        "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+    )
+
+
+def test_a_complete_forge_defaults_write_repairs_invalid_stored_data(client):
+    connection = db.connect()
+    connection.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?)",
+        (db.FORGE_DEFAULTS_KEY, "not-json"),
+    )
+    connection.commit()
+    selected = {
+        "use_chapters": False,
+        "normalize": True,
+        "clean_titles": True,
+        "trim_head": 0,
+        "trim_tail": 0,
+        "split_oversized": True,
+    }
+
+    saved = client.put("/api/settings/forge-defaults", json=selected)
+
+    assert saved.status_code == 200
+    assert client.get("/api/settings/forge-defaults").json() == selected
 
 
 def test_delete_credentials_removes_both_saved_values_and_reports_none(client):

@@ -11,6 +11,8 @@ access control, so treat network reachability as the only gate and do not expose
 | `POST` | `/api/settings/credentials` | Save a myTonies credential pair locally |
 | `DELETE` | `/api/settings/credentials` | Remove locally saved credentials (idempotent) |
 | `POST` | `/api/settings/test` | Test the active credentials against the Tonie Cloud |
+| `GET` | `/api/settings/forge-defaults` | Read the complete saved Forge profile |
+| `PUT` | `/api/settings/forge-defaults` | Replace the complete saved Forge profile |
 | `POST` | `/api/prepare` | Queue one preparation job per source URL |
 | `POST` | `/api/playlist/preview` | List a playlist's entries without downloading audio |
 | `GET` | `/api/librivox/search` | Search LibriVox (`q`, optional `limit`) |
@@ -42,6 +44,31 @@ access control, so treat network reachability as the only gate and do not expose
 `GET /api/status` includes `version`, the semantic application release, and `build`, the
 seven-character label for the deployed Git commit. Source checkouts with no injected commit report
 `development` for `build`.
+
+## Saved Forge defaults
+
+`GET /api/settings/forge-defaults` returns the complete local profile that prefills URL, LibriVox,
+and upload preparation. The profile remains editable for each batch and never enforces chapter
+behavior. When no profile has been saved, `GET` returns the built-in profile. `PUT` requires every
+field, uses strict booleans and finite nonnegative trim values, then replaces the whole profile as
+one SQLite setting.
+
+The browser saves each complete edit automatically. Its application-owned coordinator keeps those
+saves ordered across Desk navigation and uses unload-safe delivery.
+
+An existing profile that is unreadable or fails validation returns an explicit server error.
+Editing any Forge control later writes a complete valid profile and repairs that stored value.
+
+```json
+{
+  "use_chapters": false,
+  "normalize": true,
+  "clean_titles": true,
+  "trim_head": 0,
+  "trim_tail": 0,
+  "split_oversized": true
+}
+```
 
 ## Prepare several source URLs
 

@@ -2,6 +2,7 @@ import { api, scopeRequest } from "./api.js";
 import { createActivityScreen } from "./activity.js";
 import { createCollectionScreen } from "./collection.js";
 import { createDeskScreen } from "./desk.js";
+import { createForgeDefaultsCoordinator } from "./forge-defaults.js";
 import { icon } from "./icons.js";
 import { createLibraryScreen } from "./library.js";
 import { createRefreshCoordinator, scopeRefresh, updateShell } from "./refresh.js";
@@ -70,6 +71,15 @@ function scopedScreen(createScreen, dependencies) {
 }
 
 export const refresh = createRefreshCoordinator();
+export const forgeDefaults = createForgeDefaultsCoordinator({
+  request: api,
+  onSaveError(error) {
+    notify(`Forge defaults were not saved. ${error.message}`, {
+      kind: "failure",
+      timeout: 0,
+    });
+  },
+});
 export const player = createPersistentAudioPlayer({ host: document.getElementById("audioPlayerHost") });
 
 export const router = createRouter(routeDefinitions, {
@@ -82,7 +92,11 @@ export const router = createRouter(routeDefinitions, {
   },
 });
 
-router.register("desk", scopedScreen(createDeskScreen, { request: api, refresh }));
+router.register("desk", scopedScreen(createDeskScreen, {
+  request: api,
+  forgeDefaults,
+  refresh,
+}));
 router.register("collection", scopedScreen(createCollectionScreen, { request: api, refresh, player }));
 router.register("library", scopedScreen(createLibraryScreen, { request: api, refresh }));
 router.register("tonies", scopedScreen(createToniesScreen, { request: api, refresh }));

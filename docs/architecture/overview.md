@@ -39,9 +39,13 @@ A batch is up to 50 HTTP or HTTPS source URLs. TonieFi trims whitespace, rejects
 unsupported schemes, preserves source order, and creates one independent job per source. A failure
 in one source does not block the rest of the batch.
 
-Every accepted source runs extraction and then the default Forge sequence automatically. TonieFi
-never assigns a Creative Tonie automatically; the finished collection lands in the Library and
-waits there.
+Every accepted source runs extraction and then the selected Forge sequence automatically. Forge
+defaults save automatically as one complete local profile in SQLite. They prefill URL, LibriVox,
+and upload preparation and remain editable for each batch. One application-owned coordinator keeps
+saves ordered across Desk navigation and uses unload-safe delivery. An invalid stored profile
+surfaces an error, and a later complete edit repairs it. The profile supplies starting values and
+never enforces chapter behavior. TonieFi never assigns a Creative Tonie automatically; the
+finished collection lands in the Library and waits there.
 
 ### Playlists
 

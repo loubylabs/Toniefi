@@ -264,6 +264,52 @@ def delete_credentials() -> None:
             raise
 
 
+# -------------------------------------------------------- Forge defaults
+
+FORGE_DEFAULTS_KEY = "forge_defaults"
+INVALID_FORGE_DEFAULTS_DETAIL = (
+    "Saved Forge defaults are invalid. Edit any Forge setting to replace them."
+)
+
+
+class InvalidForgeDefaults(ValueError):
+    """The saved row exists, but it cannot describe a Forge profile."""
+
+
+def forge_defaults() -> dict[str, Any] | None:
+    """Return the saved Forge profile, distinguishing absence from damage."""
+    with _lock:
+        row = connect().execute(
+            "SELECT value FROM settings WHERE key=?", (FORGE_DEFAULTS_KEY,)
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        stored = json.loads(row["value"])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise InvalidForgeDefaults(INVALID_FORGE_DEFAULTS_DETAIL) from exc
+    if not isinstance(stored, dict):
+        raise InvalidForgeDefaults(INVALID_FORGE_DEFAULTS_DETAIL)
+    return stored
+
+
+def replace_forge_defaults(options: dict[str, Any]) -> None:
+    """Replace the complete saved Forge profile atomically."""
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (FORGE_DEFAULTS_KEY, json.dumps(options)),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
 # --------------------------------------------------------- work cart state
 
 DESK_DISMISSALS_KEY = "desk_dismissals"

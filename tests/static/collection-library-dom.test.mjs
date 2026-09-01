@@ -2,10 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDeskScreen, createLiveWorkCart } from "../../app/static/desk.js";
+import { createForgeDefaultsCoordinator } from "../../app/static/forge-defaults.js";
 import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
 import { createCollectionDetail } from "../../app/static/collection.js";
 
 import { buttonWithText, flush, installDom } from "./mini-dom.mjs";
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function forgeSettings(useChapters) {
+  return {
+    use_chapters: useChapters,
+    normalize: true,
+    clean_titles: true,
+    trim_head: 0,
+    trim_tail: 0,
+    split_oversized: true,
+  };
+}
 
 test("Desk gives every accepted source URL textbox a distinct accessible name", async () => {
   const dom = installDom();
@@ -82,6 +100,356 @@ test("Desk keeps a populated source tray immediately before its preparation acti
     assert.equal(inputs.at(-1).getAttribute("aria-label"), "Source URL 5");
     inputs.at(-1).focus();
     assert.equal(dom.document.activeElement, inputs.at(-1));
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Desk loads saved Forge defaults and automatically persists later edits", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const writes = [];
+  const saved = {
+    use_chapters: false,
+    normalize: true,
+    clean_titles: true,
+    trim_head: 0,
+    trim_tail: 0,
+    split_oversized: true,
+  };
+  const request = async (path, options = {}) => {
+    if (path === "/api/settings/forge-defaults" && options.method === "PUT") {
+      writes.push(JSON.parse(options.body));
+      return JSON.parse(options.body);
+    }
+    if (path === "/api/settings/forge-defaults") return saved;
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    await flush();
+    await flush();
+
+    const forgeInputs = dom.workspace.querySelector(".forge-option-controls").querySelectorAll("input");
+    const chapterMarkers = forgeInputs.find((input) => input.name === "use_chapters");
+    assert.equal(chapterMarkers.checked, false);
+    assert.match(dom.workspace.querySelector(".forge-definition-list").textContent, /Chapter markersIgnored/);
+
+    const normalize = forgeInputs.find((input) => input.name === "normalize");
+    normalize.checked = false;
+    await normalize.dispatchEvent({ type: "change" });
+    await flush();
+
+    assert.deepEqual(writes, [{
+      use_chapters: false,
+      normalize: false,
+      clean_titles: true,
+      trim_head: 0,
+      trim_tail: 0,
+      split_oversized: true,
+    }]);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("one Forge defaults coordinator orders edits across Desk mounts", async () => {
+  const dom = installDom();
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const firstWrite = deferred();
+  const events = [];
+  let persisted = forgeSettings(true);
+  let writes = 0;
+  const request = async (path, options = {}) => {
+    if (path === "/api/settings/forge-defaults" && options.method === "PUT") {
+      writes += 1;
+      const selected = JSON.parse(options.body);
+      events.push(`start ${selected.use_chapters}`);
+      if (writes === 1) await firstWrite.promise;
+      assert.equal(writes === 1 || events.includes("finish false"), true);
+      persisted = selected;
+      events.push(`finish ${selected.use_chapters}`);
+      return selected;
+    }
+    if (path === "/api/settings/forge-defaults") {
+      events.push("load");
+      return { ...persisted };
+    }
+    return {};
+  };
+  const forgeDefaults = createForgeDefaultsCoordinator({ request });
+
+  try {
+    const cleanFirst = createDeskScreen({ request, forgeDefaults, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: firstController.signal,
+    });
+    await flush();
+    await flush();
+
+    const firstChapterMarkers = dom.workspace.querySelector(".forge-option-controls")
+      .querySelectorAll("input")
+      .find((input) => input.name === "use_chapters");
+    assert.equal(firstChapterMarkers.checked, true);
+    firstChapterMarkers.checked = false;
+    const firstChange = firstChapterMarkers.dispatchEvent({ type: "change" });
+    await flush();
+    assert.deepEqual(events, ["load", "start false"]);
+    firstController.abort();
+    cleanFirst();
+
+    createDeskScreen({ request, forgeDefaults, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: secondController.signal,
+    });
+    await flush();
+
+    const secondControls = dom.workspace.querySelector(".forge-option-controls");
+    const secondChapterMarkers = secondControls
+      .querySelectorAll("input")
+      .find((input) => input.name === "use_chapters");
+    assert.equal(secondControls.disabled, true);
+    assert.deepEqual(events, ["load", "start false"]);
+
+    firstWrite.resolve();
+    await firstChange;
+    await flush();
+    assert.equal(secondControls.disabled, false);
+    assert.equal(secondChapterMarkers.checked, false);
+
+    secondChapterMarkers.checked = true;
+    await secondChapterMarkers.dispatchEvent({ type: "change" });
+    assert.deepEqual(events, [
+      "load",
+      "start false",
+      "finish false",
+      "start true",
+      "finish true",
+    ]);
+  } finally {
+    firstController.abort();
+    secondController.abort();
+    dom.restore();
+  }
+});
+
+test("URL preparation waits for saved Forge defaults before building its payload", async () => {
+  const dom = installDom();
+  globalThis.window.matchMedia = () => ({ matches: true });
+  const controller = new AbortController();
+  const loading = deferred();
+  const prepared = [];
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const request = async (path, options = {}) => {
+    if (path === "/api/settings/forge-defaults") return loading.promise;
+    if (path === "/api/prepare") prepared.push(JSON.parse(options.body));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    dom.document.getElementById("source-paste").value = "https://example.test/story";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+
+    const submitting = dom.workspace.querySelector(".source-intake-form").dispatchEvent({ type: "submit" });
+    await flush();
+    assert.equal(prepared.length, 0);
+
+    loading.resolve(forgeSettings(false));
+    await submitting;
+    assert.equal(prepared[0].options.use_chapters, false);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("LibriVox import waits for saved Forge defaults before building its payload", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const loading = deferred();
+  const imported = [];
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const request = async (path, options = {}) => {
+    if (path === "/api/settings/forge-defaults") return loading.promise;
+    if (path.startsWith("/api/librivox/search")) {
+      return [{ id: "42", title: "Peter Pan", authors: "J. M. Barrie", num_sections: 3, total_duration: "1h 00m" }];
+    }
+    if (path === "/api/librivox/import") imported.push(JSON.parse(options.body));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    dom.document.getElementById("librivox-query").value = "Peter Pan";
+    await dom.workspace.querySelector(".librivox-search").dispatchEvent({ type: "submit" });
+
+    const importing = buttonWithText(dom.workspace, "Import and prepare").click();
+    await flush();
+    assert.equal(imported.length, 0);
+
+    loading.resolve(forgeSettings(false));
+    await importing;
+    assert.equal(imported[0].options.use_chapters, false);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("upload preparation waits for saved Forge defaults before building its payload", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const loading = deferred();
+  const uploaded = [];
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const request = async (path, options = {}) => {
+    if (path === "/api/settings/forge-defaults") return loading.promise;
+    if (path === "/api/uploads/prepare") uploaded.push(JSON.parse(options.body.get("options")));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    const file = new Blob(["audio"], { type: "audio/mpeg" });
+    file.name = "story.mp3";
+    dom.document.getElementById("upload-files").files = [file];
+
+    const uploading = dom.workspace.querySelector(".local-upload-form").dispatchEvent({ type: "submit" });
+    await flush();
+    assert.equal(uploaded.length, 0);
+
+    loading.resolve(forgeSettings(false));
+    await uploading;
+    assert.equal(uploaded[0].use_chapters, false);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Desk reports Forge default storage failures without blocking later saves", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  let writes = 0;
+  const request = async (path, options = {}) => {
+    if (path === "/api/settings/forge-defaults" && options.method === "PUT") {
+      writes += 1;
+      if (writes === 1) throw new Error("The settings database is read-only.");
+      return JSON.parse(options.body);
+    }
+    if (path === "/api/settings/forge-defaults") {
+      return {
+        use_chapters: true,
+        normalize: true,
+        clean_titles: true,
+        trim_head: 0,
+        trim_tail: 0,
+        split_oversized: true,
+      };
+    }
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    await flush();
+
+    const normalize = dom.workspace.querySelector(".forge-option-controls")
+      .querySelectorAll("input")
+      .find((input) => input.name === "normalize");
+    normalize.checked = false;
+    await normalize.dispatchEvent({ type: "change" });
+
+    assert.match(dom.spoken.at(-1), /Forge defaults were not saved.*settings database is read-only/);
+
+    normalize.checked = true;
+    await normalize.dispatchEvent({ type: "change" });
+    assert.equal(writes, 2);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Desk reports when saved Forge defaults cannot be loaded", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+
+  try {
+    createDeskScreen({
+      request: async (path) => {
+        if (path === "/api/settings/forge-defaults") throw new Error("Settings are unavailable.");
+        return {};
+      },
+      refresh,
+    })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    await flush();
+    await flush();
+
+    assert.match(dom.spoken.at(-1), /Forge defaults could not be loaded.*Settings are unavailable/);
   } finally {
     controller.abort();
     dom.restore();
@@ -425,6 +793,7 @@ test("Desk sends only the playlist videos left ticked", async () => {
     dom.document.getElementById("source-paste").value = "https://www.youtube.com/playlist?list=PL1";
     await buttonWithText(dom.workspace, "Add to tray").click();
     await flush();
+    await flush();
 
     await buttonWithText(dom.workspace, "Pick videos").click();
     await flush();
@@ -484,6 +853,7 @@ test("Desk holds back a playlist row with nothing ticked instead of sending it",
     });
     dom.document.getElementById("source-paste").value = "https://www.youtube.com/playlist?list=PL1";
     await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
     await flush();
     await buttonWithText(dom.workspace, "Pick videos").click();
     await flush();
