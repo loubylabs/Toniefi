@@ -30,6 +30,11 @@ Every source is downloaded and then run through **Forge**, which is the automati
 | Split | Cuts any track too long to fit one Tonie into even parts |
 | Trim | Off by default. Set it if your source has an intro to cut |
 
+Changes in **Forge defaults** save automatically on this TonieFi installation. They prefill the
+next URL, LibriVox, or upload preparation and remain editable for every later batch. For example,
+you can usually ignore source chapter markers without preventing a particular story from keeping
+them.
+
 A link with `list=` in it gets a **Pick videos** control. It lists the playlist without
 downloading anything, and you untick what you do not want. Only the ticked entries are
 downloaded, so removing a video costs nothing. Untick every entry and the row is held back with

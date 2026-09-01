@@ -39,9 +39,10 @@ A batch is up to 50 HTTP or HTTPS source URLs. TonieFi trims whitespace, rejects
 unsupported schemes, preserves source order, and creates one independent job per source. A failure
 in one source does not block the rest of the batch.
 
-Every accepted source runs extraction and then the default Forge sequence automatically. TonieFi
-never assigns a Creative Tonie automatically; the finished collection lands in the Library and
-waits there.
+Every accepted source runs extraction and then the selected Forge sequence automatically. The Desk
+loads its defaults from SQLite and saves edits automatically, while every preparation remains free
+to choose a different profile. TonieFi never assigns a Creative Tonie automatically; the finished
+collection lands in the Library and waits there.
 
 ### Playlists
 

@@ -9,6 +9,7 @@ import {
   createLiveWorkCart,
   deskRefreshNotice,
   forgeDefinitionValues,
+  forgeOption,
   forgeProfileStatus,
   moveSourceEntries,
   looksLikePlaylist,
@@ -196,6 +197,21 @@ test("forgeDefinitionValues reflects every edited setting", () => {
     oversized: "Kept whole",
     trimming: "1.5 sec start, 2.5 sec end",
   });
+});
+
+test("forgeOption accepts the NodeList interface returned by a browser", () => {
+  const normalize = { name: "normalize" };
+  const controls = {
+    0: { name: "use_chapters" },
+    1: normalize,
+    length: 2,
+    *[Symbol.iterator]() {
+      yield this[0];
+      yield this[1];
+    },
+  };
+
+  assert.equal(forgeOption({ querySelectorAll: () => controls }, "normalize"), normalize);
 });
 
 test("forgeProfileStatus reserves the safe badge for the complete default profile", () => {

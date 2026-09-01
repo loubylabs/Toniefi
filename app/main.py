@@ -10,9 +10,10 @@ from typing import Annotated, Any
 from urllib.parse import quote, unquote_to_bytes, urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
 from . import archive, audio, config, db, ingest, jobs, library, push, tonies, version
 
@@ -28,6 +29,29 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Toniefi", version=version.APP_VERSION, lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(
+    _: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """Return useful validation facts without echoing invalid request values.
+
+    A non-finite JSON number is itself not JSON serializable. FastAPI's default
+    response includes the rejected input, so the intended 422 becomes a 500
+    while encoding its own error. Location, type, and message are the complete
+    client contract and remain safe for every invalid value.
+    """
+    details = [
+        {
+            key: value
+            for key, value in error.items()
+            if key not in {"input", "ctx"}
+        }
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": details})
 
 
 def invalid_collection_slug_response() -> JSONResponse:
@@ -127,13 +151,19 @@ class PlaylistPreviewRequest(RequestModel):
     url: str
 
 
+ForgeTrimSeconds = Annotated[
+    float,
+    Field(strict=True, ge=0, allow_inf_nan=False),
+]
+
+
 class PrepareOptions(RequestModel):
-    use_chapters: bool = True
-    normalize: bool = True
-    clean_titles: bool = True
-    trim_head: float = 0
-    trim_tail: float = 0
-    split_oversized: bool = True
+    use_chapters: StrictBool = True
+    normalize: StrictBool = True
+    clean_titles: StrictBool = True
+    trim_head: ForgeTrimSeconds = 0
+    trim_tail: ForgeTrimSeconds = 0
+    split_oversized: StrictBool = True
 
 
 class PrepareBatch(RequestModel):
@@ -245,6 +275,28 @@ def status() -> dict[str, Any]:
 def save_credentials(body: Credentials) -> dict[str, Any]:
     db.replace_credentials(body.username.strip(), body.password)
     return {"ok": True}
+
+
+@app.get("/api/settings/forge-defaults")
+def get_forge_defaults() -> PrepareOptions:
+    try:
+        stored = db.forge_defaults()
+    except db.InvalidForgeDefaults as exc:
+        raise fail(500, str(exc)) from exc
+    if stored is None:
+        return PrepareOptions()
+    try:
+        return PrepareOptions.model_validate(stored)
+    except ValidationError as exc:
+        raise fail(500, db.INVALID_FORGE_DEFAULTS_DETAIL) from exc
+
+
+@app.put("/api/settings/forge-defaults")
+def save_forge_defaults(body: PrepareOptions) -> PrepareOptions:
+    if body.model_fields_set != set(PrepareOptions.model_fields):
+        raise fail(422, "A Forge defaults update must include every setting.")
+    db.replace_forge_defaults(body.model_dump())
+    return body
 
 
 @app.delete("/api/settings/credentials")

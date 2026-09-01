@@ -382,7 +382,7 @@ function optionControl({ name, label, checked }) {
   return element("label", { className: "forge-option-toggle" }, [input, element("span", { text: label })]);
 }
 
-function createForgeSummary() {
+function createForgeSummary({ request, persistentRequest, signal }) {
   const heading = element("h2", { id: "forge-summary-title", text: "Forge defaults" });
   const profileBadge = element("span", {
     className: "status-stamp",
@@ -441,21 +441,70 @@ function createForgeSummary() {
     profileBadge.textContent = profile.label;
     profileBadge.dataset.status = profile.status;
   };
-  controls.addEventListener("input", updateDefinitions);
-  controls.addEventListener("change", updateDefinitions);
+  let saveSequence = Promise.resolve();
+  const persistDefaults = () => {
+    const options = readForgeOptions(section);
+    saveSequence = saveSequence.then(async () => {
+      section.setAttribute("aria-busy", "true");
+      try {
+        await persistentRequest("/api/settings/forge-defaults", {
+          method: "PUT",
+          body: JSON.stringify(options),
+        });
+      } catch (error) {
+        notify(`Forge defaults were not saved. ${error.message}`, { kind: "failure", timeout: 0 });
+      } finally {
+        section.removeAttribute("aria-busy");
+      }
+    });
+    return saveSequence;
+  };
+  const loadDefaults = async () => {
+    controls.disabled = true;
+    try {
+      const saved = await request("/api/settings/forge-defaults", signal ? { signal } : {});
+      if (signal?.aborted) return;
+      writeForgeOptions(section, saved);
+      updateDefinitions();
+    } catch (error) {
+      if (!signal?.aborted) {
+        notify(`Forge defaults could not be loaded. ${error.message}`, { kind: "failure", timeout: 0 });
+      }
+    } finally {
+      controls.disabled = false;
+    }
+  };
+  controls.querySelectorAll("input").forEach((input) => {
+    input.addEventListener("input", updateDefinitions);
+    input.addEventListener("change", updateDefinitions);
+    input.addEventListener("change", persistDefaults);
+  });
   updateDefinitions();
-  return section;
+  return { host: section, ready: loadDefaults() };
+}
+
+export function forgeOption(root, name) {
+  return Array.from(root.querySelectorAll("[name]")).find((control) => control.name === name) || null;
+}
+
+function writeForgeOptions(root, options) {
+  const selected = normalizedOptions(options);
+  forgeOption(root, "use_chapters").checked = selected.use_chapters;
+  forgeOption(root, "normalize").checked = selected.normalize;
+  forgeOption(root, "clean_titles").checked = selected.clean_titles;
+  forgeOption(root, "trim_head").value = String(selected.trim_head);
+  forgeOption(root, "trim_tail").value = String(selected.trim_tail);
+  forgeOption(root, "split_oversized").checked = selected.split_oversized;
 }
 
 function readForgeOptions(root) {
-  const value = (name) => root.querySelector(`[name="${name}"]`);
   return normalizedOptions({
-    use_chapters: value("use_chapters")?.checked,
-    normalize: value("normalize")?.checked,
-    clean_titles: value("clean_titles")?.checked,
-    trim_head: value("trim_head")?.value,
-    trim_tail: value("trim_tail")?.value,
-    split_oversized: value("split_oversized")?.checked,
+    use_chapters: forgeOption(root, "use_chapters")?.checked,
+    normalize: forgeOption(root, "normalize")?.checked,
+    clean_titles: forgeOption(root, "clean_titles")?.checked,
+    trim_head: forgeOption(root, "trim_head")?.value,
+    trim_tail: forgeOption(root, "trim_tail")?.value,
+    split_oversized: forgeOption(root, "split_oversized")?.checked,
   });
 }
 
@@ -730,7 +779,7 @@ function animateSubmission(rows, root, cart) {
   });
 }
 
-function createSecondaryIntake({ root, request, requestRefresh, signal }) {
+function createSecondaryIntake({ root, request, requestRefresh, forgeReady, signal }) {
   const heading = element("h2", { id: "secondary-intake-title", text: "Other ways to add stories" });
   const intro = element("p", { className: "secondary-intake-copy", text: "Public-domain LibriVox books and your own audio files use the same Forge defaults, then appear in the Library." });
 
@@ -774,6 +823,8 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
         importButton.addEventListener("click", async () => {
           importButton.disabled = true;
           try {
+            await forgeReady;
+            if (signal.aborted) return;
             await request("/api/librivox/import", {
               method: "POST",
               body: JSON.stringify(buildLibrivoxPayload(book.id, readForgeOptions(root))),
@@ -837,6 +888,8 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
     fileInput.setCustomValidity("");
     uploadButton.disabled = true;
     try {
+      await forgeReady;
+      if (signal.aborted) return;
       uploadStatus.textContent = `Uploading ${files.length} ${files.length === 1 ? "file" : "files"} as one collection...`;
       await submitUploadBatch({
         files,
@@ -884,6 +937,7 @@ function createSecondaryIntake({ root, request, requestRefresh, signal }) {
 
 export function createDeskScreen({
   request = api,
+  persistentRequest = request,
   refresh,
 } = {}) {
   if (!refresh) throw new Error("Desk requires the application refresh coordinator.");
@@ -892,6 +946,7 @@ export function createDeskScreen({
     let entries = [];
     let sourceId = 0;
     let submitting = false;
+    let forgeDefaultsLoaded = false;
     const root = element("div", { className: "desk-screen" });
     const intake = element("section", { className: "desk-intake", "aria-labelledby": "desk-title" });
     const heading = element("h1", { id: "desk-title", text: "Prepare your next stories" });
@@ -1129,7 +1184,7 @@ export function createDeskScreen({
         : parsed.valid
           ? `${parsed.uniqueCount} ${parsed.uniqueCount === 1 ? "story is" : "stories are"} ready to prepare.`
           : "Add at least one HTTP or HTTPS source URL.";
-      prepareButton.disabled = !parsed.valid || submitting;
+      prepareButton.disabled = !parsed.valid || submitting || !forgeDefaultsLoaded;
       const label = parsed.uniqueCount === 1 ? "Prepare 1 story" : `Prepare ${parsed.uniqueCount} stories`;
       prepareButton.querySelector("span:last-child").textContent = label;
       const token = focusKey ? { key: focusKey } : rememberFocus(intake);
@@ -1169,15 +1224,17 @@ export function createDeskScreen({
       element("div", {}, [sourceCount, clearSources]),
     ]);
     const pasteControls = element("div", { className: "source-paste-controls" }, [paste, addSources]);
-    const forgeSummary = createForgeSummary();
+    const forgeDefaults = createForgeSummary({ request, persistentRequest, signal });
     const actionNote = element("p", { className: "desk-action-note" }, [
       iconNode("info"),
       element("span", { text: "Prepared stories appear in the Library. No Creative Tonie changes happen here." }),
     ]);
-    form.append(sourceHeading, pasteLabel, pasteControls, validation, sourceList, prepareButton, forgeSummary, actionNote);
+    form.append(sourceHeading, pasteLabel, pasteControls, validation, sourceList, prepareButton, forgeDefaults.host, actionNote);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (submitting) return;
+      await forgeDefaults.ready;
+      if (signal.aborted) return;
       let payload;
       try {
         payload = buildPreparePayload(entries, readForgeOptions(root));
@@ -1213,12 +1270,22 @@ export function createDeskScreen({
       }
     });
 
-    const secondary = createSecondaryIntake({ root, request, requestRefresh: () => refresh.request(), signal });
+    const secondary = createSecondaryIntake({
+      root,
+      request,
+      requestRefresh: () => refresh.request(),
+      forgeReady: forgeDefaults.ready,
+      signal,
+    });
     intake.append(heading, lead, form, secondary.host);
     const cart = createLiveWorkCart({ request, requestRefresh: () => refresh.request(), navigate, signal });
     root.append(intake, cart.host);
     replace(workspace, root);
     renderSources();
+    forgeDefaults.ready.then(() => {
+      forgeDefaultsLoaded = true;
+      if (!signal.aborted) renderSources();
+    });
 
     const onRefresh = (snapshot) => {
       cart.onRefresh(snapshot);
