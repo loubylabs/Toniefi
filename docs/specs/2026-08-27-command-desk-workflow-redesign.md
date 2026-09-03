@@ -137,7 +137,7 @@ The worker job kind is `prepare_url`. It performs these steps:
 5. Atomically publish the complete forged folder on the library filesystem.
 6. Return the decorated forged collection as the job result.
 
-URL, LibriVox, and upload preparation share this hidden staged-collection publication contract. Upload source staging defaults under `DATA_DIR`, outside the bounded `WORK_DIR` tmpfs, and retains its owned marker, active lease, heartbeat, 500-file limit, 20 GiB limit, and 24-hour retry window. Startup recovers ready publication stages and removes abandoned stages that no resumable job owns.
+URL, LibriVox, and upload preparation share this hidden staged-collection publication contract. Upload source staging defaults under `DATA_DIR`, outside disposable `WORK_DIR` scratch, and retains its owned marker, active lease, heartbeat, 500-file limit, 20 GiB limit, and 24-hour retry window. Startup recovers ready publication stages and removes abandoned stages that no resumable job owns.
 
 Public collection operations accept exactly one visible folder slug. Empty, dot, parent, absolute, separator-bearing, leading-dot, and reserved internal stage names fail with the same controlled 400 response before any filesystem access. Hidden collection, Forge, backup, and slug-reservation directories use a separate private path primitive and can never be addressed through collection routes. Malformed historical Forge payloads remain visible as non-retryable failures, and direct retry returns the invalid-slug reason without changing the stored row.
 

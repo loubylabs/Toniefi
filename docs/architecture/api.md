@@ -128,8 +128,8 @@ curl -s -X POST http://127.0.0.1:8080/api/uploads/prepare \
 
 One upload collection can hold up to 500 files and 20 GiB of staged audio. Incoming files stream to
 `UPLOAD_STAGE_DIR`, which defaults to persistent storage under `DATA_DIR`. Expired owned upload
-stages are cleaned after 24 hours. The `/work` tmpfs is reserved for disposable downloads and
-transcodes.
+stages are cleaned after 24 hours. `/work` is reserved for disposable downloads and transcodes
+on host storage.
 
 ## Send a confirmed batch
 

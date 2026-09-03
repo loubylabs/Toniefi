@@ -547,7 +547,7 @@ def download_collection(slug: str):
     """Hand one whole collection back as an ordinary zip: audio, cover, manifest.
 
     The archive streams as it is built, so a multi-Tonie collection never has
-    to fit in memory or in the small RAM-backed scratch directory.
+    to be duplicated in memory or in the scratch directory.
     """
     try:
         members = library.download_entries(slug)
