@@ -504,7 +504,7 @@ def validate_confirmed_batch(
             if library.manifest_fingerprint(manifests[source["slug"]]) != source["manifest_fingerprint"]:
                 raise StalePush(
                     "A selected collection changed after confirmation. "
-                    "Select the collections in the Library again and send."
+                    "Select the chapters in the Library again and send."
                 )
 
     # The operator sends chapters, not whole stories, so the expected sequence
@@ -530,7 +530,7 @@ def validate_confirmed_batch(
     if submitted_pairs != [(slug, track["name"]) for slug, track in expected]:
         raise StalePush(
             "The confirmed audio files no longer match the chapters selected. "
-            "Select them in the Library again and send."
+            "Select the chapters in the Library again and send."
         )
 
     groups = library.plan_groups([track for _, track in expected])

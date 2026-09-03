@@ -295,11 +295,11 @@ def test_each_batch_refusal_names_its_own_cause_and_the_library(isolated):
     )
     assert details["fingerprint"] == (
         "A selected collection changed after confirmation. "
-        "Select the collections in the Library again and send."
+        "Select the chapters in the Library again and send."
     )
     assert details["files"] == (
         "The confirmed audio files no longer match the chapters selected. "
-        "Select them in the Library again and send."
+        "Select the chapters in the Library again and send."
     )
     assert details["capacity"] == (
         "The confirmed files no longer fill the capacity groups this selection plans. "
@@ -892,6 +892,59 @@ def test_a_selection_that_overflows_one_tonie_is_refused(isolated, monkeypatch):
     client = TestClient(main.app)
     body = batch_body(isolated)
     monkeypatch.setattr(config, "TONIE_LIMIT_SECONDS", 1500)
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_a_chapter_subset_split_across_more_groups_than_it_plans_is_refused(isolated):
+    """A subset that fits one capacity group cannot claim to need two.
+
+    The whole-collection version of this is above: a selection too big for
+    the plan it claims. This is the other direction: a subset small enough to
+    pack into one group, submitted as if it needed two.
+    """
+    client = TestClient(main.app)
+    manifest_path = config.LIBRARY_DIR / isolated / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["tracks"].append(
+        {"name": "three.mp3", "title": "Three", "seconds": 1000, "size": 9, "mtime": 1}
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    fingerprint = library.get(isolated)["manifest_fingerprint"]
+
+    # one.mp3 and two.mp3 are a subset of the now three-chapter collection,
+    # leaving three.mp3 unselected. Together they fit one capacity group, but
+    # the batch below claims two assignments for them.
+    body = {
+        "operation_key": "send-subset-split",
+        "assignments": [
+            {
+                "household_id": "house-1",
+                "tonie_id": "tonie-1",
+                "replace": False,
+                "remote_chapters": [],
+                "sources": [{
+                    "slug": isolated,
+                    "manifest_fingerprint": fingerprint,
+                    "files": ["one.mp3"],
+                }],
+            },
+            {
+                "household_id": "house-1",
+                "tonie_id": "tonie-2",
+                "replace": False,
+                "remote_chapters": [],
+                "sources": [{
+                    "slug": isolated,
+                    "manifest_fingerprint": fingerprint,
+                    "files": ["two.mp3"],
+                }],
+            },
+        ],
+    }
 
     response = client.post("/api/push/batch", json=body)
 

@@ -174,25 +174,30 @@ test("selection drops a slug that left the index", () => {
   assert.deepEqual(state.ordered([a]).map((item) => item.slug), ["a"]);
 });
 
-test("a story whose chosen chapters have vanished is kept with none, so the bar can refuse it", () => {
+test("a story whose chosen chapters have vanished is kept ticked, so the bar can refuse it by name", () => {
   // Dropping it silently would shrink the selection under the operator and let
   // a send carry nothing. The Send bar names it instead.
   const state = createSelectionState();
   state.toggle(forged("a"));
 
   const emptied = { ...forged("a"), tracks: [] };
+  assert.equal(state.state(emptied), "all");
   assert.deepEqual(state.ordered([emptied]).map((item) => item.tracks), [[]]);
   assert.equal(state.size(), 1);
 });
 
-test("chapterCount counts what will actually be sent", () => {
+test("a forged story with no chapters can be ticked and unticked, so the bar can refuse it", () => {
   const state = createSelectionState();
-  const collections = [forged("a"), forged("b")];
+  const empty = { ...forged("a"), tracks: [] };
 
-  state.toggle(collections[0]);
-  state.toggleTrack(collections[1], "b-1.mp3");
+  state.toggle(empty);
+  assert.equal(state.state(empty), "all");
+  assert.equal(state.size(), 1);
+  assert.deepEqual(state.ordered([empty]).map((item) => item.tracks), [[]]);
 
-  assert.equal(state.chapterCount(collections), 3);
+  state.toggle(empty);
+  assert.equal(state.state(empty), "none");
+  assert.equal(state.size(), 0);
 });
 
 test("clear empties the selection", () => {
@@ -1365,7 +1370,9 @@ test("a sendable row offers a closed chapter panel", async () => {
     await flush();
     const button = screen.node(".library-choose-chapters");
     assert.equal(button.getAttribute("aria-expanded"), "false");
-    assert.equal(button.getAttribute("aria-controls"), "library-chapters-night-story");
+    // aria-controls must not name an id that does not exist in the document,
+    // and the panel is not there while the row is closed.
+    assert.equal(button.getAttribute("aria-controls"), null);
     assert.match(button.textContent, /Choose chapters/);
     assert.equal(screen.node(".library-chapter-panel"), null);
   } finally {
@@ -1393,6 +1400,7 @@ test("opening the panel lists every chapter with its own tick", async () => {
     await flush();
 
     assert.equal(screen.node(".library-choose-chapters").getAttribute("aria-expanded"), "true");
+    assert.equal(screen.node(".library-choose-chapters").getAttribute("aria-controls"), "library-chapters-night-story");
     assert.equal(screen.node(".library-chapter-panel").id, "library-chapters-night-story");
     const rows = screen.dom.workspace.querySelectorAll(".library-chapter-row");
     assert.equal(rows.length, 2);
@@ -1402,6 +1410,69 @@ test("opening the panel lists every chapter with its own tick", async () => {
       screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.checked)),
       [false, false],
     );
+  } finally {
+    screen.stop();
+  }
+});
+
+test("ticking a chapter keeps the open panel's scroll position instead of snapping to the top", async () => {
+  // The whole library list is rebuilt on every tick, which used to hand back
+  // a fresh <ol> at scrollTop 0 no matter how far down the operator had
+  // scrolled.
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    screen.node(".library-chapter-list").scrollTop = 240;
+
+    await screen.dom.workspace.querySelectorAll(".library-chapter-select")[0].dispatchEvent({ type: "change" });
+    await flush();
+
+    assert.equal(screen.node(".library-chapter-list").scrollTop, 240);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("two open chapter panels keep their own scroll position, not one shared position", async () => {
+  const screen = mountLibrary({ collections: [nightStory(), dawnStory()] });
+  try {
+    await flush();
+    const choosers = screen.dom.workspace.querySelectorAll(".library-choose-chapters");
+    await choosers[0].dispatchEvent({ type: "click" });
+    await flush();
+    await choosers[1].dispatchEvent({ type: "click" });
+    await flush();
+    const lists = screen.dom.workspace.querySelectorAll(".library-chapter-list");
+    lists[0].scrollTop = 100;
+    lists[1].scrollTop = 50;
+
+    await screen.dom.workspace.querySelectorAll(".library-chapter-select")[0].dispatchEvent({ type: "change" });
+    await flush();
+
+    const after = screen.dom.workspace.querySelectorAll(".library-chapter-list");
+    assert.equal(after[0].scrollTop, 100);
+    assert.equal(after[1].scrollTop, 50);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("closing a panel forgets its scroll position, so reopening it starts at the top", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    screen.node(".library-chapter-list").scrollTop = 240;
+
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.ok(!screen.node(".library-chapter-list").scrollTop, "a reopened panel does not inherit the closed one's position");
   } finally {
     screen.stop();
   }
@@ -1438,22 +1509,34 @@ test("ticking one chapter sends that chapter alone and leaves the row partial", 
   }
 });
 
-test("All ticks every chapter and None clears them", async () => {
+test("All ticks every chapter and None clears them, each disabling itself and handing focus to the panel", async () => {
   const screen = mountLibrary({ collections: [nightStory()] });
   try {
     await flush();
     await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
     await flush();
 
+    // Nothing chosen yet: None has nothing left to do.
+    assert.equal(screen.node(".library-chapter-none").disabled, true);
+    assert.equal(screen.node(".library-chapter-all").disabled, false);
+
     await screen.node(".library-chapter-all").dispatchEvent({ type: "click" });
     await flush();
     assert.equal(Boolean(screen.node(".library-select").checked), true);
     assert.equal(screen.node(".library-select").indeterminate, false);
+    // All just disabled itself by taking everything, so focus lands on the
+    // panel's own disclosure button rather than the search field.
+    assert.equal(screen.node(".library-chapter-all").disabled, true);
+    assert.equal(screen.node(".library-chapter-none").disabled, false);
+    assert.equal(screen.focusKey(), "library-night-story-chapters");
 
     await screen.node(".library-chapter-none").dispatchEvent({ type: "click" });
     await flush();
     assert.equal(Boolean(screen.node(".library-select").checked), false);
     assert.equal(screen.node(".library-send-bar").hidden, true);
+    assert.equal(screen.node(".library-chapter-none").disabled, true);
+    assert.equal(screen.node(".library-chapter-all").disabled, false);
+    assert.equal(screen.focusKey(), "library-night-story-chapters");
   } finally {
     screen.stop();
   }
@@ -1482,6 +1565,24 @@ test("Add a Tonie's worth takes what fits and then goes quiet", async () => {
       [true, true],
     );
     assert.equal(screen.node(".library-chapter-more").disabled, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("the last press of Add a Tonie's worth keeps focus at the panel, not the search box", async () => {
+  const screen = mountLibrary({ collections: [nightStory()], limitSeconds: 1200 });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.equal(screen.node(".library-chapter-more").disabled, true);
+    assert.equal(screen.focusKey(), "library-night-story-chapters");
   } finally {
     screen.stop();
   }

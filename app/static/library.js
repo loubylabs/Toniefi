@@ -65,9 +65,15 @@ export function createSelectionState() {
   }
 
   function state(collection) {
+    if (!chosen.has(collection.slug)) return "none";
+    const all = trackNames(collection);
     const held = keep(collection, picked(collection.slug)).length;
-    if (!held) return "none";
-    return held === trackNames(collection).length ? "all" : "some";
+    // A registered story holding nothing still reads as ticked, whether it
+    // never had a chapter or lost every one after it was ticked. The operator
+    // can see what they ticked and untick it, and the Send bar is where it
+    // gets refused by name.
+    if (!held || held === all.length) return "all";
+    return "some";
   }
 
   return {
@@ -75,7 +81,8 @@ export function createSelectionState() {
     hasTrack: (slug, name) => picked(slug).has(name),
     chosenCount: (collection) => keep(collection, picked(collection.slug)).length,
     toggle(collection) {
-      put(collection.slug, state(collection) === "all" ? [] : trackNames(collection));
+      if (state(collection) === "all") chosen.delete(collection.slug);
+      else chosen.set(collection.slug, new Set(trackNames(collection)));
     },
     toggleTrack(collection, name) {
       const wanted = new Set(picked(collection.slug));
@@ -87,9 +94,6 @@ export function createSelectionState() {
       put(collection.slug, keep(collection, new Set(names)));
     },
     size: () => chosen.size,
-    chapterCount: (collections) => (collections || []).reduce((total, collection) => (
-      chosen.has(collection.slug) ? total + keep(collection, picked(collection.slug)).length : total
-    ), 0),
     clear() { chosen.clear(); },
     ordered: (collections) => collections
       // A story whose chosen chapters have all vanished is kept, carrying no
@@ -221,6 +225,11 @@ export function createLibraryScreen({
     // Which rows have their chapter list open. The render rebuilds the whole
     // list on every tick, so this cannot live in the DOM.
     const expanded = new Set();
+    // Each open panel's own scroll position, keyed by slug so two open panels
+    // never share one. The render rebuilds the whole library list on every
+    // tick (see above), which would otherwise snap a long chapter list back
+    // to its top on every single chapter the operator ticks.
+    const chapterScroll = new Map();
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -256,27 +265,34 @@ export function createLibraryScreen({
       const names = tracks.map((track) => track.name);
       // Nothing left to take once the final chapter is ticked, because the
       // fill always starts after the last tick.
-      const exhausted = !tracks.length || selection.hasTrack(collection.slug, names[names.length - 1]);
-      function control(suffix, label, disabled, act) {
+      const isExhausted = () => !tracks.length || selection.hasTrack(collection.slug, names[names.length - 1]);
+      function control(suffix, label, computeDisabled, act) {
         const focusKey = `library-${collection.slug}-chapters-${suffix}`;
         const button = element("button", {
           type: "button",
           className: `button button-secondary library-chapter-${suffix}`,
-          disabled: sending || disabled,
+          disabled: sending || computeDisabled(),
           "data-focus-key": focusKey,
         }, [element("span", { text: label })]);
         button.addEventListener("click", () => {
           if (sending) return;
           act();
-          if (selection.size() === 1 && tonies === null) loadTargets(focusKey);
-          render({ focusKey });
+          // The press that took the last chapter, emptied the story, or filled
+          // it can disable the very control that pressed it. Restoring to a
+          // focus key the next render disables strands focus at the search
+          // field instead (restoreFocus treats a disabled target as no
+          // match), so land on the panel's own disclosure button, which never
+          // disables while the panel is open.
+          const next = computeDisabled() ? `library-${collection.slug}-chapters` : focusKey;
+          if (selection.size() === 1 && tonies === null) loadTargets(next);
+          render({ focusKey: next });
         });
         return button;
       }
       const controls = element("div", { className: "library-chapter-controls" }, [
-        control("all", "All", false, () => selection.setTracks(collection, names)),
-        control("none", "None", false, () => selection.setTracks(collection, [])),
-        control("more", "Add a Tonie's worth", exhausted, () => selection.setTracks(
+        control("all", "All", () => selection.state(collection) === "all", () => selection.setTracks(collection, names)),
+        control("none", "None", () => selection.state(collection) === "none", () => selection.setTracks(collection, [])),
+        control("more", "Add a Tonie's worth", isExhausted, () => selection.setTracks(
           collection,
           addATonieWorth(tracks, names.filter((name) => selection.hasTrack(collection.slug, name)), limitSeconds()),
         )),
@@ -315,6 +331,7 @@ export function createLibraryScreen({
         element("ol", {
           className: "library-chapter-list",
           "aria-label": `Chapters in ${collection.title || collection.slug}`,
+          "data-collection-slug": collection.slug,
         }, rows),
       ]);
     }
@@ -477,7 +494,9 @@ export function createLibraryScreen({
           type: "button",
           className: "button button-secondary library-choose-chapters",
           "aria-expanded": String(Boolean(open)),
-          "aria-controls": panelId,
+          // aria-controls names a live element only while the panel is open;
+          // the id does not exist in the document while it is closed.
+          "aria-controls": open ? panelId : null,
           "data-focus-key": `library-${collection.slug}-chapters`,
         }, [iconNode("more"), element("span", { text: open ? "Hide chapters" : "Choose chapters" })])
         : null;
@@ -486,6 +505,10 @@ export function createLibraryScreen({
           if (open) expanded.delete(collection.slug);
           else expanded.add(collection.slug);
           render({ focusKey: `library-${collection.slug}-chapters` });
+          // Forgetting the position has to happen after render(), which
+          // itself reads the outgoing DOM's scrollTop on every call: deleting
+          // first would just have that read put it straight back.
+          if (open) chapterScroll.delete(collection.slug);
         });
       }
       // Only while the selection is partial. "2 of 2" beside a fully ticked
@@ -522,6 +545,13 @@ export function createLibraryScreen({
     function render({ focusKey = "" } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
+      // The list below is about to be torn down and rebuilt whatever branch
+      // runs, which would otherwise reset every open chapter list's scroll to
+      // its top. Read each one's current position before it goes.
+      for (const node of list.querySelectorAll(".library-chapter-list")) {
+        const slug = node.dataset.collectionSlug;
+        if (slug) chapterScroll.set(slug, node.scrollTop || 0);
+      }
       const shown = filterCollectionsByTitle(collections, query);
       if (!collections.length) {
         summary.textContent = "No local collections";
@@ -555,6 +585,12 @@ export function createLibraryScreen({
         // One rule for what can be sent, and selectableCollections is it.
         const sendable = new Set(selectableCollections(shown, jobs).map((item) => item.slug));
         replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown, sendable)));
+        // Put each open panel's scroll position back, now that its list is a
+        // fresh node in the document again.
+        for (const node of list.querySelectorAll(".library-chapter-list")) {
+          const slug = node.dataset.collectionSlug;
+          if (slug && chapterScroll.has(slug)) node.scrollTop = chapterScroll.get(slug);
+        }
       }
       renderSendBar();
       // The send bar is the region the operator is watching while the POST is
@@ -876,7 +912,7 @@ export function createLibraryScreen({
             : `Send ${chapters} ${chapters === 1 ? "chapter" : "chapters"}`,
         }),
       ]);
-      send.addEventListener("click", () => submitSend(groups, picked));
+      send.addEventListener("click", () => submitSend(groups));
 
       const cancel = element("button", {
         type: "button",
@@ -898,7 +934,7 @@ export function createLibraryScreen({
       );
     }
 
-    async function submitSend(groups, picked) {
+    async function submitSend(groups) {
       if (sending) return;
       if (!operationKey) operationKey = newOperationKey();
       const payload = buildPushBatchPayload(groups, selections, operationKey);
