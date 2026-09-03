@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { icon } from "./icons.js";
 import {
   activeSendsByTonie,
+  addATonieWorth,
   buildPushBatchPayload,
   createSendAttempt,
   membershipSignature,
@@ -217,6 +218,9 @@ export function createLibraryScreen({
     // nothing was the wrong ending: it knows every group's membership and
     // target at the exact moment it used to throw both away.
     let receipt = null;
+    // Which rows have their chapter list open. The render rebuilds the whole
+    // list on every tick, so this cannot live in the DOM.
+    const expanded = new Set();
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -246,6 +250,74 @@ export function createLibraryScreen({
       onReloaded: (snapshot) => onRefresh(snapshot),
       onStale: (error) => showStale(`${error.message} The current index remains visible.`),
     });
+
+    function chapterPanel(collection, panelId) {
+      const tracks = collection.tracks || [];
+      const names = tracks.map((track) => track.name);
+      // Nothing left to take once the final chapter is ticked, because the
+      // fill always starts after the last tick.
+      const exhausted = !tracks.length || selection.hasTrack(collection.slug, names[names.length - 1]);
+      function control(suffix, label, disabled, act) {
+        const focusKey = `library-${collection.slug}-chapters-${suffix}`;
+        const button = element("button", {
+          type: "button",
+          className: `button button-secondary library-chapter-${suffix}`,
+          disabled: sending || disabled,
+          "data-focus-key": focusKey,
+        }, [element("span", { text: label })]);
+        button.addEventListener("click", () => {
+          if (sending) return;
+          act();
+          if (selection.size() === 1 && tonies === null) loadTargets(focusKey);
+          render({ focusKey });
+        });
+        return button;
+      }
+      const controls = element("div", { className: "library-chapter-controls" }, [
+        control("all", "All", false, () => selection.setTracks(collection, names)),
+        control("none", "None", false, () => selection.setTracks(collection, [])),
+        control("more", "Add a Tonie's worth", exhausted, () => selection.setTracks(
+          collection,
+          addATonieWorth(tracks, names.filter((name) => selection.hasTrack(collection.slug, name)), limitSeconds()),
+        )),
+      ]);
+      const rows = tracks.map((track, index) => {
+        const boxId = `library-chapter-${collection.slug}-${index}`;
+        const focusKey = `library-${collection.slug}-chapter-${index}`;
+        const box = element("input", {
+          id: boxId,
+          type: "checkbox",
+          className: "library-chapter-select",
+          checked: selection.hasTrack(collection.slug, track.name),
+          disabled: sending,
+          "data-focus-key": focusKey,
+        });
+        box.addEventListener("change", () => {
+          if (sending) return;
+          selection.toggleTrack(collection, track.name);
+          if (selection.size() === 1 && tonies === null) loadTargets(focusKey);
+          render({ focusKey });
+        });
+        // A label bound to the box and holding it, the same shape the row tick
+        // already uses, so the whole line is the hit target rather than a
+        // 20px square.
+        return element("li", { className: "library-chapter-row" }, [
+          element("label", { className: "library-chapter-label", for: boxId }, [
+            box,
+            element("span", { className: "library-chapter-index", text: String(index + 1) }),
+            element("span", { className: "library-chapter-title", text: track.title || track.name }),
+            element("span", { className: "library-chapter-duration", text: track.duration || "" }),
+          ]),
+        ]);
+      });
+      return element("div", { className: "library-chapter-panel", id: panelId }, [
+        controls,
+        element("ol", {
+          className: "library-chapter-list",
+          "aria-label": `Chapters in ${collection.title || collection.slug}`,
+        }, rows),
+      ]);
+    }
 
     function collectionRow(collection, index, shown, sendable) {
       const titleId = `library-collection-${collection.slug}`;
@@ -398,6 +470,33 @@ export function createLibraryScreen({
         element("li", { text: collection.total_duration || "No duration yet" }),
         element("li", { text: `${collection.tonies_needed || 0} ${collection.tonies_needed === 1 ? "Tonie" : "Tonies"} needed` }),
       ]);
+      const panelId = `library-chapters-${collection.slug}`;
+      const open = selectable && expanded.has(collection.slug);
+      const chooseChapters = selectable
+        ? element("button", {
+          type: "button",
+          className: "button button-secondary library-choose-chapters",
+          "aria-expanded": String(Boolean(open)),
+          "aria-controls": panelId,
+          "data-focus-key": `library-${collection.slug}-chapters`,
+        }, [iconNode("more"), element("span", { text: open ? "Hide chapters" : "Choose chapters" })])
+        : null;
+      if (chooseChapters) {
+        chooseChapters.addEventListener("click", () => {
+          if (open) expanded.delete(collection.slug);
+          else expanded.add(collection.slug);
+          render({ focusKey: `library-${collection.slug}-chapters` });
+        });
+      }
+      // Only while the selection is partial. "2 of 2" beside a fully ticked
+      // row repeats what the tick already says, and "0 of 2" beside an
+      // untouched one is noise on every row in the Library.
+      const chapterCount = chosenState === "some"
+        ? element("p", {
+          className: "library-chapter-count",
+          text: `${selection.chosenCount(collection)} of ${(collection.tracks || []).length} chapters selected`,
+        })
+        : null;
       const source = collection.url || collection.source || collection.path || "Local collection";
       const body = element("div", { className: "library-row-body" }, [
         element("div", { className: "library-row-heading" }, [
@@ -409,11 +508,13 @@ export function createLibraryScreen({
           }),
         ]),
         facts,
+        chapterCount,
         element("p", { className: "library-source", text: source }),
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
           : null,
-        element("div", { className: "library-row-actions" }, [primary, download, removeButton]),
+        element("div", { className: "library-row-actions" }, [primary, chooseChapters, download, removeButton]),
+        open ? chapterPanel(collection, panelId) : null,
       ]);
       return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
     }

@@ -1358,3 +1358,188 @@ test("a receipt whose send has left the queue does not invent a result", async (
     screen.stop();
   }
 });
+
+test("a sendable row offers a closed chapter panel", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    const button = screen.node(".library-choose-chapters");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    assert.equal(button.getAttribute("aria-controls"), "library-chapters-night-story");
+    assert.match(button.textContent, /Choose chapters/);
+    assert.equal(screen.node(".library-chapter-panel"), null);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("an unsendable row offers no chapter panel", async () => {
+  const screen = mountLibrary({
+    collections: [{ slug: "raw-story", stage: "extracted", title: "Raw Story" }],
+  });
+  try {
+    await flush();
+    assert.equal(screen.node(".library-choose-chapters"), null);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("opening the panel lists every chapter with its own tick", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.equal(screen.node(".library-choose-chapters").getAttribute("aria-expanded"), "true");
+    assert.equal(screen.node(".library-chapter-panel").id, "library-chapters-night-story");
+    const rows = screen.dom.workspace.querySelectorAll(".library-chapter-row");
+    assert.equal(rows.length, 2);
+    assert.match(rows[0].textContent, /One/);
+    assert.match(rows[0].textContent, /10m 00s/);
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.checked)),
+      [false, false],
+    );
+  } finally {
+    screen.stop();
+  }
+});
+
+test("ticking one chapter sends that chapter alone and leaves the row partial", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.dom.workspace.querySelectorAll(".library-chapter-select")[1].dispatchEvent({ type: "change" });
+    await flush();
+
+    const row = screen.node(".library-select");
+    assert.equal(Boolean(row.checked), false);
+    assert.equal(row.indeterminate, true);
+    assert.match(screen.node(".library-chapter-count").textContent, /1 of 2 chapters selected/);
+    assert.match(screen.node(".library-send-bar").textContent, /1 chapter from 1 story/);
+
+    await chooseTarget(screen, "h1/t1");
+    await flush();
+    await screen.node(".library-send-submit").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.equal(screen.pushes.length, 1);
+    assert.deepEqual(screen.pushes[0].assignments[0].sources, [{
+      slug: "night-story",
+      manifest_fingerprint: "f-night",
+      files: ["02.mp3"],
+    }]);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("All ticks every chapter and None clears them", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    await screen.node(".library-chapter-all").dispatchEvent({ type: "click" });
+    await flush();
+    assert.equal(Boolean(screen.node(".library-select").checked), true);
+    assert.equal(screen.node(".library-select").indeterminate, false);
+
+    await screen.node(".library-chapter-none").dispatchEvent({ type: "click" });
+    await flush();
+    assert.equal(Boolean(screen.node(".library-select").checked), false);
+    assert.equal(screen.node(".library-send-bar").hidden, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("Add a Tonie's worth takes what fits and then goes quiet", async () => {
+  // 600s then 900s against a 1200s limit: the first press takes chapter one
+  // only, the second takes chapter two, and then there is nothing left.
+  const screen = mountLibrary({ collections: [nightStory()], limitSeconds: 1200 });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.checked)),
+      [true, false],
+    );
+
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.checked)),
+      [true, true],
+    );
+    assert.equal(screen.node(".library-chapter-more").disabled, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("the send bar counts chapters across two stories", async () => {
+  const screen = mountLibrary({ collections: [nightStory(), dawnStory()] });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const choosers = screen.dom.workspace.querySelectorAll(".library-choose-chapters");
+    await choosers[1].dispatchEvent({ type: "click" });
+    await flush();
+    const boxes = screen.dom.workspace.querySelectorAll(".library-chapter-select");
+    await boxes[boxes.length - 1].dispatchEvent({ type: "change" });
+    await flush();
+
+    assert.match(screen.node(".library-send-bar").textContent, /3 chapters from 2 stories/);
+    assert.equal(screen.node(".library-send-submit").textContent, "Send 3 chapters");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("every chapter control freezes while a send is in flight", async () => {
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    pushOutcomes: [() => held.then(() => ({ operation_key: "op", job_ids: [7] }))],
+  });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-chapter-all").dispatchEvent({ type: "click" });
+    await flush();
+    await chooseTarget(screen, "h1/t1");
+    await flush();
+    // Not awaited directly: the submit handler awaits the blocked request
+    // itself, so awaiting the dispatch here would deadlock against release()
+    // below, the same reason the row-freeze test above stores the promise.
+    const sent = screen.node(".library-send-submit").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.disabled)),
+      [true, true],
+    );
+    assert.equal(screen.node(".library-chapter-all").disabled, true);
+    assert.equal(screen.node(".library-chapter-none").disabled, true);
+    assert.equal(screen.node(".library-chapter-more").disabled, true);
+
+    release();
+    await sent;
+    await flush();
+  } finally {
+    screen.stop();
+  }
+});
