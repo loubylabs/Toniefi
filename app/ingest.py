@@ -200,6 +200,38 @@ def _span(start: int, end: int) -> str:
     return str(start) if start == end else f"{start}:{end}"
 
 
+# yt-dlp repeats the same four sentences of cookie and sign-in advice after
+# every refused video. On a playlist with a dozen private entries that
+# paragraph becomes the whole error panel, and the words that name the video
+# scroll away above it.
+_YTDLP_ADVICE = re.compile(
+    r"\s*(?:If the owner|If you|Use --|Sign in|See https?://|Also see|Please report)\b.*",
+    re.IGNORECASE,
+)
+
+
+def _error_lines(stderr: str) -> list[str]:
+    """yt-dlp's complaints, one short line each, in order and without repeats."""
+    lines: list[str] = []
+    for raw in (stderr or "").splitlines():
+        line = _YTDLP_ADVICE.sub("", raw.strip()).strip()
+        if line.startswith("ERROR:") and line not in lines:
+            lines.append(line)
+    return lines
+
+
+def _error_summary(stderr: str, limit: int = 3) -> str:
+    """One readable line for the operator, however many entries went wrong."""
+    lines = _error_lines(stderr) or [
+        line.strip() for line in (stderr or "").strip().splitlines() if line.strip()
+    ][-limit:]
+    if not lines:
+        return ""
+    rest = len(lines) - limit
+    summary = " / ".join(lines[:limit])
+    return f"{summary} (and {rest} more)" if rest > 0 else summary
+
+
 def playlist_preview(url: str) -> dict[str, Any]:
     """List a playlist's entries without downloading any audio.
 
@@ -218,13 +250,17 @@ def playlist_preview(url: str) -> dict[str, Any]:
         url,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    if proc.returncode != 0:
-        tail = (proc.stderr or "").strip().splitlines()[-3:]
-        raise RuntimeError(f"yt-dlp could not read that playlist: {' / '.join(tail) or 'unknown error'}")
     try:
         info = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError as error:
-        raise RuntimeError("yt-dlp returned something that was not a playlist.") from error
+    except json.JSONDecodeError:
+        info = {}
+    # An entry the site refuses makes yt-dlp exit non-zero even though the
+    # index it printed is complete. The picker is judged by that index, so one
+    # private video no longer blanks the list for the other ninety-nine.
+    if not (info.get("entries") or info.get("id") or info.get("title")):
+        raise RuntimeError(
+            "yt-dlp could not read that playlist: "
+            f"{_error_summary(proc.stderr) or 'unknown error'}")
     return {
         "title": info.get("title") or "",
         "entries": [_preview_entry(index, entry)
@@ -288,6 +324,11 @@ def import_url(
         cmd = [
             "yt-dlp",
             *selection,
+            # A playlist that holds a private or deleted video must not lose
+            # the videos around it. --ignore-errors steps over the entries the
+            # site refuses and downloads the rest; yt-dlp still exits non-zero
+            # afterwards, so the run below is judged by the audio it produced.
+            "--ignore-errors",
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
             "--no-progress", "--newline", "--no-warnings",
@@ -304,14 +345,17 @@ def import_url(
         cmd.append(url)
 
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10800)
-        if proc.returncode != 0:
-            tail = (proc.stderr or "").strip().splitlines()[-5:]
-            raise RuntimeError(f"yt-dlp failed: {' / '.join(tail) or 'unknown error'}")
 
         info = _read_info_json(tmp)
         produced = _order_produced_audio(tmp, chapters_dir)
+        skipped = _error_lines(proc.stderr)
         if not produced:
-            raise RuntimeError("yt-dlp produced no audio files.")
+            summary = _error_summary(proc.stderr)
+            raise RuntimeError(f"yt-dlp failed: {summary}" if summary
+                               else "yt-dlp produced no audio files.")
+        if skipped:
+            progress(f"Skipped {len(skipped)} "
+                     f"{'entry' if len(skipped) == 1 else 'entries'} the site would not serve")
 
         uploader = info.get("uploader") or info.get("channel") or ""
         # A playlist names itself; every video in it carries the playlist title
@@ -329,6 +373,7 @@ def import_url(
                     "uploader": uploader,
                     "raw_title": info.get("title") or "",
                     "from_chapters": any(from_chapter for _, from_chapter in produced),
+                    "skipped": skipped,
                 },
                 restart=True,
             )
