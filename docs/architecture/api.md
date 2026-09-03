@@ -137,8 +137,11 @@ transcodes.
 Tonie, its effect, and its own `sources`: collection slugs, manifest fingerprints, and the exact
 files in that group.
 
-The server validates every assignment against the manifests on disk, never against the file order
-the browser submitted. Job creation is atomic: either every assignment is queued or none is. The
+An assignment's files are the chapters the operator chose. They may be a subset of a collection,
+but they must appear in the order the collection's manifest holds, with no repeats and no name the
+manifest does not carry. The server validates every assignment against the manifests on disk, never
+against the file order the browser submitted, and plans the capacity groups itself from the chosen
+chapters. Job creation is atomic: either every assignment is queued or none is. The
 `operation_key` makes an uncertain response safe to retry without creating a second send batch.
 
 A batch holds at most 100 assignments. Manifest fingerprints are exactly 64 characters.
