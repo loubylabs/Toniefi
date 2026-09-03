@@ -873,3 +873,79 @@ test("Desk holds back a playlist row with nothing ticked instead of sending it",
     dom.restore();
   }
 });
+
+test("Library says on the row when a prepared playlist left unavailable videos out", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "story-time",
+    title: "Story Time",
+    stage: "extracted",
+    track_count: 2,
+    total_duration: "12m",
+    tonies_needed: 1,
+    url: "https://www.youtube.com/playlist?list=PL1",
+    skipped: ["ERROR: [youtube] aaa: Private video.", "ERROR: [youtube] bbb: Private video."],
+  };
+  const refresh = {
+    snapshot: { collections: [collection], jobs: [] },
+    subscribe() {
+      return () => {};
+    },
+    async request() {
+      return { collections: [collection], stale: [], errors: {} };
+    },
+  };
+  const request = async (url) => {
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    const lines = dom.workspace.querySelectorAll(".library-source").map((node) => node.textContent);
+    assert.ok(
+      lines.some((text) => /2 videos were unavailable and left out\./.test(text)),
+      "the row names the videos the download stepped over",
+    );
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Library leaves the row quiet when a collection skipped nothing", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "quiet-story",
+    title: "Quiet Story",
+    stage: "extracted",
+    track_count: 2,
+    total_duration: "12m",
+    tonies_needed: 1,
+    skipped: [],
+  };
+  const refresh = {
+    snapshot: { collections: [collection], jobs: [] },
+    subscribe() {
+      return () => {};
+    },
+    async request() {
+      return { collections: [collection], stale: [], errors: {} };
+    },
+  };
+  const request = async (url) => {
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    const lines = dom.workspace.querySelectorAll(".library-source").map((node) => node.textContent);
+    assert.equal(lines.some((text) => /unavailable/.test(text)), false);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});

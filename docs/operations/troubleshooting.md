@@ -28,6 +28,10 @@ exactly that reason.
 TonieFi cannot load a private, deleted, region-blocked, or DRM-protected source, and no client
 setting changes that.
 
+Inside a playlist, such an entry is stepped over rather than failing the whole preparation. The
+other videos are downloaded and numbered straight through, and the collection row in Library says
+how many videos were left out. The job fails only when the playlist yielded no audio at all.
+
 ## The tray will not accept my playlist row
 
 Unticking every entry holds the row back with **Pick at least one video from this playlist, or

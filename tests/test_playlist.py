@@ -104,7 +104,7 @@ def fake_download(monkeypatch):
     """Stand in for yt-dlp, recording its command and laying down its output."""
     recorded: list[list[str]] = []
 
-    def install(videos, chapters=(), info=None):
+    def install(videos, chapters=(), info=None, returncode=0, stderr=""):
         def run(command, **kwargs):
             recorded.append(list(command))
             root = Path(command[command.index("-o") + 1]).parent
@@ -117,7 +117,7 @@ def fake_download(monkeypatch):
                 for name in chapters:
                     (chapter_root / name).write_bytes(name.encode())
             (root / "video.info.json").write_text(json.dumps(info or {}), encoding="utf-8")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=returncode, stdout="", stderr=stderr)
 
         monkeypatch.setattr(ingest.shutil, "which", lambda name: "/usr/bin/yt-dlp")
         monkeypatch.setattr(ingest.subprocess, "run", run)
@@ -196,6 +196,118 @@ def test_a_playlist_is_named_after_the_playlist_not_its_first_video(isolated_lib
     )
 
     assert result["title"] == "Story Time"
+
+
+PRIVATE_VIDEO_STDERR = (
+    "ERROR: [youtube] ZZcYUQhk4R0: Private video. If the owner of this video has granted you "
+    "access, please sign in. Use --cookies-from-browser or --cookies for the authentication. "
+    "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for how to "
+    "manually pass cookies. Also see https://github.com/yt-dlp/yt-dlp/wiki/Extractors"
+    "#exporting-youtube-cookies for tips on effectively exporting YouTube cookies\n"
+    "ERROR: [youtube] LsAZZyiOKMM: Private video. If the owner of this video has granted you "
+    "access, please sign in. Use --cookies-from-browser or --cookies for the authentication.\n"
+)
+
+
+def test_the_download_asks_yt_dlp_to_step_over_entries_it_cannot_fetch(
+    isolated_library, fake_download,
+):
+    recorded = fake_download(["001-One.mp3"])
+
+    ingest.import_url(
+        "https://www.youtube.com/playlist?list=PL1",
+        stage_id="url-ignore-errors",
+        use_chapters=False,
+        playlist_items=[1],
+    )
+
+    assert "--ignore-errors" in recorded[0]
+
+
+def test_a_private_video_does_not_fail_the_rest_of_the_playlist(isolated_library, fake_download):
+    """yt-dlp still exits non-zero after skipping one, so the audio decides."""
+    fake_download(
+        ["001-Video One.mp3", "003-Video Three.mp3"],
+        info={"playlist_title": "Story Time"},
+        returncode=1,
+        stderr=PRIVATE_VIDEO_STDERR,
+    )
+
+    result = ingest.import_url(
+        "https://www.youtube.com/playlist?list=PL1",
+        stage_id="url-private-entry",
+        use_chapters=False,
+        playlist_items=[1, 2, 3],
+    )
+
+    assert [track["title"] for track in result["tracks"]] == ["Video One", "Video Three"]
+
+
+def test_the_skipped_entries_are_recorded_on_the_collection(isolated_library, fake_download):
+    fake_download(
+        ["001-Video One.mp3"],
+        returncode=1,
+        stderr=PRIVATE_VIDEO_STDERR,
+    )
+
+    result = ingest.import_url(
+        "https://www.youtube.com/playlist?list=PL1",
+        stage_id="url-skipped-record",
+        use_chapters=False,
+        playlist_items=[1, 2, 3],
+    )
+
+    assert result["skipped"] == [
+        "ERROR: [youtube] ZZcYUQhk4R0: Private video.",
+        "ERROR: [youtube] LsAZZyiOKMM: Private video.",
+    ]
+
+
+def test_a_download_that_skipped_nothing_records_nothing(isolated_library, fake_download):
+    fake_download(["001-Video One.mp3"])
+
+    result = ingest.import_url(
+        "https://www.youtube.com/playlist?list=PL1",
+        stage_id="url-nothing-skipped",
+        use_chapters=False,
+        playlist_items=[1],
+    )
+
+    assert result.get("skipped") == []
+
+
+def test_a_download_that_produced_no_audio_still_fails(isolated_library, fake_download):
+    fake_download([], returncode=1, stderr=PRIVATE_VIDEO_STDERR)
+
+    with pytest.raises(RuntimeError) as failure:
+        ingest.import_url(
+            "https://www.youtube.com/playlist?list=PL1",
+            stage_id="url-all-private",
+            use_chapters=False,
+            playlist_items=[1, 2],
+        )
+
+    message = str(failure.value)
+    assert "Private video." in message
+    assert "cookies" not in message
+
+
+def test_the_preview_uses_the_playlist_it_got_even_when_yt_dlp_exits_unhappy(flat_playlist):
+    """One refused entry must not blank the picker for the other ninety-nine."""
+    flat_playlist(
+        {
+            "_type": "playlist",
+            "title": "Mixed",
+            "entries": [{"id": "aaa", "title": "First", "duration": 10}],
+        },
+        returncode=1,
+        stderr=PRIVATE_VIDEO_STDERR,
+    )
+
+    preview = ingest.playlist_preview("https://www.youtube.com/playlist?list=PL1")
+
+    assert preview["title"] == "Mixed"
+    assert [entry["id"] for entry in preview["entries"]] == ["aaa"]
 
 
 @pytest.fixture

@@ -152,6 +152,18 @@ function stageLabel(stage) {
   return stage === "forged" ? "Forge complete" : stage === "extracted" ? "Extracted" : stage || "Local";
 }
 
+// A playlist that held a private or deleted video arrives short. The chapters
+// that did arrive are numbered straight through, so nothing else on the row
+// shows the gap, and the operator would only find it by counting.
+function skippedNote(collection) {
+  const count = (collection?.skipped || []).length;
+  if (!count) return null;
+  return element("p", {
+    className: "library-source",
+    text: `${count} ${count === 1 ? "video was" : "videos were"} unavailable and left out.`,
+  });
+}
+
 export function forgePreparationState(collection, jobs = []) {
   if (collection?.stage === "forged") return { state: "ready", error: "" };
   const job = jobs
@@ -533,6 +545,7 @@ export function createLibraryScreen({
         facts,
         chapterCount,
         element("p", { className: "library-source", text: source }),
+        skippedNote(collection),
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
           : null,
