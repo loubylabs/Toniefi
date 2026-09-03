@@ -254,8 +254,10 @@ def test_each_batch_refusal_names_its_own_cause_and_the_library(isolated):
     fingerprint = batch_body(isolated)
     fingerprint["assignments"][0]["sources"][0]["manifest_fingerprint"] = "a" * 64
 
+    # A subset is legal now, so the refusal has to be triggered by something
+    # that is still illegal. A name the manifest does not hold is the plainest.
     files = batch_body(isolated)
-    files["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
+    files["assignments"][0]["sources"][0]["files"] = ["ghost.mp3"]
 
     # Both tracks fit one capacity group, so splitting them across two Tonies
     # submits the right files against the wrong plan.
@@ -293,15 +295,15 @@ def test_each_batch_refusal_names_its_own_cause_and_the_library(isolated):
     )
     assert details["fingerprint"] == (
         "A selected collection changed after confirmation. "
-        "Select the collections in the Library again and send."
+        "Select the chapters in the Library again and send."
     )
     assert details["files"] == (
-        "The confirmed audio files no longer match the selected collections. "
-        "Select them in the Library again and send."
+        "The confirmed audio files no longer match the chapters selected. "
+        "Select the chapters in the Library again and send."
     )
     assert details["capacity"] == (
         "The confirmed files no longer fill the capacity groups this selection plans. "
-        "Select the collections in the Library again and send."
+        "Select the chapters in the Library again and send."
     )
     assert len(set(details.values())) == len(details)
     assert db.jobs_for_refresh() == []
@@ -763,16 +765,49 @@ def test_two_collections_send_to_one_tonie_as_one_job(isolated):
     assert [source["slug"] for source in stored["payload"]["sources"]] == [isolated, other]
 
 
-def test_a_partial_collection_is_refused(isolated):
-    """Sending half a story is never what the operator confirmed."""
+def test_a_chapter_subset_of_one_collection_is_accepted(isolated):
+    """The operator sends the chapters chosen, not the whole story.
+
+    A 196-chapter import plans more than ten capacity groups, and an operator
+    who owns three Creative Tonies could not send it at all while a send had
+    to carry every chapter.
+    """
     client = TestClient(main.app)
     body = batch_body(isolated)
     body["assignments"][0]["sources"][0]["files"] = ["one.mp3"]
 
     response = client.post("/api/push/batch", json=body)
 
-    assert response.status_code == 409
-    assert db.jobs_for_refresh(limit=10) == []
+    assert response.status_code == 200, response.json()
+    job_ids = response.json()["job_ids"]
+    assert len(job_ids) == 1
+    stored = db.get_job(job_ids[0])
+    assert stored["payload"]["sources"][0]["files"] == ["one.mp3"]
+
+
+def test_a_chapter_subset_spanning_two_collections_is_accepted(isolated):
+    """Two stories, one chapter each, one Creative Tonie."""
+    client = TestClient(main.app)
+    other = second_collection("Sea Tales", [("three.mp3", "Three", 500), ("four.mp3", "Four", 500)])
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"] = [
+        {
+            "slug": isolated,
+            "manifest_fingerprint": library.get(isolated)["manifest_fingerprint"],
+            "files": ["two.mp3"],
+        },
+        {
+            "slug": other,
+            "manifest_fingerprint": library.get(other)["manifest_fingerprint"],
+            "files": ["four.mp3"],
+        },
+    ]
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 200, response.json()
+    stored = db.get_job(response.json()["job_ids"][0])
+    assert [source["files"] for source in stored["payload"]["sources"]] == [["two.mp3"], ["four.mp3"]]
 
 
 def test_a_duplicated_track_is_refused(isolated):
@@ -857,6 +892,59 @@ def test_a_selection_that_overflows_one_tonie_is_refused(isolated, monkeypatch):
     client = TestClient(main.app)
     body = batch_body(isolated)
     monkeypatch.setattr(config, "TONIE_LIMIT_SECONDS", 1500)
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 409
+    assert db.jobs_for_refresh(limit=10) == []
+
+
+def test_a_chapter_subset_split_across_more_groups_than_it_plans_is_refused(isolated):
+    """A subset that fits one capacity group cannot claim to need two.
+
+    The whole-collection version of this is above: a selection too big for
+    the plan it claims. This is the other direction: a subset small enough to
+    pack into one group, submitted as if it needed two.
+    """
+    client = TestClient(main.app)
+    manifest_path = config.LIBRARY_DIR / isolated / library.MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["tracks"].append(
+        {"name": "three.mp3", "title": "Three", "seconds": 1000, "size": 9, "mtime": 1}
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    fingerprint = library.get(isolated)["manifest_fingerprint"]
+
+    # one.mp3 and two.mp3 are a subset of the now three-chapter collection,
+    # leaving three.mp3 unselected. Together they fit one capacity group, but
+    # the batch below claims two assignments for them.
+    body = {
+        "operation_key": "send-subset-split",
+        "assignments": [
+            {
+                "household_id": "house-1",
+                "tonie_id": "tonie-1",
+                "replace": False,
+                "remote_chapters": [],
+                "sources": [{
+                    "slug": isolated,
+                    "manifest_fingerprint": fingerprint,
+                    "files": ["one.mp3"],
+                }],
+            },
+            {
+                "household_id": "house-1",
+                "tonie_id": "tonie-2",
+                "replace": False,
+                "remote_chapters": [],
+                "sources": [{
+                    "slug": isolated,
+                    "manifest_fingerprint": fingerprint,
+                    "files": ["two.mp3"],
+                }],
+            },
+        ],
+    }
 
     response = client.post("/api/push/batch", json=body)
 

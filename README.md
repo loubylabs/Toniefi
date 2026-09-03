@@ -53,6 +53,13 @@ into capacity groups, one Tonie's worth of audio each, and shows exactly which c
 which group. Every group needs its own Creative Tonie before **Send** unlocks, and two groups
 cannot name the same Tonie.
 
+A story you do not want to send whole has a **Choose chapters** control. It opens that story's
+chapter list with a tick box on each chapter, so a long import can go to one Creative Tonie now and
+the rest another day. **All** and **None** tick the whole list, and **Add a Tonie's worth** ticks
+forward from the last ticked chapter until the next one would not fit, so nobody has to count
+minutes. The story's own tick box still means every chapter, and shows a dash while only some are
+chosen.
+
 **Append to the back** is the default and sends straight away, because you can remove the added
 chapters afterwards. **Replace everything** always asks first and names every affected Tonie,
 because it destroys that Tonie's current cloud audio with no undo.

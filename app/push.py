@@ -473,10 +473,10 @@ def validate_confirmed_batch(
 ) -> list[list[tuple[str, dict[str, Any]]]]:
     """Check a whole confirmed batch, and resolve it to tracks per assignment.
 
-    The expected track sequence is built from the manifests on disk, never from
-    the submitted file order. Planning from what the browser sent would let a
-    payload naming half a collection, or naming it backwards, define its own
-    correctness and pass.
+    The expected track sequence is built from the manifests on disk, filtered
+    to the chapters this batch names, never from the submitted file order.
+    Planning from what the browser sent would let a payload naming a story
+    backwards, or naming a chapter twice, define its own correctness and pass.
     """
     submitted = [_flatten(assignment) for assignment in assignments]
 
@@ -504,30 +504,40 @@ def validate_confirmed_batch(
             if library.manifest_fingerprint(manifests[source["slug"]]) != source["manifest_fingerprint"]:
                 raise StalePush(
                     "A selected collection changed after confirmation. "
-                    "Select the collections in the Library again and send."
+                    "Select the chapters in the Library again and send."
                 )
+
+    # The operator sends chapters, not whole stories, so the expected sequence
+    # is each manifest filtered to the names this batch names. Order still
+    # comes from the manifest: a browser that submits its own order, or its
+    # own grouping, may not define its own correctness.
+    submitted_pairs = [pair for flat in submitted for pair in flat]
+    chosen: dict[str, set[str]] = {}
+    for slug, name in submitted_pairs:
+        chosen.setdefault(slug, set()).add(name)
 
     expected = [
         (slug, track)
         for slug in order
         for track in manifests[slug]["tracks"]
+        if track["name"] in chosen[slug]
     ]
-    # One comparison covers omission, duplication, a foreign name, a reordered
-    # collection and interleaving, because `expected` is whole collections in
-    # first-appearance order and nothing else can equal it.
-    if [pair for flat in submitted for pair in flat] != [
-        (slug, track["name"]) for slug, track in expected
-    ]:
+    # One comparison still covers duplication, a foreign name, a reordered
+    # collection and interleaving. A repeated name collapses into `chosen` and
+    # a foreign name matches no track, so either way `expected` is shorter than
+    # what was submitted; a reorder or an interleave differs position by
+    # position. Only omission passes now, because omission is the feature.
+    if submitted_pairs != [(slug, track["name"]) for slug, track in expected]:
         raise StalePush(
-            "The confirmed audio files no longer match the selected collections. "
-            "Select them in the Library again and send."
+            "The confirmed audio files no longer match the chapters selected. "
+            "Select the chapters in the Library again and send."
         )
 
     groups = library.plan_groups([track for _, track in expected])
     if [len(group.tracks) for group in groups] != [len(flat) for flat in submitted]:
         raise StalePush(
             "The confirmed files no longer fill the capacity groups this selection plans. "
-            "Select the collections in the Library again and send."
+            "Select the chapters in the Library again and send."
         )
 
     resolved: list[list[tuple[str, dict[str, Any]]]] = []

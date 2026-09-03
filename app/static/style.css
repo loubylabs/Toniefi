@@ -3360,6 +3360,74 @@ img.collection-detail-cover {
   accent-color: var(--bookcloth);
 }
 
+/* The chapter panel. A long playlist import can hold hundreds of chapters, so
+   the list scrolls inside itself rather than pushing the Library off screen. */
+.library-chapter-count {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--type-sm);
+}
+
+.library-chapter-panel {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: var(--rule-thin);
+}
+
+.library-chapter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+  gap: var(--space-2);
+}
+
+.library-chapter-list {
+  max-height: 22rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  list-style: none;
+}
+
+.library-chapter-label {
+  display: flex;
+  align-items: center;
+  /* WCAG 2.2 AA 2.5.8: the whole line is the hit target, not the box. */
+  min-height: 2.75rem;
+  padding: 0 var(--space-2);
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.library-chapter-select {
+  width: 1.375rem;
+  height: 1.375rem;
+  min-height: 1.375rem;
+  margin: 0;
+  accent-color: var(--bookcloth);
+}
+
+.library-chapter-index {
+  min-width: 2.25rem;
+  color: var(--ink-muted);
+  font-size: var(--type-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.library-chapter-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.library-chapter-duration {
+  color: var(--ink-muted);
+  font-size: var(--type-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 .library-send-bar {
   position: sticky;
   z-index: 10;

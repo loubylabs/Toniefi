@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { icon } from "./icons.js";
 import {
   activeSendsByTonie,
+  addATonieWorth,
   buildPushBatchPayload,
   createSendAttempt,
   membershipSignature,
@@ -44,19 +45,65 @@ export function selectableCollections(collections, jobs = []) {
 }
 
 export function createSelectionState() {
-  // A set of slugs, never an array of collections. The send order is the
-  // Library's own order, resolved at read time, so nothing depends on the
-  // order the operator happened to tick.
-  const chosen = new Set();
+  // A map of slug to the chapter names chosen inside it, never an "all"
+  // sentinel. The send order is the Library's own order and each story's own
+  // manifest order, both resolved at read time, so nothing depends on the
+  // order the operator happened to tick. Names are explicit because a story
+  // that changes under a selection already fails on its manifest fingerprint,
+  // and explicit names let a partial selection survive a Library refresh the
+  // same way a whole one does.
+  const chosen = new Map();
+  const trackNames = (collection) => (collection.tracks || []).map((track) => track.name);
+  const picked = (slug) => chosen.get(slug) || new Set();
+  // Always stored in manifest order and always filtered to chapters that still
+  // exist, so a stale name cannot reach a payload.
+  const keep = (collection, wanted) => trackNames(collection).filter((name) => wanted.has(name));
+
+  function put(slug, names) {
+    if (names.length) chosen.set(slug, new Set(names));
+    else chosen.delete(slug);
+  }
+
+  function state(collection) {
+    if (!chosen.has(collection.slug)) return "none";
+    const all = trackNames(collection);
+    const held = keep(collection, picked(collection.slug)).length;
+    // A registered story holding nothing still reads as ticked, whether it
+    // never had a chapter or lost every one after it was ticked. The operator
+    // can see what they ticked and untick it, and the Send bar is where it
+    // gets refused by name.
+    if (!held || held === all.length) return "all";
+    return "some";
+  }
+
   return {
-    has: (slug) => chosen.has(slug),
-    size: () => chosen.size,
-    toggle(slug) {
-      if (chosen.has(slug)) chosen.delete(slug);
-      else chosen.add(slug);
+    state,
+    hasTrack: (slug, name) => picked(slug).has(name),
+    chosenCount: (collection) => keep(collection, picked(collection.slug)).length,
+    toggle(collection) {
+      if (state(collection) === "all") chosen.delete(collection.slug);
+      else chosen.set(collection.slug, new Set(trackNames(collection)));
     },
+    toggleTrack(collection, name) {
+      const wanted = new Set(picked(collection.slug));
+      if (wanted.has(name)) wanted.delete(name);
+      else wanted.add(name);
+      put(collection.slug, keep(collection, wanted));
+    },
+    setTracks(collection, names) {
+      put(collection.slug, keep(collection, new Set(names)));
+    },
+    size: () => chosen.size,
     clear() { chosen.clear(); },
-    ordered: (collections) => collections.filter((collection) => chosen.has(collection.slug)),
+    ordered: (collections) => collections
+      // A story whose chosen chapters have all vanished is kept, carrying no
+      // tracks, so the Send bar's own guard can refuse it by name rather than
+      // the selection quietly shrinking to nothing under the operator.
+      .filter((collection) => chosen.has(collection.slug))
+      .map((collection) => ({
+        ...collection,
+        tracks: (collection.tracks || []).filter((track) => picked(collection.slug).has(track.name)),
+      })),
   };
 }
 
@@ -175,6 +222,14 @@ export function createLibraryScreen({
     // nothing was the wrong ending: it knows every group's membership and
     // target at the exact moment it used to throw both away.
     let receipt = null;
+    // Which rows have their chapter list open. The render rebuilds the whole
+    // list on every tick, so this cannot live in the DOM.
+    const expanded = new Set();
+    // Each open panel's own scroll position, keyed by slug so two open panels
+    // never share one. The render rebuilds the whole library list on every
+    // tick (see above), which would otherwise snap a long chapter list back
+    // to its top on every single chapter the operator ticks.
+    const chapterScroll = new Map();
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -204,6 +259,82 @@ export function createLibraryScreen({
       onReloaded: (snapshot) => onRefresh(snapshot),
       onStale: (error) => showStale(`${error.message} The current index remains visible.`),
     });
+
+    function chapterPanel(collection, panelId) {
+      const tracks = collection.tracks || [];
+      const names = tracks.map((track) => track.name);
+      // Nothing left to take once the final chapter is ticked, because the
+      // fill always starts after the last tick.
+      const isExhausted = () => !tracks.length || selection.hasTrack(collection.slug, names[names.length - 1]);
+      function control(suffix, label, computeDisabled, act) {
+        const focusKey = `library-${collection.slug}-chapters-${suffix}`;
+        const button = element("button", {
+          type: "button",
+          className: `button button-secondary library-chapter-${suffix}`,
+          disabled: sending || computeDisabled(),
+          "data-focus-key": focusKey,
+        }, [element("span", { text: label })]);
+        button.addEventListener("click", () => {
+          if (sending) return;
+          act();
+          // The press that took the last chapter, emptied the story, or filled
+          // it can disable the very control that pressed it. Restoring to a
+          // focus key the next render disables strands focus at the search
+          // field instead (restoreFocus treats a disabled target as no
+          // match), so land on the panel's own disclosure button, which never
+          // disables while the panel is open.
+          const next = computeDisabled() ? `library-${collection.slug}-chapters` : focusKey;
+          if (selection.size() === 1 && tonies === null) loadTargets(next);
+          render({ focusKey: next });
+        });
+        return button;
+      }
+      const controls = element("div", { className: "library-chapter-controls" }, [
+        control("all", "All", () => selection.state(collection) === "all", () => selection.setTracks(collection, names)),
+        control("none", "None", () => selection.state(collection) === "none", () => selection.setTracks(collection, [])),
+        control("more", "Add a Tonie's worth", isExhausted, () => selection.setTracks(
+          collection,
+          addATonieWorth(tracks, names.filter((name) => selection.hasTrack(collection.slug, name)), limitSeconds()),
+        )),
+      ]);
+      const rows = tracks.map((track, index) => {
+        const boxId = `library-chapter-${collection.slug}-${index}`;
+        const focusKey = `library-${collection.slug}-chapter-${index}`;
+        const box = element("input", {
+          id: boxId,
+          type: "checkbox",
+          className: "library-chapter-select",
+          checked: selection.hasTrack(collection.slug, track.name),
+          disabled: sending,
+          "data-focus-key": focusKey,
+        });
+        box.addEventListener("change", () => {
+          if (sending) return;
+          selection.toggleTrack(collection, track.name);
+          if (selection.size() === 1 && tonies === null) loadTargets(focusKey);
+          render({ focusKey });
+        });
+        // A label bound to the box and holding it, the same shape the row tick
+        // already uses, so the whole line is the hit target rather than a
+        // 20px square.
+        return element("li", { className: "library-chapter-row" }, [
+          element("label", { className: "library-chapter-label", for: boxId }, [
+            box,
+            element("span", { className: "library-chapter-index", text: String(index + 1) }),
+            element("span", { className: "library-chapter-title", text: track.title || track.name }),
+            element("span", { className: "library-chapter-duration", text: track.duration || "" }),
+          ]),
+        ]);
+      });
+      return element("div", { className: "library-chapter-panel", id: panelId }, [
+        controls,
+        element("ol", {
+          className: "library-chapter-list",
+          "aria-label": `Chapters in ${collection.title || collection.slug}`,
+          "data-collection-slug": collection.slug,
+        }, rows),
+      ]);
+    }
 
     function collectionRow(collection, index, shown, sendable) {
       const titleId = `library-collection-${collection.slug}`;
@@ -311,12 +442,13 @@ export function createLibraryScreen({
       });
       const selectable = sendable.has(collection.slug);
       const tickId = `library-select-${collection.slug}`;
+      const chosenState = selectable ? selection.state(collection) : "none";
       const tick = selectable
         ? element("input", {
           id: tickId,
           type: "checkbox",
           className: "library-select",
-          checked: selection.has(collection.slug),
+          checked: chosenState === "all",
           // The whole selection freezes for the duration of a send, the same
           // way Send and Clear already do. The payload was built from the ticks
           // as they stood, and the receipt clears every tick, so a story ticked
@@ -326,11 +458,14 @@ export function createLibraryScreen({
         })
         : null;
       if (tick) {
+        // A property, not an attribute: HTML has no indeterminate attribute,
+        // and aria-checked="mixed" is not valid on a native checkbox.
+        tick.indeterminate = chosenState === "some";
         tick.addEventListener("change", () => {
           // disabled is the visible guard, and a stale render is one bug away
           // from leaving it wrong, so the freeze gets its own guard too.
           if (sending) return;
-          selection.toggle(collection.slug);
+          selection.toggle(collection);
           if (selection.size() === 1 && tonies === null) loadTargets(`library-${collection.slug}-select`);
           render({ focusKey: `library-${collection.slug}-select` });
         });
@@ -352,6 +487,39 @@ export function createLibraryScreen({
         element("li", { text: collection.total_duration || "No duration yet" }),
         element("li", { text: `${collection.tonies_needed || 0} ${collection.tonies_needed === 1 ? "Tonie" : "Tonies"} needed` }),
       ]);
+      const panelId = `library-chapters-${collection.slug}`;
+      const open = selectable && expanded.has(collection.slug);
+      const chooseChapters = selectable
+        ? element("button", {
+          type: "button",
+          className: "button button-secondary library-choose-chapters",
+          "aria-expanded": String(Boolean(open)),
+          // aria-controls names a live element only while the panel is open;
+          // the id does not exist in the document while it is closed.
+          "aria-controls": open ? panelId : null,
+          "data-focus-key": `library-${collection.slug}-chapters`,
+        }, [iconNode("more"), element("span", { text: open ? "Hide chapters" : "Choose chapters" })])
+        : null;
+      if (chooseChapters) {
+        chooseChapters.addEventListener("click", () => {
+          if (open) expanded.delete(collection.slug);
+          else expanded.add(collection.slug);
+          render({ focusKey: `library-${collection.slug}-chapters` });
+          // Forgetting the position has to happen after render(), which
+          // itself reads the outgoing DOM's scrollTop on every call: deleting
+          // first would just have that read put it straight back.
+          if (open) chapterScroll.delete(collection.slug);
+        });
+      }
+      // Only while the selection is partial. "2 of 2" beside a fully ticked
+      // row repeats what the tick already says, and "0 of 2" beside an
+      // untouched one is noise on every row in the Library.
+      const chapterCount = chosenState === "some"
+        ? element("p", {
+          className: "library-chapter-count",
+          text: `${selection.chosenCount(collection)} of ${(collection.tracks || []).length} chapters selected`,
+        })
+        : null;
       const source = collection.url || collection.source || collection.path || "Local collection";
       const body = element("div", { className: "library-row-body" }, [
         element("div", { className: "library-row-heading" }, [
@@ -363,11 +531,13 @@ export function createLibraryScreen({
           }),
         ]),
         facts,
+        chapterCount,
         element("p", { className: "library-source", text: source }),
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
           : null,
-        element("div", { className: "library-row-actions" }, [primary, download, removeButton]),
+        element("div", { className: "library-row-actions" }, [primary, chooseChapters, download, removeButton]),
+        open ? chapterPanel(collection, panelId) : null,
       ]);
       return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
     }
@@ -375,6 +545,13 @@ export function createLibraryScreen({
     function render({ focusKey = "" } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
+      // The list below is about to be torn down and rebuilt whatever branch
+      // runs, which would otherwise reset every open chapter list's scroll to
+      // its top. Read each one's current position before it goes.
+      for (const node of list.querySelectorAll(".library-chapter-list")) {
+        const slug = node.dataset.collectionSlug;
+        if (slug) chapterScroll.set(slug, node.scrollTop || 0);
+      }
       const shown = filterCollectionsByTitle(collections, query);
       if (!collections.length) {
         summary.textContent = "No local collections";
@@ -408,6 +585,12 @@ export function createLibraryScreen({
         // One rule for what can be sent, and selectableCollections is it.
         const sendable = new Set(selectableCollections(shown, jobs).map((item) => item.slug));
         replace(list, ...shown.map((collection, index) => collectionRow(collection, index, shown, sendable)));
+        // Put each open panel's scroll position back, now that its list is a
+        // fresh node in the document again.
+        for (const node of list.querySelectorAll(".library-chapter-list")) {
+          const slug = node.dataset.collectionSlug;
+          if (slug && chapterScroll.has(slug)) node.scrollTop = chapterScroll.get(slug);
+        }
       }
       renderSendBar();
       // The send bar is the region the operator is watching while the POST is
@@ -574,10 +757,14 @@ export function createLibraryScreen({
         operationKey = "";
       }
       const totalSeconds = groups.reduce((sum, group) => sum + group.seconds, 0);
+      // Chapters, because a partial story is not a story: "1 story selected"
+      // beside a single ticked chapter of 196 would be a lie about what Send
+      // is about to write to a Creative Tonie.
+      const chapters = groups.reduce((sum, group) => sum + group.entries.length, 0);
       const heading = element("div", { className: "screen-heading" }, [
         element("h2", {
           id: "library-send-title",
-          text: `${picked.length} ${picked.length === 1 ? "story" : "stories"} selected · ${humanDuration(totalSeconds)}`,
+          text: `${chapters} ${chapters === 1 ? "chapter" : "chapters"} from ${picked.length} ${picked.length === 1 ? "story" : "stories"} · ${humanDuration(totalSeconds)}`,
         }),
         element("button", { type: "button", className: "button button-secondary library-send-refresh", "data-focus-key": "library-send-refresh" }, [
           iconNode("refresh"), element("span", { text: "Refresh targets" }),
@@ -722,10 +909,10 @@ export function createLibraryScreen({
         element("span", {
           text: sending
             ? "Sending..."
-            : `Send ${picked.length} ${picked.length === 1 ? "story" : "stories"}`,
+            : `Send ${chapters} ${chapters === 1 ? "chapter" : "chapters"}`,
         }),
       ]);
-      send.addEventListener("click", () => submitSend(groups, picked));
+      send.addEventListener("click", () => submitSend(groups));
 
       const cancel = element("button", {
         type: "button",
@@ -747,7 +934,7 @@ export function createLibraryScreen({
       );
     }
 
-    async function submitSend(groups, picked) {
+    async function submitSend(groups) {
       if (sending) return;
       if (!operationKey) operationKey = newOperationKey();
       const payload = buildPushBatchPayload(groups, selections, operationKey);
@@ -792,7 +979,8 @@ export function createLibraryScreen({
           };
           selection.clear();
           operationKey = "";
-          notify(`${picked.length} ${picked.length === 1 ? "story is" : "stories are"} queued to send.`, { kind: "success" });
+          const sent = groups.reduce((sum, group) => sum + group.entries.length, 0);
+          notify(`${sent} ${sent === 1 ? "chapter is" : "chapters are"} queued to send.`, { kind: "success" });
           announce("Creative Tonie send queued.");
           await refresh.request();
           render({ focusKey: "library-send-done" });

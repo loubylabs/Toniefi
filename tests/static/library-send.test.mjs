@@ -98,7 +98,10 @@ const forged = (slug) => ({
   stage: "forged",
   title: slug,
   manifest_fingerprint: `f-${slug}`,
-  tracks: [{ name: `${slug}.mp3`, title: slug, seconds: 300 }],
+  tracks: [
+    { name: `${slug}-1.mp3`, title: `${slug} one`, seconds: 300 },
+    { name: `${slug}-2.mp3`, title: `${slug} two`, seconds: 300 },
+  ],
 });
 
 test("selectableCollections offers only forged collections", () => {
@@ -111,36 +114,101 @@ test("selection keeps Library order, not ticking order", () => {
   const state = createSelectionState();
   const collections = [forged("a"), forged("b"), forged("c")];
 
-  state.toggle("c");
-  state.toggle("a");
+  state.toggle(collections[2]);
+  state.toggle(collections[0]);
 
   assert.deepEqual(state.ordered(collections).map((item) => item.slug), ["a", "c"]);
 });
 
-test("selection drops a slug that left the index", () => {
+test("toggling a story takes every chapter, and toggling again takes none", () => {
   const state = createSelectionState();
-  state.toggle("a");
-  state.toggle("gone");
+  const a = forged("a");
 
-  assert.deepEqual(state.ordered([forged("a")]).map((item) => item.slug), ["a"]);
+  state.toggle(a);
+  assert.equal(state.state(a), "all");
+  assert.deepEqual(state.ordered([a])[0].tracks.map((track) => track.name), ["a-1.mp3", "a-2.mp3"]);
+
+  state.toggle(a);
+  assert.equal(state.state(a), "none");
+  assert.deepEqual(state.ordered([a]), []);
 });
 
-test("toggling twice deselects", () => {
+test("one chapter of a story reports a partial selection", () => {
   const state = createSelectionState();
-  state.toggle("a");
-  state.toggle("a");
+  const a = forged("a");
 
-  assert.equal(state.has("a"), false);
-  assert.deepEqual(state.ordered([forged("a")]), []);
+  state.toggleTrack(a, "a-2.mp3");
+
+  assert.equal(state.state(a), "some");
+  assert.equal(state.chosenCount(a), 1);
+  assert.equal(state.hasTrack("a", "a-2.mp3"), true);
+  assert.equal(state.hasTrack("a", "a-1.mp3"), false);
+  assert.deepEqual(state.ordered([a])[0].tracks.map((track) => track.name), ["a-2.mp3"]);
+});
+
+test("every chapter ticked one at a time reports the whole story", () => {
+  const state = createSelectionState();
+  const a = forged("a");
+
+  state.toggleTrack(a, "a-2.mp3");
+  state.toggleTrack(a, "a-1.mp3");
+
+  assert.equal(state.state(a), "all");
+});
+
+test("ordered keeps manifest order however the chapters were ticked", () => {
+  const state = createSelectionState();
+  const a = forged("a");
+
+  state.setTracks(a, ["a-2.mp3", "a-1.mp3"]);
+
+  assert.deepEqual(state.ordered([a])[0].tracks.map((track) => track.name), ["a-1.mp3", "a-2.mp3"]);
+});
+
+test("selection drops a slug that left the index", () => {
+  const state = createSelectionState();
+  const a = forged("a");
+  state.toggle(a);
+  state.toggle(forged("gone"));
+
+  assert.deepEqual(state.ordered([a]).map((item) => item.slug), ["a"]);
+});
+
+test("a story whose chosen chapters have vanished is kept ticked, so the bar can refuse it by name", () => {
+  // Dropping it silently would shrink the selection under the operator and let
+  // a send carry nothing. The Send bar names it instead.
+  const state = createSelectionState();
+  state.toggle(forged("a"));
+
+  const emptied = { ...forged("a"), tracks: [] };
+  assert.equal(state.state(emptied), "all");
+  assert.deepEqual(state.ordered([emptied]).map((item) => item.tracks), [[]]);
+  assert.equal(state.size(), 1);
+});
+
+test("a forged story with no chapters can be ticked and unticked, so the bar can refuse it", () => {
+  const state = createSelectionState();
+  const empty = { ...forged("a"), tracks: [] };
+
+  state.toggle(empty);
+  assert.equal(state.state(empty), "all");
+  assert.equal(state.size(), 1);
+  assert.deepEqual(state.ordered([empty]).map((item) => item.tracks), [[]]);
+
+  state.toggle(empty);
+  assert.equal(state.state(empty), "none");
+  assert.equal(state.size(), 0);
 });
 
 test("clear empties the selection", () => {
   const state = createSelectionState();
-  state.toggle("a");
-  state.toggle("b");
+  const collections = [forged("a"), forged("b")];
+  state.toggle(collections[0]);
+  state.toggle(collections[1]);
   state.clear();
 
-  assert.deepEqual(state.ordered([forged("a"), forged("b")]), []);
+  assert.deepEqual(state.ordered(collections), []);
+  assert.equal(state.size(), 0);
 });
 
 const nightStory = () => ({
@@ -285,7 +353,7 @@ test("ticking a row opens the send bar, keeps focus on the tick and blocks a sen
 
     const bar = screen.node(".library-send-bar");
     assert.equal(bar.hidden, false);
-    assert.match(bar.textContent, /1 story selected · 25m 00s/);
+    assert.match(bar.textContent, /2 chapters from 1 story · 25m 00s/);
     // The fetch for targets settles after the tick, and must not take focus
     // off the checkbox the operator just used.
     assert.equal(screen.focusKey(), "library-night-story-select");
@@ -326,7 +394,7 @@ test("choosing a target sends one batch and clears the selection", async () => {
     await flush();
     assert.equal(screen.focusKey(), "library-send-target-1-h1/t1");
     assert.equal(screen.node(".library-send-submit").disabled, false);
-    assert.equal(screen.node(".library-send-submit").textContent, "Send 1 story");
+    assert.equal(screen.node(".library-send-submit").textContent, "Send 2 chapters");
 
     await screen.node(".library-send-submit").click();
     await flush();
@@ -841,7 +909,7 @@ test("a send in flight freezes the selection instead of discarding a late tick",
     second.checked = true;
     await second.dispatchEvent({ type: "change" });
     await flush();
-    assert.match(screen.node(".library-send-bar").textContent, /1 story selected/);
+    assert.match(screen.node(".library-send-bar").textContent, /2 chapters from 1 story/);
     assert.equal(screen.node(".library-send-groups").childNodes.length, 1);
     assert.equal(screen.node(".library-send-membership").childNodes.length, 2);
 
@@ -1291,6 +1359,287 @@ test("a receipt whose send has left the queue does not invent a result", async (
     const receipt = screen.node(".library-receipt");
     assert.match(receipt.textContent, /Activity holds its result/);
     assert.equal(screen.byFocusKey("library-send-done").textContent, "Done");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a sendable row offers a closed chapter panel", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    const button = screen.node(".library-choose-chapters");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    // aria-controls must not name an id that does not exist in the document,
+    // and the panel is not there while the row is closed.
+    assert.equal(button.getAttribute("aria-controls"), null);
+    assert.match(button.textContent, /Choose chapters/);
+    assert.equal(screen.node(".library-chapter-panel"), null);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("an unsendable row offers no chapter panel", async () => {
+  const screen = mountLibrary({
+    collections: [{ slug: "raw-story", stage: "extracted", title: "Raw Story" }],
+  });
+  try {
+    await flush();
+    assert.equal(screen.node(".library-choose-chapters"), null);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("opening the panel lists every chapter with its own tick", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.equal(screen.node(".library-choose-chapters").getAttribute("aria-expanded"), "true");
+    assert.equal(screen.node(".library-choose-chapters").getAttribute("aria-controls"), "library-chapters-night-story");
+    assert.equal(screen.node(".library-chapter-panel").id, "library-chapters-night-story");
+    const rows = screen.dom.workspace.querySelectorAll(".library-chapter-row");
+    assert.equal(rows.length, 2);
+    assert.match(rows[0].textContent, /One/);
+    assert.match(rows[0].textContent, /10m 00s/);
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.checked)),
+      [false, false],
+    );
+  } finally {
+    screen.stop();
+  }
+});
+
+test("ticking a chapter keeps the open panel's scroll position instead of snapping to the top", async () => {
+  // The whole library list is rebuilt on every tick, which used to hand back
+  // a fresh <ol> at scrollTop 0 no matter how far down the operator had
+  // scrolled.
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    screen.node(".library-chapter-list").scrollTop = 240;
+
+    await screen.dom.workspace.querySelectorAll(".library-chapter-select")[0].dispatchEvent({ type: "change" });
+    await flush();
+
+    assert.equal(screen.node(".library-chapter-list").scrollTop, 240);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("two open chapter panels keep their own scroll position, not one shared position", async () => {
+  const screen = mountLibrary({ collections: [nightStory(), dawnStory()] });
+  try {
+    await flush();
+    const choosers = screen.dom.workspace.querySelectorAll(".library-choose-chapters");
+    await choosers[0].dispatchEvent({ type: "click" });
+    await flush();
+    await choosers[1].dispatchEvent({ type: "click" });
+    await flush();
+    const lists = screen.dom.workspace.querySelectorAll(".library-chapter-list");
+    lists[0].scrollTop = 100;
+    lists[1].scrollTop = 50;
+
+    await screen.dom.workspace.querySelectorAll(".library-chapter-select")[0].dispatchEvent({ type: "change" });
+    await flush();
+
+    const after = screen.dom.workspace.querySelectorAll(".library-chapter-list");
+    assert.equal(after[0].scrollTop, 100);
+    assert.equal(after[1].scrollTop, 50);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("closing a panel forgets its scroll position, so reopening it starts at the top", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    screen.node(".library-chapter-list").scrollTop = 240;
+
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.ok(!screen.node(".library-chapter-list").scrollTop, "a reopened panel does not inherit the closed one's position");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("ticking one chapter sends that chapter alone and leaves the row partial", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.dom.workspace.querySelectorAll(".library-chapter-select")[1].dispatchEvent({ type: "change" });
+    await flush();
+
+    const row = screen.node(".library-select");
+    assert.equal(Boolean(row.checked), false);
+    assert.equal(row.indeterminate, true);
+    assert.match(screen.node(".library-chapter-count").textContent, /1 of 2 chapters selected/);
+    assert.match(screen.node(".library-send-bar").textContent, /1 chapter from 1 story/);
+
+    await chooseTarget(screen, "h1/t1");
+    await flush();
+    await screen.node(".library-send-submit").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.equal(screen.pushes.length, 1);
+    assert.deepEqual(screen.pushes[0].assignments[0].sources, [{
+      slug: "night-story",
+      manifest_fingerprint: "f-night",
+      files: ["02.mp3"],
+    }]);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("All ticks every chapter and None clears them, each disabling itself and handing focus to the panel", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    // Nothing chosen yet: None has nothing left to do.
+    assert.equal(screen.node(".library-chapter-none").disabled, true);
+    assert.equal(screen.node(".library-chapter-all").disabled, false);
+
+    await screen.node(".library-chapter-all").dispatchEvent({ type: "click" });
+    await flush();
+    assert.equal(Boolean(screen.node(".library-select").checked), true);
+    assert.equal(screen.node(".library-select").indeterminate, false);
+    // All just disabled itself by taking everything, so focus lands on the
+    // panel's own disclosure button rather than the search field.
+    assert.equal(screen.node(".library-chapter-all").disabled, true);
+    assert.equal(screen.node(".library-chapter-none").disabled, false);
+    assert.equal(screen.focusKey(), "library-night-story-chapters");
+
+    await screen.node(".library-chapter-none").dispatchEvent({ type: "click" });
+    await flush();
+    assert.equal(Boolean(screen.node(".library-select").checked), false);
+    assert.equal(screen.node(".library-send-bar").hidden, true);
+    assert.equal(screen.node(".library-chapter-none").disabled, true);
+    assert.equal(screen.node(".library-chapter-all").disabled, false);
+    assert.equal(screen.focusKey(), "library-night-story-chapters");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("Add a Tonie's worth takes what fits and then goes quiet", async () => {
+  // 600s then 900s against a 1200s limit: the first press takes chapter one
+  // only, the second takes chapter two, and then there is nothing left.
+  const screen = mountLibrary({ collections: [nightStory()], limitSeconds: 1200 });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.checked)),
+      [true, false],
+    );
+
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.checked)),
+      [true, true],
+    );
+    assert.equal(screen.node(".library-chapter-more").disabled, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("the last press of Add a Tonie's worth keeps focus at the panel, not the search box", async () => {
+  const screen = mountLibrary({ collections: [nightStory()], limitSeconds: 1200 });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-chapter-more").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.equal(screen.node(".library-chapter-more").disabled, true);
+    assert.equal(screen.focusKey(), "library-night-story-chapters");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("the send bar counts chapters across two stories", async () => {
+  const screen = mountLibrary({ collections: [nightStory(), dawnStory()] });
+  try {
+    await flush();
+    await screen.node(".library-select").dispatchEvent({ type: "change" });
+    await flush();
+    const choosers = screen.dom.workspace.querySelectorAll(".library-choose-chapters");
+    await choosers[1].dispatchEvent({ type: "click" });
+    await flush();
+    const boxes = screen.dom.workspace.querySelectorAll(".library-chapter-select");
+    await boxes[boxes.length - 1].dispatchEvent({ type: "change" });
+    await flush();
+
+    assert.match(screen.node(".library-send-bar").textContent, /3 chapters from 2 stories/);
+    assert.equal(screen.node(".library-send-submit").textContent, "Send 3 chapters");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("every chapter control freezes while a send is in flight", async () => {
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const screen = mountLibrary({
+    collections: [nightStory()],
+    pushOutcomes: [() => held.then(() => ({ operation_key: "op", job_ids: [7] }))],
+  });
+  try {
+    await flush();
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    await screen.node(".library-chapter-all").dispatchEvent({ type: "click" });
+    await flush();
+    await chooseTarget(screen, "h1/t1");
+    await flush();
+    // Not awaited directly: the submit handler awaits the blocked request
+    // itself, so awaiting the dispatch here would deadlock against release()
+    // below, the same reason the row-freeze test above stores the promise.
+    const sent = screen.node(".library-send-submit").dispatchEvent({ type: "click" });
+    await flush();
+
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-chapter-select").map((box) => Boolean(box.disabled)),
+      [true, true],
+    );
+    assert.equal(screen.node(".library-chapter-all").disabled, true);
+    assert.equal(screen.node(".library-chapter-none").disabled, true);
+    assert.equal(screen.node(".library-chapter-more").disabled, true);
+
+    release();
+    await sent;
+    await flush();
   } finally {
     screen.stop();
   }
