@@ -98,7 +98,10 @@ const forged = (slug) => ({
   stage: "forged",
   title: slug,
   manifest_fingerprint: `f-${slug}`,
-  tracks: [{ name: `${slug}.mp3`, title: slug, seconds: 300 }],
+  tracks: [
+    { name: `${slug}-1.mp3`, title: `${slug} one`, seconds: 300 },
+    { name: `${slug}-2.mp3`, title: `${slug} two`, seconds: 300 },
+  ],
 });
 
 test("selectableCollections offers only forged collections", () => {
@@ -111,36 +114,96 @@ test("selection keeps Library order, not ticking order", () => {
   const state = createSelectionState();
   const collections = [forged("a"), forged("b"), forged("c")];
 
-  state.toggle("c");
-  state.toggle("a");
+  state.toggle(collections[2]);
+  state.toggle(collections[0]);
 
   assert.deepEqual(state.ordered(collections).map((item) => item.slug), ["a", "c"]);
 });
 
-test("selection drops a slug that left the index", () => {
+test("toggling a story takes every chapter, and toggling again takes none", () => {
   const state = createSelectionState();
-  state.toggle("a");
-  state.toggle("gone");
+  const a = forged("a");
 
-  assert.deepEqual(state.ordered([forged("a")]).map((item) => item.slug), ["a"]);
+  state.toggle(a);
+  assert.equal(state.state(a), "all");
+  assert.deepEqual(state.ordered([a])[0].tracks.map((track) => track.name), ["a-1.mp3", "a-2.mp3"]);
+
+  state.toggle(a);
+  assert.equal(state.state(a), "none");
+  assert.deepEqual(state.ordered([a]), []);
 });
 
-test("toggling twice deselects", () => {
+test("one chapter of a story reports a partial selection", () => {
   const state = createSelectionState();
-  state.toggle("a");
-  state.toggle("a");
+  const a = forged("a");
 
-  assert.equal(state.has("a"), false);
-  assert.deepEqual(state.ordered([forged("a")]), []);
+  state.toggleTrack(a, "a-2.mp3");
+
+  assert.equal(state.state(a), "some");
+  assert.equal(state.chosenCount(a), 1);
+  assert.equal(state.hasTrack("a", "a-2.mp3"), true);
+  assert.equal(state.hasTrack("a", "a-1.mp3"), false);
+  assert.deepEqual(state.ordered([a])[0].tracks.map((track) => track.name), ["a-2.mp3"]);
+});
+
+test("every chapter ticked one at a time reports the whole story", () => {
+  const state = createSelectionState();
+  const a = forged("a");
+
+  state.toggleTrack(a, "a-2.mp3");
+  state.toggleTrack(a, "a-1.mp3");
+
+  assert.equal(state.state(a), "all");
+});
+
+test("ordered keeps manifest order however the chapters were ticked", () => {
+  const state = createSelectionState();
+  const a = forged("a");
+
+  state.setTracks(a, ["a-2.mp3", "a-1.mp3"]);
+
+  assert.deepEqual(state.ordered([a])[0].tracks.map((track) => track.name), ["a-1.mp3", "a-2.mp3"]);
+});
+
+test("selection drops a slug that left the index", () => {
+  const state = createSelectionState();
+  const a = forged("a");
+  state.toggle(a);
+  state.toggle(forged("gone"));
+
+  assert.deepEqual(state.ordered([a]).map((item) => item.slug), ["a"]);
+});
+
+test("a story whose chosen chapters have vanished is kept with none, so the bar can refuse it", () => {
+  // Dropping it silently would shrink the selection under the operator and let
+  // a send carry nothing. The Send bar names it instead.
+  const state = createSelectionState();
+  state.toggle(forged("a"));
+
+  const emptied = { ...forged("a"), tracks: [] };
+  assert.deepEqual(state.ordered([emptied]).map((item) => item.tracks), [[]]);
+  assert.equal(state.size(), 1);
+});
+
+test("chapterCount counts what will actually be sent", () => {
+  const state = createSelectionState();
+  const collections = [forged("a"), forged("b")];
+
+  state.toggle(collections[0]);
+  state.toggleTrack(collections[1], "b-1.mp3");
+
+  assert.equal(state.chapterCount(collections), 3);
 });
 
 test("clear empties the selection", () => {
   const state = createSelectionState();
-  state.toggle("a");
-  state.toggle("b");
+  const collections = [forged("a"), forged("b")];
+  state.toggle(collections[0]);
+  state.toggle(collections[1]);
   state.clear();
 
-  assert.deepEqual(state.ordered([forged("a"), forged("b")]), []);
+  assert.deepEqual(state.ordered(collections), []);
+  assert.equal(state.size(), 0);
 });
 
 const nightStory = () => ({
@@ -285,7 +348,7 @@ test("ticking a row opens the send bar, keeps focus on the tick and blocks a sen
 
     const bar = screen.node(".library-send-bar");
     assert.equal(bar.hidden, false);
-    assert.match(bar.textContent, /1 story selected · 25m 00s/);
+    assert.match(bar.textContent, /2 chapters from 1 story · 25m 00s/);
     // The fetch for targets settles after the tick, and must not take focus
     // off the checkbox the operator just used.
     assert.equal(screen.focusKey(), "library-night-story-select");
@@ -326,7 +389,7 @@ test("choosing a target sends one batch and clears the selection", async () => {
     await flush();
     assert.equal(screen.focusKey(), "library-send-target-1-h1/t1");
     assert.equal(screen.node(".library-send-submit").disabled, false);
-    assert.equal(screen.node(".library-send-submit").textContent, "Send 1 story");
+    assert.equal(screen.node(".library-send-submit").textContent, "Send 2 chapters");
 
     await screen.node(".library-send-submit").click();
     await flush();
@@ -841,7 +904,7 @@ test("a send in flight freezes the selection instead of discarding a late tick",
     second.checked = true;
     await second.dispatchEvent({ type: "change" });
     await flush();
-    assert.match(screen.node(".library-send-bar").textContent, /1 story selected/);
+    assert.match(screen.node(".library-send-bar").textContent, /2 chapters from 1 story/);
     assert.equal(screen.node(".library-send-groups").childNodes.length, 1);
     assert.equal(screen.node(".library-send-membership").childNodes.length, 2);
 
