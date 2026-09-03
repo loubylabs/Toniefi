@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  addATonieWorth,
   buildPushBatchPayload,
   createSendAttempt,
   groupSources,
@@ -312,5 +313,53 @@ test("createSendAttempt returns false when confirmation is declined", async () =
 
   assert.equal(await attempt.submit(), false);
   assert.equal(calls, 0);
+});
+
+const chapters = [
+  { name: "01.mp3", seconds: 600 },
+  { name: "02.mp3", seconds: 600 },
+  { name: "03.mp3", seconds: 600 },
+  { name: "04.mp3", seconds: 600 },
+];
+
+test("addATonieWorth fills from the start when nothing is ticked", () => {
+  assert.deepEqual(addATonieWorth(chapters, [], 1500), ["01.mp3", "02.mp3"]);
+});
+
+test("addATonieWorth carries on from the last ticked chapter", () => {
+  assert.deepEqual(
+    addATonieWorth(chapters, ["01.mp3", "02.mp3"], 1500),
+    ["01.mp3", "02.mp3", "03.mp3", "04.mp3"],
+  );
+});
+
+test("addATonieWorth starts after the last tick, not after the first gap", () => {
+  // Ticks at 1 and 3 mean the operator has already taken chapter 3, so the
+  // next Tonie's worth begins at 4, not back at the hole in the middle.
+  assert.deepEqual(
+    addATonieWorth(chapters, ["01.mp3", "03.mp3"], 1500),
+    ["01.mp3", "03.mp3", "04.mp3"],
+  );
+});
+
+test("addATonieWorth returns names in manifest order, not ticking order", () => {
+  assert.deepEqual(addATonieWorth(chapters, ["03.mp3", "01.mp3"], 0), ["01.mp3", "03.mp3", "04.mp3"]);
+});
+
+test("addATonieWorth takes one chapter that is longer than a whole Tonie", () => {
+  // Forge with Split off can leave an oversized chapter. Refusing to take it
+  // would leave the control permanently dead on that story, and the Send bar
+  // already reports such a group as one that does not fit.
+  const oversized = [{ name: "big.mp3", seconds: 9000 }, { name: "small.mp3", seconds: 60 }];
+  assert.deepEqual(addATonieWorth(oversized, [], 1500), ["big.mp3"]);
+});
+
+test("addATonieWorth changes nothing once the last chapter is ticked", () => {
+  const every = chapters.map((track) => track.name);
+  assert.deepEqual(addATonieWorth(chapters, every, 1500), every);
+});
+
+test("addATonieWorth drops a name the collection no longer holds", () => {
+  assert.deepEqual(addATonieWorth(chapters, ["gone.mp3"], 1200), ["01.mp3", "02.mp3"]);
 });
 

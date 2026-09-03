@@ -34,6 +34,33 @@ export function packSelection(collections, limitSeconds) {
   return groups;
 }
 
+export function addATonieWorth(tracks, chosenNames, limitSeconds) {
+  // One press adds the next Tonie's worth of chapters, starting after the last
+  // one already ticked. Starting after the LAST tick rather than the first gap
+  // is what makes repeated presses read as "and another Tonie": an operator
+  // who deliberately skipped a chapter does not want it offered back.
+  const chosen = new Set(chosenNames || []);
+  const limit = Number(limitSeconds) || 0;
+  const list = tracks || [];
+  let start = 0;
+  for (let index = 0; index < list.length; index += 1) {
+    if (chosen.has(list[index].name)) start = index + 1;
+  }
+  let seconds = 0;
+  for (let index = start; index < list.length; index += 1) {
+    const take = Number(list[index].seconds || 0);
+    // The first chapter is always taken. A chapter longer than a whole Tonie
+    // can exist when Forge ran with Split off, and skipping it would leave
+    // this control dead on that collection forever.
+    if (index > start && seconds + take > limit) break;
+    chosen.add(list[index].name);
+    seconds += take;
+  }
+  // Manifest order, and only names the collection still holds, because this
+  // answer goes straight into the selection and from there into a payload.
+  return list.filter((track) => chosen.has(track.name)).map((track) => track.name);
+}
+
 export function groupSources(group) {
   // Consecutive entries from one collection collapse into one source. The
   // server flattens sources in order, so the collapse changes nothing it sees;
