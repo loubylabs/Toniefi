@@ -12,13 +12,109 @@ Nothing reaches a Creative Tonie until you pick it, name a target, and press Sen
 
 ![The TonieFi Desk, with source links pasted and prepared stories waiting in the work cart](docs/screenshots/01-desk.png)
 
+## Quick start
+
+You do not need to clone anything. The image is built and published by GitHub, and the compose
+file is the only thing you download.
+
+```bash
+mkdir toniefi && cd toniefi
+curl -O https://raw.githubusercontent.com/loubylabs/Toniefi/main/docker-compose.yml
+```
+
+**On plain Linux, do this before the first start.** Docker creates the `library/` and `data/`
+folders itself, and it creates them owned by whoever the container runs as. That is root unless
+you say otherwise, and afterwards you need `sudo` to delete your own audiobooks:
+
+```bash
+printf 'TONIEFI_UID=%s\nTONIEFI_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
+```
+
+Docker Desktop on macOS and Windows maps ownership back to you already, so skip that step. Then:
+
+```bash
+docker compose up -d
+```
+
+Open <http://127.0.0.1:8080>.
+
+That folder is now the whole installation. `library/` and `data/` appear inside it on the first
+start, and the image comes from `ghcr.io/loubylabs/toniefi:latest`.
+
+No Docker yet? See [Get Docker](#get-docker) below. Prefer to run from source? See
+[Without Docker](#without-docker).
+
+### Get Docker
+
+| Your machine | What to install |
+|---|---|
+| macOS | [Docker Desktop](https://www.docker.com/products/docker-desktop/). Pick the Apple silicon or Intel build to match your Mac |
+| Windows | [Docker Desktop](https://www.docker.com/products/docker-desktop/). The installer turns on WSL2 for you |
+| Linux | Docker Engine: `curl -fsSL https://get.docker.com \| sh`, then `sudo usermod -aG docker $USER` and log back in |
+
+On macOS and Windows, open Docker Desktop once and leave it running. Then check it works:
+
+```bash
+docker --version
+```
+
+### Running it, day to day
+
+Every command below runs in the folder that holds `docker-compose.yml`.
+
+| Command | What it does |
+|---|---|
+| `docker compose up -d` | Starts TonieFi in the background |
+| `docker compose ps` | Shows whether it is running |
+| `docker compose logs -f` | Watches what it is doing. `Ctrl-C` stops watching, not the app |
+| `docker compose restart` | Restarts it |
+| `docker compose down` | Stops it and removes the container. Your `library/` and `data/` stay |
+| `docker compose pull && docker compose up -d` | Takes an update |
+
+Take an update whenever a source stops downloading. Published images resolve `yt-dlp` at build
+time, and a stale copy is the most common cause of "that link does not work".
+
+### Settings you may want
+
+Every setting is optional, and they all go in the `.env` file beside `docker-compose.yml`. For a
+commented list of what you can put there:
+
+```bash
+curl -o .env https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.example
+```
+
+Uncomment only the lines you actually want. In particular, leave `TONIES_USERNAME` and
+`TONIES_PASSWORD` commented out unless you are setting real ones: filling them in makes the
+environment the credential source, which disables the Settings form, so a placeholder there locks
+you out of the other way to sign in.
+
+[Configuration](docs/operations/configuration.md) lists every variable, and how to run TonieFi on
+Unraid.
+
+### Without Docker
+
+This is the path that needs the source. It wants `ffmpeg` and Python 3.10 or newer.
+
+```bash
+git clone https://github.com/loubylabs/Toniefi.git
+cd Toniefi
+brew install ffmpeg          # Debian: sudo apt install ffmpeg
+./run-local.sh
+```
+
+Open <http://127.0.0.1:8080>. `Ctrl-C` stops it, `PORT=9000 ./run-local.sh` moves it.
+`run-local.sh` is safe to re-run, and it upgrades `yt-dlp` on every start.
+
+You can prepare and organise collections with no myTonies account at all. Only reading and
+writing Creative Tonies needs one.
+
 ## How it works
 
 ### 1. Add sources on the Desk
 
-Paste up to 50 links, one per line, and press **Prepare**. Each link becomes its own job, so one
-dead link never blocks the rest of the batch. You can also search LibriVox or upload your own
-files.
+Paste up to 50 links, one per line, and press **Add to tray**. Each one becomes a row you can
+check over, and **Prepare stories** starts them. Each link becomes its own job, so one dead link
+never blocks the rest of the batch. You can also search LibriVox or upload your own files.
 
 Every source is downloaded and then run through **Forge**, which is the automatic cleanup pass:
 
@@ -30,16 +126,19 @@ Every source is downloaded and then run through **Forge**, which is the automati
 | Split | Cuts any track too long to fit one Tonie into even parts |
 | Trim | Off by default. Set it if your source has an intro to cut |
 
-**Forge defaults** save automatically as one complete local profile. They prefill URL, LibriVox,
-and upload preparation and remain editable for each batch. Saves stay ordered when you navigate
-away and use unload-safe delivery. An invalid stored profile surfaces an error; a later complete
-edit repairs it. The saved profile supplies starting values only. It does not enforce chapter
-behavior, so one batch can ignore source chapter markers while another keeps them.
+Your **Forge defaults** save themselves. Change them once and the same settings prefill the next
+URL, LibriVox and upload preparation, on this machine, for every browser that opens TonieFi. They
+are starting values and not a rule: each batch stays editable, so one import can keep the source's
+chapter markers while the next one ignores them.
 
 A link with `list=` in it gets a **Pick videos** control. It lists the playlist without
 downloading anything, and you untick what you do not want. Only the ticked entries are
 downloaded, so removing a video costs nothing. Untick every entry and the row is held back with
 an inline error rather than submitted, because none of them is not all of them.
+
+The work cart below shows each job as it runs. A row that is ready, has been sent, or has failed
+carries a **Dismiss** control that clears it out of the way. Dismissing hides the row and never deletes
+anything: a job is still in Activity afterwards, and a finished story is still in the Library.
 
 ### 2. Choose and send from the Library
 
@@ -48,6 +147,10 @@ an inline error rather than submitted, because none of them is not all of them.
 The Library lists every local collection. Open one to check its cover, chapter titles, order and
 playback, or reorder and rename chapters. **Download** hands you the whole collection as one zip.
 
+If a playlist held a video the site refused to serve, the rest still arrive and the row says how
+many were left out. The tracks that did arrive are numbered without gaps, so nothing else would
+tell you a video was missing.
+
 Sending starts here. Tick the collections you want and a selection bar appears. It packs them
 into capacity groups, one Tonie's worth of audio each, and shows exactly which chapters land in
 which group. Every group needs its own Creative Tonie before **Send** unlocks, and two groups
@@ -55,14 +158,18 @@ cannot name the same Tonie.
 
 A story you do not want to send whole has a **Choose chapters** control. It opens that story's
 chapter list with a tick box on each chapter, so a long import can go to one Creative Tonie now and
-the rest another day. **All** and **None** tick the whole list, and **Add a Tonie's worth** ticks
-forward from the last ticked chapter until the next one would not fit, so nobody has to count
-minutes. The story's own tick box still means every chapter, and shows a dash while only some are
+the rest another day. **All** ticks every chapter and **None** unticks them all, and **Add a Tonie's
+worth** ticks forward from the last ticked chapter until the next one would not fit, so nobody has
+to count minutes. The story's own tick box still means every chapter, and shows a dash while only some are
 chosen.
 
 **Append to the back** is the default and sends straight away, because you can remove the added
 chapters afterwards. **Replace everything** always asks first and names every affected Tonie,
 because it destroys that Tonie's current cloud audio with no undo.
+
+A send reports itself while it happens. The selection bar becomes a live receipt with a real
+percentage, the work cart shows the same send, and the Creative Tonie being written to says so on
+its own row. If a send stops part way, it tells you what already landed.
 
 ### 3. Tidy a Creative Tonie
 
@@ -70,7 +177,9 @@ because it destroys that Tonie's current cloud audio with no undo.
 
 The Creative Tonies screen reads the live cloud list before every change. Rename a chapter,
 reorder by drag or with the Move buttons, tick several chapters and remove them in one save, or
-clear the Tonie completely. Removing and clearing both ask for confirmation.
+clear the Tonie completely. Each Tonie shows its own figure, and you can rename the Tonie itself
+here, so two that were both called "Creative-Tonie" stop being guesswork. Removing and clearing
+both ask for confirmation, and the dialog names the figure it is about to change.
 
 If the myTonies app or another tab changed the same Tonie first, TonieFi refuses the stale write
 and reloads the real list rather than overwriting someone else's edit. These actions only touch
@@ -82,43 +191,8 @@ Jobs live in SQLite and carry on when you close the browser. **Activity** keeps 
 recent jobs with their progress, errors and retry buttons. A failed preparation can be retried
 without losing the original error.
 
-## Quick start
-
-Both modes keep the library in `library/` beside the repository by default.
-
-### Docker
-
-```bash
-git clone https://github.com/loubylabs/Toniefi.git
-cd Toniefi
-docker compose pull
-docker compose up -d
-```
-
-Open <http://127.0.0.1:8080>. Follow logs with `docker compose logs -f`, stop with
-`docker compose down`.
-
-On Linux, set your user and group first so the container does not create root-owned files:
-
-```bash
-printf 'TONIEFI_UID=%s\nTONIEFI_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
-```
-
-Docker Desktop already maps ownership back to you on macOS and Windows.
-
-### Without Docker
-
-Needs `ffmpeg` and Python 3.10 or newer.
-
-```bash
-brew install ffmpeg
-./run-local.sh
-```
-
-Open <http://127.0.0.1:8080>. `Ctrl-C` stops it, `PORT=9000 ./run-local.sh` moves it.
-
-You can prepare and organise collections with no myTonies account at all. Only reading and
-writing Creative Tonies needs one.
+**Settings** holds your myTonies credentials and a connection test, and names the version you are
+running together with the commit its image was built from. Quote both when you report a problem.
 
 ## Your files stay yours
 

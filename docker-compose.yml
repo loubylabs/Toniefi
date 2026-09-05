@@ -1,8 +1,10 @@
-# One file for every host. It runs as-is on Docker Desktop (macOS, Windows) and
-# on plain Linux, keeping the library beside the repo. Unraid, or anyone who
-# wants the library elsewhere, overrides the paths in a .env file next to this
-# one. See .env.example. The image comes from GHCR: docker compose pull is
-# how you take an update.
+# One file for every host, and the only file an installation needs: download it
+# on its own and docker compose up. It runs as-is on Docker Desktop (macOS,
+# Windows) and on plain Linux, keeping the library in the folder that holds
+# this file. Unraid, or anyone who wants the library elsewhere, overrides the
+# paths in a .env file next to this one. See .env.example, which the README
+# links by raw URL. The image comes from GHCR: docker compose pull is how you
+# take an update.
 services:
   toniefi:
     # Built and hosted by GitHub, so a host does not compile ffmpeg and every
