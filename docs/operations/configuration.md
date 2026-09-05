@@ -1,12 +1,18 @@
 # Configuration
 
 Every setting is an environment variable. The defaults run TonieFi with its library in
-`library/` beside the repository, so a first run needs no configuration at all.
+`library/`, in the folder that holds `docker-compose.yml`, so a first run needs no configuration
+at all.
 
 ## Compose settings
 
-These are read by `docker-compose.yml` and belong in a `.env` file next to it. See
-`.env.example` for a commented starting point.
+These are read by `docker-compose.yml` and belong in a `.env` file next to it. A Docker
+installation is only that compose file, so fetch the commented starting point rather than
+looking for it in a checkout:
+
+```bash
+curl -o .env https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.example
+```
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -86,8 +92,9 @@ Use Tailscale or another private network for remote access.
 
 ## Taking an update
 
-The image is built and published by GitHub Actions to
-`ghcr.io/loubylabs/toniefi:latest`.
+The image is built and published by GitHub Actions to `ghcr.io/loubylabs/toniefi:latest`. Every
+commit on `main` also gets an immutable `sha-<short>` tag, which is what to pin if you ever need
+to hold a version still. Settings names the commit the running image was built from.
 
 ```bash
 docker compose pull
