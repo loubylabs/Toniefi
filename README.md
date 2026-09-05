@@ -20,13 +20,26 @@ file is the only thing you download.
 ```bash
 mkdir toniefi && cd toniefi
 curl -O https://raw.githubusercontent.com/loubylabs/Toniefi/main/docker-compose.yml
+```
+
+**On plain Linux, do this before the first start.** Docker creates the `library/` and `data/`
+folders itself, and it creates them owned by whoever the container runs as. That is root unless
+you say otherwise, and afterwards you need `sudo` to delete your own audiobooks:
+
+```bash
+printf 'TONIEFI_UID=%s\nTONIEFI_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
+```
+
+Docker Desktop on macOS and Windows maps ownership back to you already, so skip that step. Then:
+
+```bash
 docker compose up -d
 ```
 
 Open <http://127.0.0.1:8080>.
 
-That folder is now the whole installation. TonieFi creates `library/` and `data/` inside it on
-first start, and the image comes from `ghcr.io/loubylabs/toniefi:latest`.
+That folder is now the whole installation. `library/` and `data/` appear inside it on the first
+start, and the image comes from `ghcr.io/loubylabs/toniefi:latest`.
 
 No Docker yet? See [Get Docker](#get-docker) below. Prefer to run from source? See
 [Without Docker](#without-docker).
@@ -63,23 +76,20 @@ time, and a stale copy is the most common cause of "that link does not work".
 
 ### Settings you may want
 
-Every setting is optional. They go in a file called `.env` next to `docker-compose.yml`:
+Every setting is optional, and they all go in the `.env` file beside `docker-compose.yml`. For a
+commented list of what you can put there:
 
 ```bash
 curl -o .env https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.example
 ```
 
-On plain Linux, set your own user and group first, or everything the container writes lands
-owned by root:
+Uncomment only the lines you actually want. In particular, leave `TONIES_USERNAME` and
+`TONIES_PASSWORD` commented out unless you are setting real ones: filling them in makes the
+environment the credential source, which disables the Settings form, so a placeholder there locks
+you out of the other way to sign in.
 
-```bash
-printf 'TONIEFI_UID=%s\nTONIEFI_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
-```
-
-Docker Desktop already maps ownership back to you on macOS and Windows.
-
-[Configuration](docs/operations/configuration.md) lists every variable, including how to put the
-library on a NAS share and how to run TonieFi on Unraid.
+[Configuration](docs/operations/configuration.md) lists every variable, and how to run TonieFi on
+Unraid.
 
 ### Without Docker
 
@@ -102,9 +112,9 @@ writing Creative Tonies needs one.
 
 ### 1. Add sources on the Desk
 
-Paste up to 50 links, one per line, and press **Prepare**. Each link becomes its own job, so one
-dead link never blocks the rest of the batch. You can also search LibriVox or upload your own
-files.
+Paste up to 50 links, one per line, and press **Add to tray**. Each one becomes a row you can
+check over, and **Prepare stories** starts them. Each link becomes its own job, so one dead link
+never blocks the rest of the batch. You can also search LibriVox or upload your own files.
 
 Every source is downloaded and then run through **Forge**, which is the automatic cleanup pass:
 
@@ -127,8 +137,8 @@ downloaded, so removing a video costs nothing. Untick every entry and the row is
 an inline error rather than submitted, because none of them is not all of them.
 
 The work cart below shows each job as it runs. A row that is ready, has been sent, or has failed
-carries a **Dismiss** control that clears it out of the way. Dismissing hides the row; it never
-deletes anything, and the job is still there in Activity.
+carries a **Dismiss** control that clears it out of the way. Dismissing hides the row and never deletes
+anything: a job is still in Activity afterwards, and a finished story is still in the Library.
 
 ### 2. Choose and send from the Library
 
@@ -148,9 +158,9 @@ cannot name the same Tonie.
 
 A story you do not want to send whole has a **Choose chapters** control. It opens that story's
 chapter list with a tick box on each chapter, so a long import can go to one Creative Tonie now and
-the rest another day. **All** and **None** tick the whole list, and **Add a Tonie's worth** ticks
-forward from the last ticked chapter until the next one would not fit, so nobody has to count
-minutes. The story's own tick box still means every chapter, and shows a dash while only some are
+the rest another day. **All** ticks every chapter and **None** unticks them all, and **Add a Tonie's
+worth** ticks forward from the last ticked chapter until the next one would not fit, so nobody has
+to count minutes. The story's own tick box still means every chapter, and shows a dash while only some are
 chosen.
 
 **Append to the back** is the default and sends straight away, because you can remove the added
