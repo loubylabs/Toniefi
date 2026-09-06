@@ -79,6 +79,30 @@ def sweep_upload_staging() -> None:
             _sweep_upload_stage(stage)
 
 
+def sweep_work_scratch() -> None:
+    """Drop ingest scratch that a hard stop left in WORK_DIR.
+
+    An ingest holds its downloads in a tempfile.TemporaryDirectory, which
+    cleans itself up on success and on failure alike. A SIGKILL gets neither,
+    and the directory it leaves can be a whole audiobook.
+
+    This only ever runs from start(), before a single worker thread exists, so
+    a tmp* directory here cannot belong to a live job and is an orphan by
+    definition. Anything else in WORK_DIR was put there by the operator and is
+    left alone. One directory that refuses to go must not abandon the rest of
+    the sweep, because the usual reason is a permission the next scratch
+    directory does not share.
+    """
+    config.ensure_dirs()
+    for stage in config.WORK_DIR.iterdir():
+        if not stage.name.startswith("tmp") or stage.is_symlink() or not stage.is_dir():
+            continue
+        try:
+            shutil.rmtree(stage)
+        except OSError as exc:
+            print(f"Could not remove stale scratch {stage}: {exc}")
+
+
 def create_upload_stage() -> tuple[str, Path]:
     config.ensure_dirs()
     stage_name = f"upload-{uuid4().hex}"
@@ -390,6 +414,7 @@ def start() -> None:
             mark_upload_stage(config.upload_stage_dir() / stage_name)
     library.sweep_collection_stages(db.referenced_collection_stage_ids())
     sweep_upload_staging()
+    sweep_work_scratch()
     for _ in range(config.WORKER_THREADS):
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
