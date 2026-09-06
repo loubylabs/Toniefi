@@ -27,6 +27,11 @@ you will prepare. TonieFi removes normal job scratch after success or failure. A
 stop can leave an incomplete temporary directory behind, which is safe to delete while TonieFi
 is stopped.
 
+All three host paths are bind mounts, and on plain Linux a bind mount Docker has to create comes
+out owned by root regardless of `TONIEFI_UID`. Create the directories before the first start, or
+`chown` them afterwards, or a non-root container cannot write to them. Docker Desktop maps
+ownership on macOS and Windows, so this is a Linux-only concern.
+
 ## Application settings
 
 These are read by the application itself and work in both run modes.

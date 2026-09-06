@@ -22,15 +22,16 @@ mkdir toniefi && cd toniefi
 curl -O https://raw.githubusercontent.com/loubylabs/Toniefi/main/docker-compose.yml
 ```
 
-**On plain Linux, do this before the first start.** Docker creates the `library/` and `data/`
-folders itself, and it creates them owned by whoever the container runs as. That is root unless
-you say otherwise, and afterwards you need `sudo` to delete your own audiobooks:
+**On plain Linux, do both of these before the first start.** Docker creates any folder it is
+missing, and it creates it owned by root whichever user the container runs as. Make the three
+folders yourself so they belong to you, and say who the container is:
 
 ```bash
+mkdir -p library data work
 printf 'TONIEFI_UID=%s\nTONIEFI_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
 ```
 
-Docker Desktop on macOS and Windows maps ownership back to you already, so skip that step. Then:
+Skip both lines on macOS and Windows. Docker Desktop maps ownership back to you already. Then:
 
 ```bash
 docker compose up -d
@@ -38,8 +39,9 @@ docker compose up -d
 
 Open <http://127.0.0.1:8080>.
 
-That folder is now the whole installation. `library/` and `data/` appear inside it on the first
-start, and the image comes from `ghcr.io/loubylabs/toniefi:latest`.
+That folder is now the whole installation. It holds `library/` for your audiobooks, `data/` for
+the job database and settings, and `work/` for scratch that TonieFi deletes as it goes. The image
+comes from `ghcr.io/loubylabs/toniefi:latest`.
 
 No Docker yet? See [Get Docker](#get-docker) below. Prefer to run from source? See
 [Without Docker](#without-docker).

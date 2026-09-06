@@ -71,6 +71,21 @@ docker compose up -d
 Docker Desktop maps ownership back to the host user on macOS and Windows, so this is a Linux-only
 step.
 
+## Permission denied writing to the library, data or work directory
+
+Setting `TONIEFI_UID` is only half of it on plain Linux. Docker creates a missing bind-mount
+directory owned by **root** whichever user the container runs as, so a non-root container then
+cannot write to the folder Docker just made for it. Make the folders yourself first:
+
+```bash
+docker compose down
+sudo chown -R "$(id -u):$(id -g)" library data work
+docker compose up -d
+```
+
+On a fresh install, `mkdir -p library data work` before the first `docker compose up -d` avoids
+this entirely, because a directory that already exists is used as it stands.
+
 ## Files added by hand do not appear
 
 The Library indexes what is on disk when it scans. Press **Rescan** on the Library after adding
