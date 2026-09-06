@@ -28,7 +28,7 @@ services:
       TONIE_LIMIT_SECONDS: "${TONIE_LIMIT_SECONDS:-5400}"
       TONIE_HEADROOM_SECONDS: "${TONIE_HEADROOM_SECONDS:-30}"
       WORKER_THREADS: "${WORKER_THREADS:-2}"
-      # Retained upload inputs live on persistent storage, outside /work RAM.
+      # Retained upload inputs live separately from disposable /work scratch.
       UPLOAD_STAGE_DIR: "${UPLOAD_STAGE_DIR:-/data/upload-staging}"
       # Which YouTube clients yt-dlp may ask as. See the README when a link
       # reports itself unavailable despite playing in a browser.
@@ -38,15 +38,6 @@ services:
       - ${TONIEFI_LIBRARY:-./library}:/library
       # Job history, saved settings, and retained upload inputs.
       - ${TONIEFI_DATA:-./data}:/data
-      # Scratch space for downloads and transcodes: cache, not permanent.
-      # It is RAM, so keep it below what the Docker VM actually has.
-      - type: tmpfs
-        target: /work
-        tmpfs:
-          size: ${TONIEFI_WORK_SIZE:-2g}
-          # World-writable and sticky, like /tmp. Without this the tmpfs comes
-          # up owned by root at 0755, and every ingest fails with a permission
-          # error the moment TONIEFI_UID puts the app on a non-root account.
-          # Keep the leading zero: a bare 1777 is read as decimal and lands on
-          # a useless 0o3361.
-          mode: 01777
+      # Disposable downloads and transcodes live on host storage. Point this
+      # at a fast SSD with enough room for the largest source you will prepare.
+      - ${TONIEFI_WORK:-./work}:/work

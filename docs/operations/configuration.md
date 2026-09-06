@@ -18,12 +18,19 @@ curl -o .env https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.examp
 |---|---|---|
 | `TONIEFI_LIBRARY` | `./library` | Host path for audiobook collections |
 | `TONIEFI_DATA` | `./data` | Host path for SQLite history and settings |
+| `TONIEFI_WORK` | `./work` | Host path for disposable downloads and transcodes |
 | `TONIEFI_PORT` | `8080` | Published host port |
 | `TONIEFI_UID` / `TONIEFI_GID` | `0` | Container user and group on Linux |
-| `TONIEFI_WORK_SIZE` | `2g` | RAM-backed download and transcode scratch space |
 
-`TONIEFI_WORK_SIZE` sizes a tmpfs, which is real memory. Keep it below what the Docker VM
-actually has.
+`TONIEFI_WORK` should point at fast host storage with enough free space for the largest source
+you will prepare. TonieFi removes normal job scratch after success or failure. A hard container
+stop can leave an incomplete temporary directory behind, which is safe to delete while TonieFi
+is stopped.
+
+All three host paths are bind mounts, and on plain Linux a bind mount Docker has to create comes
+out owned by root regardless of `TONIEFI_UID`. Create the directories before the first start, or
+`chown` them afterwards, or a non-root container cannot write to them. Docker Desktop maps
+ownership on macOS and Windows, so this is a Linux-only concern.
 
 ## Application settings
 
@@ -44,8 +51,8 @@ These are read by the application itself and work in both run modes.
 | `YTDLP_PLAYER_CLIENTS` | `default,android` | YouTube clients that `yt-dlp` may use |
 
 `UPLOAD_STAGE_DIR` deliberately defaults inside `DATA_DIR` rather than `WORK_DIR`. Retained
-upload input has to survive a restart, and `/work` is a bounded tmpfs holding only disposable
-downloads and transcodes.
+upload input has a different lifecycle from disposable downloads and transcodes, which are
+removed when their job finishes.
 
 ## Storage limits
 

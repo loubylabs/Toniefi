@@ -15,8 +15,8 @@ WORK_DIR = Path(os.getenv("WORK_DIR", "/work"))
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "portal.db"
 
-# Retained upload input must survive restarts and cannot share the bounded
-# RAM-backed transcode scratch directory.
+# Retained upload input has a different lifecycle from disposable transcode
+# scratch, so it stays under the durable data directory.
 _UPLOAD_STAGE_ENV = os.getenv("UPLOAD_STAGE_DIR")
 UPLOAD_STAGE_DIR = Path(_UPLOAD_STAGE_ENV or DATA_DIR / "upload-staging")
 _INITIAL_UPLOAD_STAGE_DIR = UPLOAD_STAGE_DIR

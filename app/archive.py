@@ -8,11 +8,10 @@ Nothing is compressed. MP3, JPEG, and the rest of a collection are already
 compressed formats, so deflating them costs CPU and saves close to nothing.
 Every member is stored verbatim.
 
-Nothing is assembled. A collection can run to several Tonies of audio, and the
-only scratch space the container has is /work, a RAM-backed tmpfs that defaults
-to 2 GB. Building the whole archive anywhere before sending it would trade a
-download for an out-of-memory error, so the archive is yielded in chunks and
-only a chunk is ever held.
+Nothing is assembled. A collection can run to several Tonies of audio.
+Building the whole archive before sending it would duplicate that collection
+in scratch storage, so the archive is yielded in chunks and only a chunk is
+ever held.
 
 One file is open at a time. A collection may hold up to the 500-file intake
 limit, so opening every member up front would run a legitimate download into
