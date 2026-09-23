@@ -6,13 +6,14 @@ which the `web` fixture points at an in-memory transport serving invented shows.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
 
 import httpx
 import pytest
 
-from app import ingest, podcast
+from app import audio, config, db, ingest, library, podcast
 
 FEED_URL = "https://feeds.example.test/moonbeam.xml"
 APPLE_LINK = "https://podcasts.apple.com/us/podcast/moonbeam-bedtime-tales/id1234567890"
@@ -374,3 +375,167 @@ def test_an_episode_link_whose_title_is_not_found_ticks_everything(web, monkeypa
                         lambda url: podcast.Resolved(FEED_URL, episode_hint="A Story Not In The Feed"))
 
     assert podcast.preview("https://open.spotify.com/episode/7xYzWv")["preselect"] == [1, 2, 3, 4]
+
+
+# ------------------------------------------------------------------- import
+
+@pytest.fixture
+def isolated_library(monkeypatch, tmp_path):
+    connection = getattr(db._local, "conn", None)
+    if connection is not None:
+        connection.close()
+        del db._local.conn
+    monkeypatch.setattr(config, "LIBRARY_DIR", tmp_path / "library")
+    monkeypatch.setattr(config, "WORK_DIR", tmp_path / "work")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "portal.db")
+    config.ensure_dirs()
+    db.init()
+    monkeypatch.setattr(audio, "duration_seconds", lambda path: 10)
+    yield
+    connection = getattr(db._local, "conn", None)
+    if connection is not None:
+        connection.close()
+        del db._local.conn
+
+
+def serve_stories(web) -> None:
+    serve_feed(web, feed_xml(STORIES))
+    for name in ("owl", "snails", "lighthouse", "lullaby"):
+        web.routes[f"cdn.example.test/{name}.mp3"] = reply(f"{name} audio", content_type="audio/mpeg")
+    web.routes["cdn.example.test/moonbeam.jpg"] = reply(b"cover bytes", content_type="image/jpeg")
+
+
+def names(result) -> list[str]:
+    return [track["name"] for track in result["tracks"]]
+
+
+def titles(result) -> list[str]:
+    return [track["title"] for track in result["tracks"]]
+
+
+def test_picked_episodes_are_stored_oldest_first_with_their_titles(isolated_library, web):
+    serve_stories(web)
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-pick", playlist_items=[3, 1])
+
+    assert names(result) == ["001-the-owl-who-lost-her-hat.mp3", "002-the-sleepy-lighthouse.mp3"]
+    assert titles(result) == ["The Owl Who Lost Her Hat", "The Sleepy Lighthouse"]
+    assert (Path(result["path"]) / "001-the-owl-who-lost-her-hat.mp3").read_bytes() == b"owl audio"
+    assert result["title"] == "Moonbeam Bedtime Tales"
+    assert result["source"] == "podcast"
+    assert result["url"] == FEED_URL
+    assert result["feed_url"] == FEED_URL
+    assert result["author"] == "Lantern Hill Audio"
+    assert result["uploader"] == "Lantern Hill Audio"
+    assert result["license"] == "Published by the podcast's maker in a public feed"
+    assert result["skipped"] == []
+
+
+def test_the_channel_cover_is_saved(isolated_library, web):
+    serve_stories(web)
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-cover", playlist_items=[1])
+
+    assert result["cover"] == "cover.jpg"
+    assert (Path(result["path"]) / "cover.jpg").read_bytes() == b"cover bytes"
+
+
+def test_a_cover_that_will_not_download_is_ignored(isolated_library, web):
+    serve_stories(web)
+    del web.routes["cdn.example.test/moonbeam.jpg"]
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-no-cover", playlist_items=[1])
+
+    assert names(result) == ["001-the-owl-who-lost-her-hat.mp3"]
+    assert "cover" not in result
+
+
+def test_no_pick_imports_every_episode(isolated_library, web):
+    serve_stories(web)
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-all")
+
+    assert titles(result) == [
+        "The Owl Who Lost Her Hat", "Two Snails Race", "The Sleepy Lighthouse", "A Bonus Lullaby",
+    ]
+
+
+def test_an_empty_pick_is_refused(isolated_library, web):
+    serve_stories(web)
+
+    with pytest.raises(ValueError, match="at least one"):
+        podcast.import_feed(FEED_URL, stage_id="podcast-empty", playlist_items=[])
+
+
+def test_an_episode_that_fails_to_download_is_skipped_and_named(isolated_library, web):
+    serve_stories(web)
+    web.routes["cdn.example.test/snails.mp3"] = reply("gone", status=500)
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-one-fails", playlist_items=[1, 2])
+
+    assert names(result) == ["001-the-owl-who-lost-her-hat.mp3"]
+    assert len(result["skipped"]) == 1
+    assert result["skipped"][0].startswith("Two Snails Race: ")
+
+
+def test_the_job_fails_when_no_picked_episode_downloads(isolated_library, web):
+    serve_feed(web, feed_xml(STORIES))
+
+    with pytest.raises(RuntimeError, match="None of the picked episodes could be downloaded."):
+        podcast.import_feed(FEED_URL, stage_id="podcast-all-fail", playlist_items=[1, 2])
+
+
+def test_a_pick_past_the_end_of_the_feed_is_skipped(isolated_library, web):
+    serve_stories(web)
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-short", playlist_items=[1, 9])
+
+    assert names(result) == ["001-the-owl-who-lost-her-hat.mp3"]
+    assert result["skipped"] == ["Episode 9 is no longer in the feed."]
+
+
+def test_a_resumed_import_does_not_download_a_finished_episode_again(isolated_library, web):
+    serve_stories(web)
+    stage = library.begin_collection_stage(
+        "podcast-resume", title="Moonbeam Bedtime Tales", source="podcast", extra={})
+    (stage.path / "001-the-owl-who-lost-her-hat.mp3").write_bytes(b"from last time")
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-resume", playlist_items=[1, 2])
+
+    assert names(result) == ["001-the-owl-who-lost-her-hat.mp3", "002-two-snails-race.mp3"]
+    assert (Path(result["path"]) / "001-the-owl-who-lost-her-hat.mp3").read_bytes() == b"from last time"
+    assert not any(request.url.path == "/owl.mp3" for request in web.seen)
+
+
+def test_download_progress_counts_the_picked_episodes(isolated_library, web):
+    serve_stories(web)
+    reported = []
+
+    podcast.import_feed(FEED_URL, stage_id="podcast-progress", playlist_items=[1, 2],
+                        progress=lambda message, percent=None: reported.append((message, percent)))
+
+    assert ("Downloading 1/2: The Owl Who Lost Her Hat", 0.0) in reported
+    assert ("Downloading 2/2: Two Snails Race", 50.0) in reported
+
+
+def test_episodes_with_the_same_title_keep_separate_files(isolated_library, web):
+    serve_feed(web, feed_xml(
+        item("Goodnight Moonbeam", date="Tue, 02 Jan 2024 06:00:00 +0000", url="https://cdn.example.test/g2.mp3")
+        + item("Goodnight Moonbeam", date="Mon, 01 Jan 2024 06:00:00 +0000", url="https://cdn.example.test/g1.mp3")))
+    web.routes["cdn.example.test/g1.mp3"] = reply("first night", content_type="audio/mpeg")
+    web.routes["cdn.example.test/g2.mp3"] = reply("second night", content_type="audio/mpeg")
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-twins")
+
+    assert names(result) == ["001-goodnight-moonbeam.mp3", "002-goodnight-moonbeam.mp3"]
+    assert (Path(result["path"]) / "002-goodnight-moonbeam.mp3").read_bytes() == b"second night"
+
+
+def test_the_file_extension_comes_from_the_enclosure_path(isolated_library, web):
+    serve_feed(web, feed_xml(item("Porch Songs", url="https://cdn.example.test/porch.m4a?source=rss", kind="")))
+    web.routes["cdn.example.test/porch.m4a"] = reply("porch audio", content_type="audio/mp4")
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-m4a")
+
+    assert names(result) == ["001-porch-songs.m4a"]

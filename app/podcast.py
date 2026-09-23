@@ -12,12 +12,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import httpx
 
-from . import audio, ingest
+from . import audio, ingest, library
 
 ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
 ITUNES_SEARCH = "https://itunes.apple.com/search"
@@ -37,6 +37,11 @@ APPLE_NO_FEED = "Apple lists no public feed for this show."
 NO_AUDIO = "That feed has no audio episodes."
 MAX_FEED_BYTES = 20 * 1024 * 1024
 _ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
+
+NONE_DOWNLOADED = "None of the picked episodes could be downloaded."
+LICENSE = "Published by the podcast's maker in a public feed"
+
+Progress = Callable[..., None]
 
 _SPOTIFY_HOST = "open.spotify.com"
 _APPLE_HOST = "podcasts.apple.com"
@@ -77,6 +82,10 @@ def _client(timeout: float = 45.0) -> httpx.Client:
     """Every outbound podcast request goes through here, so tests can swap the transport."""
     return httpx.Client(timeout=timeout, follow_redirects=True,
                         headers={"User-Agent": ingest.USER_AGENT})
+
+
+def _noop(*_: Any, **__: Any) -> None:
+    return None
 
 
 def _host_and_path(url: str) -> tuple[str, str]:
@@ -317,3 +326,87 @@ def preview(url: str) -> dict[str, Any]:
         "kind": "podcast",
         "preselect": preselect,
     }
+
+
+# ------------------------------------------------------------------ import
+
+def _extension(url: str) -> str:
+    suffix = PurePosixPath(urlparse(url).path).suffix.lower()
+    return suffix if suffix in audio.AUDIO_EXTENSIONS else ".mp3"
+
+
+def import_feed(
+    url: str,
+    *,
+    stage_id: str,
+    playlist_items: list[int] | None = None,
+    progress: Progress = _noop,
+) -> dict[str, Any]:
+    """Download the picked episodes of a podcast into one collection stage.
+
+    Picks are the episode numbers the preview showed, counted oldest first.
+    The feed is read again here, so an episode that has since left it, or one
+    whose download fails, is skipped and named rather than failing the rest.
+    No pick means every episode: a show link has no single-video meaning.
+    """
+    published = library.find_published_stage(stage_id)
+    if published:
+        return published
+    resolved = resolve_feed(url)
+    feed = read_feed(resolved.feed_url)
+    if playlist_items is None:
+        wanted = [episode.index for episode in feed.episodes]
+    else:
+        wanted = sorted({int(item) for item in playlist_items})
+        if not wanted:
+            raise ValueError("A podcast pick has to name at least one episode number.")
+    by_index = {episode.index: episode for episode in feed.episodes}
+    skipped = [f"Episode {index} is no longer in the feed." for index in wanted if index not in by_index]
+    picked = [by_index[index] for index in wanted if index in by_index]
+
+    with library.collection_lease():
+        stage = library.begin_collection_stage(stage_id, title=feed.title, source="podcast", extra={
+            "url": url,
+            "feed_url": resolved.feed_url,
+            "author": feed.author,
+            # The collection page's Uploader row reads this key.
+            "uploader": feed.author,
+            "license": LICENSE,
+            "skipped": [],
+        })
+        dest = stage.path
+
+        stored: list[tuple[str, str]] = []
+        total = len(picked)
+        with _client(timeout=300.0) as client:
+            for position, episode in enumerate(picked, start=1):
+                name = f"{position:03d}-{audio.slugify(episode.title)}{_extension(episode.url)}"
+                if not (dest / name).is_file():
+                    progress(
+                        f"Downloading {position}/{total}: {episode.title}",
+                        audio.step_percent(position - 1, total),
+                    )
+                    try:
+                        ingest._stream_download(client, episode.url, dest / name)
+                    except httpx.HTTPError as exc:
+                        skipped.append(f"{episode.title}: {exc}")
+                        continue
+                stored.append((name, episode.title))
+            if not stored:
+                raise RuntimeError(NONE_DOWNLOADED)
+            if feed.cover and not (dest / "cover.jpg").is_file():
+                try:
+                    ingest._stream_download(client, feed.cover, dest / "cover.jpg")
+                except httpx.HTTPError:
+                    pass
+
+        library.rescan_collection_stage(stage_id)
+        for name, title in stored:
+            library.rename_track_at_path(dest, name, title)
+        # A resumed stage keeps the extras it was created with, so this run's
+        # skips are written once the downloads are done.
+        library.mutate_at_path(dest, lambda manifest: manifest.update(skipped=skipped))
+
+        progress("Probing durations")
+        library.collection_stage(stage_id, refresh=True)
+        return library.complete_collection_stage(stage_id)
