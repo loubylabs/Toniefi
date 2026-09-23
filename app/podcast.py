@@ -55,13 +55,15 @@ _NEXT_DATA = re.compile(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', r
 @dataclass(frozen=True)
 class Resolved:
     feed_url: str
-    # A Spotify episode link names one episode, which the preview pre-ticks.
+    # A Spotify episode link names one episode, which the preview pre-ticks
+    # and an unpicked import brings alone.
     episode_hint: str | None = None
 
 
 @dataclass(frozen=True)
 class Episode:
-    # Position in the oldest-first list, from 1. Picks are these numbers.
+    # Position in the oldest-first list, from 1. The picker shows these;
+    # picks travel as guids, which a new episode cannot shift.
     index: int
     guid: str
     title: str
@@ -303,20 +305,28 @@ def read_feed(feed_url: str) -> Feed:
     )
 
 
+def _unpicked(feed: Feed, hint: str | None) -> list[Episode]:
+    """What a link means before anyone picks: every episode for a show, or the
+    one a Spotify episode link named. A title that no longer matches falls back
+    to every episode.
+    """
+    if hint:
+        wanted = normalize(hint)
+        matched = [episode for episode in feed.episodes if normalize(episode.title) == wanted]
+        if matched:
+            return matched[:1]
+    return list(feed.episodes)
+
+
 def preview(url: str) -> dict[str, Any]:
     """The picker's view of a podcast, in the playlist preview's shape.
 
-    `preselect` is every episode for a show, or the one a Spotify episode link
-    named. A title that no longer matches falls back to every episode.
+    `preselect` is what the link means with no pick, so the picker starts
+    from what an unpicked import would bring.
     """
     resolved = resolve_feed(url)
     feed = read_feed(resolved.feed_url)
-    preselect = [episode.index for episode in feed.episodes]
-    if resolved.episode_hint:
-        hint = normalize(resolved.episode_hint)
-        matched = [episode.index for episode in feed.episodes if normalize(episode.title) == hint]
-        if matched:
-            preselect = matched[:1]
+    preselect = [episode.index for episode in _unpicked(feed, resolved.episode_hint)]
     return {
         "title": feed.title,
         "entries": [
@@ -339,30 +349,34 @@ def import_feed(
     url: str,
     *,
     stage_id: str,
-    playlist_items: list[int] | None = None,
+    episode_ids: list[str] | None = None,
     progress: Progress = _noop,
 ) -> dict[str, Any]:
     """Download the picked episodes of a podcast into one collection stage.
 
-    Picks are the episode numbers the preview showed, counted oldest first.
-    The feed is read again here, so an episode that has since left it, or one
-    whose download fails, is skipped and named rather than failing the rest.
-    No pick means every episode: a show link has no single-video meaning.
+    Picks are episode guids, since a new episode shifts every position the
+    preview showed. The feed is read again here, so picked episodes that have
+    since left it are counted in `skipped`, and one whose download fails is
+    skipped and named, rather than failing the rest. Picked episodes keep the
+    feed's oldest-first order. No pick means what the link means on its own.
     """
     published = library.find_published_stage(stage_id)
     if published:
         return published
     resolved = resolve_feed(url)
     feed = read_feed(resolved.feed_url)
-    if playlist_items is None:
-        wanted = [episode.index for episode in feed.episodes]
+    skipped: list[str] = []
+    if episode_ids is None:
+        picked = _unpicked(feed, resolved.episode_hint)
     else:
-        wanted = sorted({int(item) for item in playlist_items})
-        if not wanted:
-            raise ValueError("A podcast pick has to name at least one episode number.")
-    by_index = {episode.index: episode for episode in feed.episodes}
-    skipped = [f"Episode {index} is no longer in the feed." for index in wanted if index not in by_index]
-    picked = [by_index[index] for index in wanted if index in by_index]
+        wanted = set(episode_ids)
+        picked = [episode for episode in feed.episodes if episode.guid in wanted]
+        missing = len(wanted - {episode.guid for episode in picked})
+        if missing:
+            skipped.append(f"{missing} picked episode is no longer in the feed." if missing == 1
+                           else f"{missing} picked episodes are no longer in the feed.")
+    if not picked:
+        raise RuntimeError(NONE_DOWNLOADED)
 
     with library.collection_lease():
         stage = library.begin_collection_stage(stage_id, title=feed.title, source="podcast", extra={

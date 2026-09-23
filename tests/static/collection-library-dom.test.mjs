@@ -969,11 +969,15 @@ test("Desk picker ticks only the episode a podcast preview preselects", async ()
     ],
   };
 
+  const posted = [];
+  const request = async (path, options = {}) => {
+    if (path === "/api/playlist/preview") return preview;
+    if (path === "/api/prepare") posted.push(JSON.parse(options.body));
+    return {};
+  };
+
   try {
-    createDeskScreen({
-      request: async (path) => (path === "/api/playlist/preview" ? preview : {}),
-      refresh,
-    })({
+    createDeskScreen({ request, refresh })({
       workspace: dom.workspace,
       navigate() {},
       signal: controller.signal,
@@ -991,6 +995,17 @@ test("Desk picker ticks only the episode a podcast preview preselects", async ()
     assert.deepEqual(list.querySelectorAll("input").map((box) => box.checked), [false, true, false]);
     assert.ok(buttonWithText(dom.workspace, "1 of 3 episodes"));
     assert.match(dom.workspace.querySelector(".playlist-picker-title").textContent, /3 episodes/);
+
+    const boxes = list.querySelectorAll("input");
+    boxes[2].checked = true;
+    await boxes[2].dispatchEvent({ type: "change" });
+    await flush();
+    await dom.workspace.querySelector(".source-intake-form").dispatchEvent({ type: "submit" });
+    await flush();
+
+    assert.deepEqual(posted[0].sources, [
+      { url: "https://open.spotify.com/show/4aBcDeFg", episode_ids: ["ep-2", "ep-3"], kind: "podcast" },
+    ]);
   } finally {
     controller.abort();
     dom.restore();

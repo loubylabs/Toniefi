@@ -153,6 +153,9 @@ class PrepareSource(RequestModel):
     # two used to share the empty list, which turned "none of them" into "all
     # of them" for any link a --no-playlist flag does not restrain.
     playlist_items: list[int] | None = None
+    # A podcast's pick, as the episode ids (guids) the preview showed. Picks
+    # name episodes because a new episode shifts every position.
+    episode_ids: list[str] | None = None
     # "podcast" when the preview read this link as a podcast. Spotify and
     # Apple links are known by their shape; a raw feed URL only this way.
     kind: Literal["podcast"] | None = None
@@ -348,7 +351,15 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
         raise fail(400, "Duplicate source URLs are not allowed.")
     if len(sources) > 50:
         raise fail(400, "A batch can contain at most 50 sources.")
-    for source in body.sources:
+    for url, source in zip(sources, body.sources, strict=True):
+        if source.kind == "podcast" or podcast.is_podcast_url(url):
+            if source.playlist_items is not None:
+                raise fail(400, "A podcast source picks episodes with episode_ids, not playlist_items.")
+            if source.episode_ids is not None and not source.episode_ids:
+                raise fail(400, "Pick at least one episode, or remove that podcast source.")
+            continue
+        if source.episode_ids is not None:
+            raise fail(400, "Only a podcast source can pick episodes.")
         if source.playlist_items is None:
             continue
         if not source.playlist_items:
@@ -361,6 +372,7 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
         ("prepare_url", url, {
             "url": url,
             "playlist_items": source.playlist_items,
+            "episode_ids": source.episode_ids,
             "kind": source.kind,
             "options": options,
         })

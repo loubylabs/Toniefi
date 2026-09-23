@@ -985,14 +985,28 @@ test("the pick label counts episodes for a podcast", () => {
   assert.equal(playlistPickLabel({ total: 4, picked: [2], kind: "podcast" }), "1 of 4 episodes");
 });
 
-test("prepare payload marks a previewed podcast and nothing else", () => {
+test("prepare payload sends a podcast's episode ids and a playlist's numbers", () => {
+  // Positions shift when a feed gains an episode, so a podcast pick travels
+  // as the episodes' own ids.
   const payload = buildPreparePayload([
-    { value: "https://feeds.example.test/moonbeam.xml", picked: [3, 1], kind: "podcast" },
+    {
+      value: "https://feeds.example.test/moonbeam.xml",
+      picked: [3, 1],
+      kind: "podcast",
+      playlist: {
+        kind: "podcast",
+        entries: [
+          { index: 1, id: "ep-1", title: "The Owl Who Lost Her Hat", available: true },
+          { index: 2, id: "ep-2", title: "Two Snails Race", available: true },
+          { index: 3, id: "ep-3", title: "The Sleepy Lighthouse", available: true },
+        ],
+      },
+    },
     { value: "https://www.youtube.com/playlist?list=PL1", picked: [2] },
   ]);
 
   assert.deepEqual(payload.sources, [
-    { url: "https://feeds.example.test/moonbeam.xml", playlist_items: [1, 3], kind: "podcast" },
+    { url: "https://feeds.example.test/moonbeam.xml", episode_ids: ["ep-1", "ep-3"], kind: "podcast" },
     { url: "https://www.youtube.com/playlist?list=PL1", playlist_items: [2] },
   ]);
 });

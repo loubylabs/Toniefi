@@ -112,13 +112,21 @@ rejected when it is empty and when any number in it is below 1.
 
 `kind` is optional and only ever `"podcast"`. The Desk sends it when the preview said the link is
 a podcast, which is how a raw RSS feed URL reaches the podcast import. Spotify show and episode
-links and Apple Podcasts links are recognized without it. For a podcast source, omitting
-`playlist_items` imports every episode. Any other `kind` is rejected with 422. Spotify track,
-album, playlist and artist links are rejected with 400: "TonieFi imports podcasts from Spotify,
-not music."
+links and Apple Podcasts links are recognized without it. Any other `kind` is rejected with 422.
+Spotify track, album, playlist and artist links are rejected with 400: "TonieFi imports podcasts
+from Spotify, not music."
+
+A podcast source picks with `episode_ids`, the `id` of each picked preview entry, and never with
+`playlist_items`, which is rejected with 400 there. Ids survive a feed that gains or drops an
+episode, where positions would shift. Picked episodes download oldest first; ids no longer in the
+feed are counted in the collection's `skipped` list. An empty list is rejected with 400, and so is
+`episode_ids` on any source that is not a podcast. Omit it, or send `null`, to import what the
+link means: the one episode a Spotify episode link names when its title is still in the feed, and
+every episode otherwise.
 
 `POST /api/playlist/preview` with `{"url": "..."}` returns those numbers alongside each entry
-title, without downloading audio. A podcast answers in the same shape with two extra keys:
+title, without downloading audio. A podcast answers in the same shape with two extra keys, and
+each entry's `id` is the episode's guid:
 
 ```json
 {

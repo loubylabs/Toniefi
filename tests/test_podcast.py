@@ -418,7 +418,7 @@ def titles(result) -> list[str]:
 def test_picked_episodes_are_stored_oldest_first_with_their_titles(isolated_library, web):
     serve_stories(web)
 
-    result = podcast.import_feed(FEED_URL, stage_id="podcast-pick", playlist_items=[3, 1])
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-pick", episode_ids=["ep-3", "ep-1"])
 
     assert names(result) == ["001-the-owl-who-lost-her-hat.mp3", "002-the-sleepy-lighthouse.mp3"]
     assert titles(result) == ["The Owl Who Lost Her Hat", "The Sleepy Lighthouse"]
@@ -436,7 +436,7 @@ def test_picked_episodes_are_stored_oldest_first_with_their_titles(isolated_libr
 def test_the_channel_cover_is_saved(isolated_library, web):
     serve_stories(web)
 
-    result = podcast.import_feed(FEED_URL, stage_id="podcast-cover", playlist_items=[1])
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-cover", episode_ids=["ep-1"])
 
     assert result["cover"] == "cover.jpg"
     assert (Path(result["path"]) / "cover.jpg").read_bytes() == b"cover bytes"
@@ -446,7 +446,7 @@ def test_a_cover_that_will_not_download_is_ignored(isolated_library, web):
     serve_stories(web)
     del web.routes["cdn.example.test/moonbeam.jpg"]
 
-    result = podcast.import_feed(FEED_URL, stage_id="podcast-no-cover", playlist_items=[1])
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-no-cover", episode_ids=["ep-1"])
 
     assert names(result) == ["001-the-owl-who-lost-her-hat.mp3"]
     assert "cover" not in result
@@ -462,18 +462,59 @@ def test_no_pick_imports_every_episode(isolated_library, web):
     ]
 
 
-def test_an_empty_pick_is_refused(isolated_library, web):
+def test_an_unpicked_episode_link_imports_only_its_own_episode(isolated_library, web, monkeypatch):
+    serve_stories(web)
+    monkeypatch.setattr(podcast, "resolve_feed",
+                        lambda url: podcast.Resolved(FEED_URL, episode_hint="Two Snails Race!"))
+
+    result = podcast.import_feed("https://open.spotify.com/episode/7xYzWv", stage_id="podcast-hinted")
+
+    assert names(result) == ["001-two-snails-race.mp3"]
+
+
+def test_an_unpicked_episode_link_whose_title_is_not_found_imports_everything(isolated_library, web, monkeypatch):
+    serve_stories(web)
+    monkeypatch.setattr(podcast, "resolve_feed",
+                        lambda url: podcast.Resolved(FEED_URL, episode_hint="A Story Not In The Feed"))
+
+    result = podcast.import_feed("https://open.spotify.com/episode/7xYzWv", stage_id="podcast-hint-missed")
+
+    assert titles(result) == [
+        "The Owl Who Lost Her Hat", "Two Snails Race", "The Sleepy Lighthouse", "A Bonus Lullaby",
+    ]
+
+
+def test_picks_follow_their_episodes_when_the_feed_changes(isolated_library, web):
+    # Since the preview, a newer episode arrived and the oldest one left, so
+    # every position moved. The picks name episodes, so they still land.
+    serve_stories(web)
+    serve_feed(web, feed_xml("".join([
+        item("The Moon Has a Cold", date="Thu, 04 Jan 2024 06:00:00 +0000",
+             url="https://cdn.example.test/moon.mp3", guid="ep-4"),
+        item("The Sleepy Lighthouse", date="Wed, 03 Jan 2024 06:00:00 +0000",
+             url="https://cdn.example.test/lighthouse.mp3", guid="ep-3"),
+        item("Two Snails Race", date="Tue, 02 Jan 2024 06:00:00 +0000",
+             url="https://cdn.example.test/snails.mp3", guid="ep-2"),
+    ])))
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-drift", episode_ids=["ep-3", "ep-2"])
+
+    assert names(result) == ["001-two-snails-race.mp3", "002-the-sleepy-lighthouse.mp3"]
+    assert not any(request.url.path == "/moon.mp3" for request in web.seen)
+
+
+def test_a_pick_naming_no_episode_in_the_feed_fails(isolated_library, web):
     serve_stories(web)
 
-    with pytest.raises(ValueError, match="at least one"):
-        podcast.import_feed(FEED_URL, stage_id="podcast-empty", playlist_items=[])
+    with pytest.raises(RuntimeError, match="None of the picked episodes could be downloaded."):
+        podcast.import_feed(FEED_URL, stage_id="podcast-gone", episode_ids=["ep-gone"])
 
 
 def test_an_episode_that_fails_to_download_is_skipped_and_named(isolated_library, web):
     serve_stories(web)
     web.routes["cdn.example.test/snails.mp3"] = reply("gone", status=500)
 
-    result = podcast.import_feed(FEED_URL, stage_id="podcast-one-fails", playlist_items=[1, 2])
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-one-fails", episode_ids=["ep-1", "ep-2"])
 
     assert names(result) == ["001-the-owl-who-lost-her-hat.mp3"]
     assert len(result["skipped"]) == 1
@@ -484,16 +525,26 @@ def test_the_job_fails_when_no_picked_episode_downloads(isolated_library, web):
     serve_feed(web, feed_xml(STORIES))
 
     with pytest.raises(RuntimeError, match="None of the picked episodes could be downloaded."):
-        podcast.import_feed(FEED_URL, stage_id="podcast-all-fail", playlist_items=[1, 2])
+        podcast.import_feed(FEED_URL, stage_id="podcast-all-fail", episode_ids=["ep-1", "ep-2"])
 
 
-def test_a_pick_past_the_end_of_the_feed_is_skipped(isolated_library, web):
+def test_a_picked_episode_that_left_the_feed_is_skipped_and_counted(isolated_library, web):
     serve_stories(web)
 
-    result = podcast.import_feed(FEED_URL, stage_id="podcast-short", playlist_items=[1, 9])
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-short", episode_ids=["ep-1", "ep-gone"])
 
     assert names(result) == ["001-the-owl-who-lost-her-hat.mp3"]
-    assert result["skipped"] == ["Episode 9 is no longer in the feed."]
+    assert result["skipped"] == ["1 picked episode is no longer in the feed."]
+
+
+def test_several_picked_episodes_that_left_the_feed_are_counted_once(isolated_library, web):
+    serve_stories(web)
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-shorter",
+                                 episode_ids=["ep-gone", "ep-2", "ep-lost"])
+
+    assert names(result) == ["001-two-snails-race.mp3"]
+    assert result["skipped"] == ["2 picked episodes are no longer in the feed."]
 
 
 def test_a_resumed_import_does_not_download_a_finished_episode_again(isolated_library, web):
@@ -502,7 +553,7 @@ def test_a_resumed_import_does_not_download_a_finished_episode_again(isolated_li
         "podcast-resume", title="Moonbeam Bedtime Tales", source="podcast", extra={})
     (stage.path / "001-the-owl-who-lost-her-hat.mp3").write_bytes(b"from last time")
 
-    result = podcast.import_feed(FEED_URL, stage_id="podcast-resume", playlist_items=[1, 2])
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-resume", episode_ids=["ep-1", "ep-2"])
 
     assert names(result) == ["001-the-owl-who-lost-her-hat.mp3", "002-two-snails-race.mp3"]
     assert (Path(result["path"]) / "001-the-owl-who-lost-her-hat.mp3").read_bytes() == b"from last time"
@@ -513,7 +564,7 @@ def test_download_progress_counts_the_picked_episodes(isolated_library, web):
     serve_stories(web)
     reported = []
 
-    podcast.import_feed(FEED_URL, stage_id="podcast-progress", playlist_items=[1, 2],
+    podcast.import_feed(FEED_URL, stage_id="podcast-progress", episode_ids=["ep-1", "ep-2"],
                         progress=lambda message, percent=None: reported.append((message, percent)))
 
     assert ("Downloading 1/2: The Owl Who Lost Her Hat", 0.0) in reported
@@ -651,12 +702,62 @@ def test_prepare_carries_the_podcast_kind_into_the_job(client, monkeypatch):
     payloads = capture_jobs(monkeypatch)
 
     response = client.post("/api/prepare", json={
-        "sources": [{"url": FEED_URL, "playlist_items": [1, 3], "kind": "podcast"}],
+        "sources": [{"url": FEED_URL, "episode_ids": ["ep-1", "ep-3"], "kind": "podcast"}],
     })
 
     assert response.status_code == 200
     assert payloads[0]["kind"] == "podcast"
-    assert payloads[0]["playlist_items"] == [1, 3]
+    assert payloads[0]["episode_ids"] == ["ep-1", "ep-3"]
+    assert payloads[0]["playlist_items"] is None
+
+
+def test_prepare_takes_episode_picks_on_a_podcast_link_without_a_kind(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": APPLE_LINK, "episode_ids": ["ep-2"]}],
+    })
+
+    assert response.status_code == 200
+    assert payloads[0]["episode_ids"] == ["ep-2"]
+
+
+def test_prepare_refuses_episode_picks_on_a_video_link(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": "https://www.youtube.com/playlist?list=PL1", "episode_ids": ["aaa"]}],
+    })
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Only a podcast source can pick episodes."
+    assert payloads == []
+
+
+@pytest.mark.parametrize("source", [
+    {"url": FEED_URL, "kind": "podcast", "playlist_items": [1, 3]},
+    {"url": APPLE_LINK, "playlist_items": [1]},
+])
+def test_prepare_refuses_playlist_numbers_on_a_podcast(client, monkeypatch, source):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={"sources": [source]})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "A podcast source picks episodes with episode_ids, not playlist_items."
+    assert payloads == []
+
+
+def test_prepare_refuses_an_empty_episode_pick(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": FEED_URL, "kind": "podcast", "episode_ids": []}],
+    })
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Pick at least one episode, or remove that podcast source."
+    assert payloads == []
 
 
 def test_prepare_without_a_kind_carries_none(client, monkeypatch):
@@ -695,19 +796,20 @@ def run_prepare(monkeypatch, payload: dict) -> dict:
 
 
 def test_prepare_run_sends_a_podcast_kind_to_the_feed_import(monkeypatch):
-    seen = run_prepare(monkeypatch, {"url": FEED_URL, "kind": "podcast", "playlist_items": [2, 4]})
+    seen = run_prepare(monkeypatch, {"url": FEED_URL, "kind": "podcast", "episode_ids": ["ep-2", "ep-4"]})
 
     assert "via" not in seen
     assert seen["url"] == FEED_URL
     assert seen["stage_id"] == "url-podcast"
-    assert seen["playlist_items"] == [2, 4]
+    assert seen["episode_ids"] == ["ep-2", "ep-4"]
+    assert "playlist_items" not in seen
 
 
 def test_prepare_run_sends_a_spotify_show_to_the_feed_import(monkeypatch):
-    seen = run_prepare(monkeypatch, {"url": "https://open.spotify.com/show/4aBcDeFg", "playlist_items": None})
+    seen = run_prepare(monkeypatch, {"url": "https://open.spotify.com/show/4aBcDeFg", "episode_ids": None})
 
     assert "via" not in seen
-    assert seen["playlist_items"] is None
+    assert seen["episode_ids"] is None
 
 
 def test_prepare_run_leaves_other_links_to_yt_dlp(monkeypatch):

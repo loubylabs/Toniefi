@@ -49,7 +49,7 @@ def run(payload: dict[str, Any], *, progress: Progress, checkpoint: Checkpoint) 
             extracted = podcast.import_feed(
                 current["url"],
                 stage_id=stage_id,
-                playlist_items=current.get("playlist_items"),
+                episode_ids=current.get("episode_ids"),
                 progress=extracting,
             )
         else:

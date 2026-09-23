@@ -30,7 +30,8 @@ export const DEFAULT_FORGE_OPTIONS = Object.freeze({
 // No pick and a pick of nothing are different answers: the first leaves the
 // link to speak for itself, the second is a contradiction the intake refuses.
 // `kind` is "podcast" once a preview said so, which is how a raw feed URL
-// reaches the podcast import.
+// reaches the podcast import. `entries` is that preview's list, which turns a
+// podcast's picked positions into the episode ids the server picks by.
 function sourceRecords(lines) {
   const items = Array.isArray(lines) ? lines : String(lines ?? "").split(/\r?\n/);
   return items
@@ -39,8 +40,9 @@ function sourceRecords(lines) {
         value: String(item.value ?? "").trim(),
         picked: Array.isArray(item.picked) ? item.picked : null,
         kind: item.kind === "podcast" ? "podcast" : null,
+        entries: Array.isArray(item.playlist?.entries) ? item.playlist.entries : [],
       }
-      : { value: String(item ?? "").trim(), picked: null, kind: null })
+      : { value: String(item ?? "").trim(), picked: null, kind: null, entries: [] })
     .filter((record) => record.value);
 }
 
@@ -154,13 +156,18 @@ export function buildPreparePayload(lines, options = {}) {
   const parsed = parseSourceLines(records);
   if (!parsed.valid) throw new Error("Fix every source before preparing this batch.");
   return {
-    sources: parsed.rows.map((row, index) => ({
-      url: row.value,
-      playlist_items: records[index].picked
-        ? [...records[index].picked].sort((first, second) => first - second)
-        : null,
-      ...(records[index].kind === "podcast" ? { kind: "podcast" } : {}),
-    })),
+    sources: parsed.rows.map((row, index) => {
+      const { picked, kind, entries } = records[index];
+      const numbers = picked ? [...picked].sort((first, second) => first - second) : null;
+      if (kind !== "podcast") return { url: row.value, playlist_items: numbers };
+      // A new episode shifts every position, so a podcast pick names episodes.
+      const ids = new Map(entries.map((entry) => [entry.index, entry.id]));
+      return {
+        url: row.value,
+        episode_ids: numbers ? numbers.map((number) => ids.get(number)) : null,
+        kind: "podcast",
+      };
+    }),
     options: normalizedOptions(options),
   };
 }
