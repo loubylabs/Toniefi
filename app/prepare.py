@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable
 from uuid import uuid4
 
-from . import forge, ingest, library
+from . import forge, ingest, library, podcast
 
 DEFAULT_OPTIONS = {
     "use_chapters": True,
@@ -40,13 +40,26 @@ def run(payload: dict[str, Any], *, progress: Progress, checkpoint: Checkpoint) 
         return published
     extracted = library.collection_stage(stage_id)
     if not extracted or not library.collection_stage_ready(stage_id):
-        extracted = ingest.import_url(
-            current["url"],
-            stage_id=stage_id,
-            use_chapters=options["use_chapters"],
-            playlist_items=current.get("playlist_items"),
-            progress=lambda message, percent=None: progress(f"extracting: {message}", percent),
-        )
+        def extracting(message: str, percent: float | None = None) -> None:
+            progress(f"extracting: {message}", percent)
+
+        # A raw feed URL has no shape to know it by, so the preview's word for
+        # it travels in the payload.
+        if current.get("kind") == "podcast" or podcast.is_podcast_url(current["url"]):
+            extracted = podcast.import_feed(
+                current["url"],
+                stage_id=stage_id,
+                episode_ids=current.get("episode_ids"),
+                progress=extracting,
+            )
+        else:
+            extracted = ingest.import_url(
+                current["url"],
+                stage_id=stage_id,
+                use_chapters=options["use_chapters"],
+                playlist_items=current.get("playlist_items"),
+                progress=extracting,
+            )
         current["slug"] = extracted["slug"]
         checkpoint(current)
     return forge.run_collection_stage(

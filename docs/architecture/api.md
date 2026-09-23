@@ -14,7 +14,7 @@ access control, so treat network reachability as the only gate and do not expose
 | `GET` | `/api/settings/forge-defaults` | Read the complete saved Forge profile |
 | `PUT` | `/api/settings/forge-defaults` | Replace the complete saved Forge profile |
 | `POST` | `/api/prepare` | Queue one preparation job per source URL |
-| `POST` | `/api/playlist/preview` | List a playlist's entries without downloading audio |
+| `POST` | `/api/playlist/preview` | List a playlist's entries or a podcast's episodes without downloading audio |
 | `GET` | `/api/librivox/search` | Search LibriVox (`q`, optional `limit`) |
 | `POST` | `/api/librivox/import` | Queue a LibriVox book |
 | `POST` | `/api/uploads/prepare` | Stage uploaded files as one collection and queue it |
@@ -110,8 +110,37 @@ rejected, and source order is preserved.
 playlist order. Omit it, or send `null`, to let the link decide. A list is a pick, so it is
 rejected when it is empty and when any number in it is below 1.
 
+`kind` is optional and only ever `"podcast"`. The Desk sends it when the preview said the link is
+a podcast, which is how a raw RSS feed URL reaches the podcast import. Spotify show and episode
+links and Apple Podcasts links are recognized without it. Any other `kind` is rejected with 422.
+Spotify track, album, playlist and artist links are rejected with 400: "TonieFi imports podcasts
+from Spotify, not music."
+
+A podcast source picks with `episode_ids`, the `id` of each picked preview entry, and never with
+`playlist_items`, which is rejected with 400 there. Ids survive a feed that gains or drops an
+episode, where positions would shift. Picked episodes download oldest first; ids no longer in the
+feed are counted in the collection's `skipped` list. An empty list is rejected with 400, and so is
+`episode_ids` on any source that is not a podcast. Omit it, or send `null`, to import what the
+link means: the one episode a Spotify episode link names when its title is still in the feed, and
+every episode otherwise.
+
 `POST /api/playlist/preview` with `{"url": "..."}` returns those numbers alongside each entry
-title, without downloading audio.
+title, without downloading audio. A podcast answers in the same shape with two extra keys, and
+each entry's `id` is the episode's guid:
+
+```json
+{
+  "title": "Moonbeam Bedtime Tales",
+  "entries": [{"index": 1, "id": "ep-1", "title": "The Owl Who Lost Her Hat", "available": true}],
+  "kind": "podcast",
+  "preselect": [1]
+}
+```
+
+Podcast episodes are numbered oldest first. `preselect` names the episodes to tick: all of them
+for a show link, or the one episode a Spotify episode link names. A link without a `list` query
+parameter is read as an RSS feed before yt-dlp sees it; when neither can read it, yt-dlp's error
+is returned with 502. YouTube previews carry neither extra key.
 
 ## Upload one collection from several files
 
