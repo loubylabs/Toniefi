@@ -12,8 +12,9 @@ from typing import Callable
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from app import audio, config, db, ingest, library, podcast
+from app import audio, config, db, ingest, library, main, podcast, prepare
 
 FEED_URL = "https://feeds.example.test/moonbeam.xml"
 APPLE_LINK = "https://podcasts.apple.com/us/podcast/moonbeam-bedtime-tales/id1234567890"
@@ -539,3 +540,177 @@ def test_the_file_extension_comes_from_the_enclosure_path(isolated_library, web)
     result = podcast.import_feed(FEED_URL, stage_id="podcast-m4a")
 
     assert names(result) == ["001-porch-songs.m4a"]
+
+
+# ------------------------------------------------------------------ routes
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(main.app)
+
+
+def refuse(*args, **kwargs):
+    raise AssertionError("this path must not run")
+
+
+YOUTUBE_SHAPE = {"title": "How Search Works",
+                 "entries": [{"index": 1, "id": "aaa", "title": "First", "available": True}]}
+
+
+def test_preview_route_answers_a_podcast_link_with_its_episodes(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    web.routes["itunes.apple.com/lookup"] = reply_json({"results": [{"feedUrl": FEED_URL}]})
+    serve_feed(web, feed_xml(STORIES))
+
+    response = client.post("/api/playlist/preview", json={"url": APPLE_LINK})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kind"] == "podcast"
+    assert body["preselect"] == [1, 2, 3, 4]
+    assert body["entries"][0] == {"index": 1, "id": "ep-1", "title": "The Owl Who Lost Her Hat", "available": True}
+
+
+def test_preview_route_reads_a_raw_feed_as_a_podcast_before_yt_dlp(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    serve_feed(web, feed_xml(STORIES))
+
+    response = client.post("/api/playlist/preview", json={"url": FEED_URL})
+
+    assert response.status_code == 200
+    assert response.json()["kind"] == "podcast"
+
+
+def test_preview_route_keeps_yt_dlp_error_when_the_link_is_not_a_feed_either(client, web, monkeypatch):
+    def fail_like_yt_dlp(url):
+        raise RuntimeError("yt-dlp could not read that playlist: ERROR: Unsupported URL")
+    monkeypatch.setattr(main.ingest, "playlist_preview", fail_like_yt_dlp)
+
+    response = client.post("/api/playlist/preview", json={"url": "https://example.test/story"})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "yt-dlp could not read that playlist: ERROR: Unsupported URL"
+
+
+def test_preview_route_answers_in_yt_dlp_shape_when_the_link_is_not_a_feed(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", lambda url: YOUTUBE_SHAPE)
+
+    response = client.post("/api/playlist/preview", json={"url": "https://example.test/story"})
+
+    assert response.status_code == 200
+    assert response.json() == YOUTUBE_SHAPE
+
+
+def test_preview_route_never_reads_a_youtube_playlist_as_a_feed(client, monkeypatch):
+    monkeypatch.setattr(main.podcast, "preview", refuse)
+    monkeypatch.setattr(main.ingest, "playlist_preview", lambda url: YOUTUBE_SHAPE)
+
+    response = client.post("/api/playlist/preview", json={"url": "https://www.youtube.com/playlist?list=PL1"})
+
+    assert response.status_code == 200
+    assert "kind" not in response.json()
+
+
+def test_preview_route_refuses_spotify_music(client, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+
+    response = client.post("/api/playlist/preview", json={"url": "https://open.spotify.com/track/1a2b3c"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == podcast.MUSIC_REFUSAL
+
+
+def test_preview_route_reports_an_unreadable_spotify_page(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    web.routes["open.spotify.com/embed/show/4aBcDeFg"] = reply("<html><body>Nothing here</body></html>")
+
+    response = client.post("/api/playlist/preview", json={"url": "https://open.spotify.com/show/4aBcDeFg"})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == podcast.SPOTIFY_UNREADABLE
+
+
+def capture_jobs(monkeypatch) -> list[dict]:
+    payloads: list[dict] = []
+    monkeypatch.setattr(main.jobs, "enqueue_many",
+                        lambda entries: payloads.extend(entry[2] for entry in entries) or ["job-1"])
+    return payloads
+
+
+def test_prepare_refuses_spotify_music(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={"sources": [{"url": "https://open.spotify.com/album/1a2b3c"}]})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == podcast.MUSIC_REFUSAL
+    assert payloads == []
+
+
+def test_prepare_carries_the_podcast_kind_into_the_job(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": FEED_URL, "playlist_items": [1, 3], "kind": "podcast"}],
+    })
+
+    assert response.status_code == 200
+    assert payloads[0]["kind"] == "podcast"
+    assert payloads[0]["playlist_items"] == [1, 3]
+
+
+def test_prepare_without_a_kind_carries_none(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={"sources": [{"url": "https://example.test/story"}]})
+
+    assert response.status_code == 200
+    assert payloads[0]["kind"] is None
+
+
+def test_prepare_refuses_an_unknown_kind(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": "https://example.test/story", "kind": "video"}],
+    })
+
+    assert response.status_code == 422
+    assert payloads == []
+
+
+def run_prepare(monkeypatch, payload: dict) -> dict:
+    seen: dict = {}
+    monkeypatch.setattr(prepare.podcast, "import_feed",
+                        lambda url, **kw: seen.update(url=url, **kw) or {"slug": "moonbeam"})
+    monkeypatch.setattr(prepare.ingest, "import_url",
+                        lambda url, **kw: seen.update(url=url, via="yt-dlp") or {"slug": "other"})
+    monkeypatch.setattr(prepare.forge, "run_collection_stage", lambda stage_id, **kw: {"slug": "moonbeam"})
+    monkeypatch.setattr(prepare.library, "find_published_stage", lambda stage_id: None)
+    monkeypatch.setattr(prepare.library, "collection_stage", lambda stage_id: None)
+    prepare.run({**payload, "stage_id": "url-podcast"},
+                progress=lambda message, percent=None: None,
+                checkpoint=lambda updated: None)
+    return seen
+
+
+def test_prepare_run_sends_a_podcast_kind_to_the_feed_import(monkeypatch):
+    seen = run_prepare(monkeypatch, {"url": FEED_URL, "kind": "podcast", "playlist_items": [2, 4]})
+
+    assert "via" not in seen
+    assert seen["url"] == FEED_URL
+    assert seen["stage_id"] == "url-podcast"
+    assert seen["playlist_items"] == [2, 4]
+
+
+def test_prepare_run_sends_a_spotify_show_to_the_feed_import(monkeypatch):
+    seen = run_prepare(monkeypatch, {"url": "https://open.spotify.com/show/4aBcDeFg", "playlist_items": None})
+
+    assert "via" not in seen
+    assert seen["playlist_items"] is None
+
+
+def test_prepare_run_leaves_other_links_to_yt_dlp(monkeypatch):
+    seen = run_prepare(monkeypatch, {"url": "https://example.test/story", "kind": None})
+
+    assert seen["via"] == "yt-dlp"

@@ -6,8 +6,8 @@ import hashlib
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
-from urllib.parse import quote, unquote_to_bytes, urlparse
+from typing import Annotated, Any, Literal
+from urllib.parse import parse_qs, quote, unquote_to_bytes, urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
-from . import archive, audio, config, db, ingest, jobs, library, push, tonies, version
+from . import archive, audio, config, db, ingest, jobs, library, podcast, push, tonies, version
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -113,6 +113,14 @@ def valid_source_url(value: str) -> bool:
     )
 
 
+def names_a_playlist(url: str) -> bool:
+    """The playlist shape the Desk offers for picking: a `list` query parameter."""
+    try:
+        return bool(parse_qs(urlparse(url).query).get("list"))
+    except ValueError:
+        return False
+
+
 # ------------------------------------------------------------------ models
 
 class RequestModel(BaseModel):
@@ -145,6 +153,9 @@ class PrepareSource(RequestModel):
     # two used to share the empty list, which turned "none of them" into "all
     # of them" for any link a --no-playlist flag does not restrain.
     playlist_items: list[int] | None = None
+    # "podcast" when the preview read this link as a podcast. Spotify and
+    # Apple links are known by their shape; a raw feed URL only this way.
+    kind: Literal["podcast"] | None = None
 
 
 class PlaylistPreviewRequest(RequestModel):
@@ -331,6 +342,8 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
         raise fail(400, "At least one source URL is required.")
     if not all(valid_source_url(url) for url in sources):
         raise fail(400, "Sources must use HTTP or HTTPS.")
+    if any(podcast.is_spotify_music_url(url) for url in sources):
+        raise fail(400, podcast.MUSIC_REFUSAL)
     if len(set(sources)) != len(sources):
         raise fail(400, "Duplicate source URLs are not allowed.")
     if len(sources) > 50:
@@ -345,7 +358,12 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
 
     options = body.options.model_dump()
     entries = [
-        ("prepare_url", url, {"url": url, "playlist_items": source.playlist_items, "options": options})
+        ("prepare_url", url, {
+            "url": url,
+            "playlist_items": source.playlist_items,
+            "kind": source.kind,
+            "options": options,
+        })
         for url, source in zip(sources, body.sources, strict=True)
     ]
     ids = jobs.enqueue_many(entries)
@@ -355,10 +373,26 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
 
 @app.post("/api/playlist/preview")
 def playlist_preview(body: PlaylistPreviewRequest) -> dict[str, Any]:
-    """List a playlist's entries so the desk can offer them for picking."""
+    """List a playlist's entries, or a podcast's episodes, for the desk to offer."""
     url = body.url.strip()
     if not valid_source_url(url):
         raise fail(400, "Sources must use HTTP or HTTPS.")
+    if podcast.is_spotify_music_url(url):
+        raise fail(400, podcast.MUSIC_REFUSAL)
+    if podcast.is_podcast_url(url):
+        try:
+            return podcast.preview(url)
+        except RuntimeError as exc:
+            raise fail(502, str(exc)) from exc
+    # yt-dlp reads any RSS feed as a playlist of its own, newest first and
+    # without the show's details, so a link that could be a feed is read as
+    # one first. A `list` parameter is a playlist, so it goes straight to
+    # yt-dlp. When both fail, yt-dlp's error is the one the operator sees.
+    if not names_a_playlist(url):
+        try:
+            return podcast.preview(url)
+        except RuntimeError:
+            pass
     try:
         return ingest.playlist_preview(url)
     except RuntimeError as exc:
