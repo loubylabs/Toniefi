@@ -118,6 +118,11 @@ Paste up to 50 links, one per line, and press **Add to tray**. Each one becomes 
 check over, and **Prepare stories** starts them. Each link becomes its own job, so one dead link
 never blocks the rest of the batch. You can also search LibriVox or upload your own files.
 
+Podcasts work too: paste a Spotify show or episode link, an Apple Podcasts link, or the show's RSS
+feed, then press **Pick episodes** and tick the stories you want. Episodes are listed oldest first,
+and the audio comes from the publisher's own feed. Only shows with a public feed work. Spotify-only
+shows cannot be imported.
+
 Every source is downloaded and then run through **Forge**, which is the automatic cleanup pass:
 
 | Pass | What it does |

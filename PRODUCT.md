@@ -20,7 +20,7 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 
 ## Operating Context
 
-- A user commonly starts with YouTube video or playlist links, LibriVox books, or local audio files.
+- A user commonly starts with YouTube video or playlist links, podcast links (Spotify, Apple Podcasts, or an RSS feed, for shows with a public feed), LibriVox books, or local audio files.
 - Each source becomes its own independent collection. A batch of five audiobook links produces five collections.
 - URL imports run through extraction and the default Forge cleanup automatically, then appear in the Library, where the operator selects what to send.
 - Long-running extraction, Forge, and transfer work runs in background jobs and can survive the browser closing.
