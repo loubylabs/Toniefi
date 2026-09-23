@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import json
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
+from pathlib import PurePosixPath
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from . import ingest
+from . import audio, ingest
 
 ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
 ITUNES_SEARCH = "https://itunes.apple.com/search"
@@ -30,6 +34,10 @@ NO_PUBLIC_FEED = (
 )
 APPLE_NO_FEED = "Apple lists no public feed for this show."
 
+NO_AUDIO = "That feed has no audio episodes."
+MAX_FEED_BYTES = 20 * 1024 * 1024
+_ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
+
 _SPOTIFY_HOST = "open.spotify.com"
 _APPLE_HOST = "podcasts.apple.com"
 # Share links often carry a locale segment, as in /intl-de/show/<id>.
@@ -44,6 +52,25 @@ class Resolved:
     feed_url: str
     # A Spotify episode link names one episode, which the preview pre-ticks.
     episode_hint: str | None = None
+
+
+@dataclass(frozen=True)
+class Episode:
+    # Position in the oldest-first list, from 1. Picks are these numbers.
+    index: int
+    guid: str
+    title: str
+    url: str
+    published: float | None
+    duration: int | None
+
+
+@dataclass(frozen=True)
+class Feed:
+    title: str
+    author: str
+    cover: str | None
+    episodes: list[Episode]
 
 
 def _client(timeout: float = 45.0) -> httpx.Client:
@@ -161,3 +188,132 @@ def resolve_feed(url: str) -> Resolved:
         # An episode page names its show but not the publisher.
         return Resolved(_search_feed(entity["subtitle"], None), episode_hint=entity["name"])
     return Resolved(url)
+
+
+# ------------------------------------------------------------------ feeds
+
+def _feed_error(reason: object) -> RuntimeError:
+    return RuntimeError(f"Could not read that podcast feed: {reason}")
+
+
+def _download_feed(feed_url: str) -> bytes:
+    body = bytearray()
+    try:
+        with _client() as client, client.stream("GET", feed_url) as resp:
+            resp.raise_for_status()
+            for chunk in resp.iter_bytes(chunk_size=1 << 16):
+                body.extend(chunk)
+                if len(body) > MAX_FEED_BYTES:
+                    raise _feed_error("it is larger than 20 MB.")
+    except httpx.HTTPError as exc:
+        raise _feed_error(exc) from exc
+    return bytes(body)
+
+
+def _is_audio(kind: str, url: str) -> bool:
+    if kind.lower().startswith("audio/"):
+        return True
+    return PurePosixPath(urlparse(url).path).suffix.lower() in audio.AUDIO_EXTENSIONS
+
+
+def _published(text: str) -> float | None:
+    if not text:
+        return None
+    try:
+        return parsedate_to_datetime(text).timestamp()
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+
+def _duration(text: str) -> int | None:
+    """itunes:duration as SS, MM:SS or HH:MM:SS. Anything else is unknown."""
+    parts = (text or "").strip().split(":")
+    if len(parts) > 3:
+        return None
+    try:
+        numbers = [int(part) for part in parts]
+    except ValueError:
+        return None
+    seconds = 0
+    for number in numbers:
+        seconds = seconds * 60 + number
+    return seconds
+
+
+def read_feed(feed_url: str) -> Feed:
+    """Fetch and parse a podcast feed, episodes oldest first.
+
+    Stories are meant to be heard from the start and most feeds list newest
+    first, so dated episodes are sorted by date and undated ones follow in
+    their feed order. Python's bundled Expat limits entity expansion, so a
+    hostile feed cannot blow up memory while it is parsed.
+    """
+    try:
+        root = ET.fromstring(_download_feed(feed_url))
+    except ET.ParseError as exc:
+        raise _feed_error(exc) from exc
+    channel = root.find("channel")
+    if root.tag != "rss" or channel is None:
+        raise _feed_error("it is not an RSS feed.")
+
+    dated: list[tuple[float, int, dict[str, Any]]] = []
+    undated: list[dict[str, Any]] = []
+    for position, element in enumerate(channel.findall("item")):
+        enclosure = element.find("enclosure")
+        if enclosure is None:
+            continue
+        url = (enclosure.get("url") or "").strip()
+        if not url or not _is_audio(enclosure.get("type") or "", url):
+            continue
+        found = {
+            "guid": (element.findtext("guid") or "").strip() or url,
+            "title": (element.findtext("title") or "").strip(),
+            "url": url,
+            "published": _published((element.findtext("pubDate") or "").strip()),
+            "duration": _duration(element.findtext(f"{_ITUNES}duration") or ""),
+        }
+        if found["published"] is None:
+            undated.append(found)
+        else:
+            dated.append((found["published"], position, found))
+    ordered = [found for _, _, found in sorted(dated, key=lambda entry: entry[:2])] + undated
+    if not ordered:
+        raise RuntimeError(NO_AUDIO)
+
+    image = channel.find(f"{_ITUNES}image")
+    cover = (image.get("href") if image is not None else None) or (channel.findtext("image/url") or "").strip()
+    return Feed(
+        title=(channel.findtext("title") or "").strip() or "Untitled podcast",
+        author=(channel.findtext(f"{_ITUNES}author") or "").strip(),
+        cover=cover or None,
+        episodes=[
+            Episode(index=index, guid=found["guid"], title=found["title"] or f"Episode {index}",
+                    url=found["url"], published=found["published"], duration=found["duration"])
+            for index, found in enumerate(ordered, start=1)
+        ],
+    )
+
+
+def preview(url: str) -> dict[str, Any]:
+    """The picker's view of a podcast, in the playlist preview's shape.
+
+    `preselect` is every episode for a show, or the one a Spotify episode link
+    named. A title that no longer matches falls back to every episode.
+    """
+    resolved = resolve_feed(url)
+    feed = read_feed(resolved.feed_url)
+    preselect = [episode.index for episode in feed.episodes]
+    if resolved.episode_hint:
+        hint = normalize(resolved.episode_hint)
+        matched = [episode.index for episode in feed.episodes if normalize(episode.title) == hint]
+        if matched:
+            preselect = matched[:1]
+    return {
+        "title": feed.title,
+        "entries": [
+            {"index": episode.index, "id": episode.guid, "title": episode.title, "available": True}
+            for episode in feed.episodes
+        ],
+        "kind": "podcast",
+        "preselect": preselect,
+    }
