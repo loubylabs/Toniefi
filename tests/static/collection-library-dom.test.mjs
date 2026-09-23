@@ -949,3 +949,50 @@ test("Library leaves the row quiet when a collection skipped nothing", async () 
     dom.restore();
   }
 });
+
+test("Desk picker ticks only the episode a podcast preview preselects", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const preview = {
+    title: "Moonbeam Bedtime Tales",
+    kind: "podcast",
+    preselect: [2],
+    entries: [
+      { index: 1, id: "ep-1", title: "The Owl Who Lost Her Hat", available: true },
+      { index: 2, id: "ep-2", title: "Two Snails Race", available: true },
+      { index: 3, id: "ep-3", title: "The Sleepy Lighthouse", available: true },
+    ],
+  };
+
+  try {
+    createDeskScreen({
+      request: async (path) => (path === "/api/playlist/preview" ? preview : {}),
+      refresh,
+    })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    const paste = dom.document.getElementById("source-paste");
+    paste.value = "https://open.spotify.com/show/4aBcDeFg";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+    await flush();
+    await buttonWithText(dom.workspace, "Pick episodes").click();
+    await flush();
+
+    const list = dom.workspace.querySelector(".playlist-picker-list");
+    assert.equal(list.getAttribute("aria-label"), "Episodes in this podcast");
+    assert.deepEqual(list.querySelectorAll("input").map((box) => box.checked), [false, true, false]);
+    assert.ok(buttonWithText(dom.workspace, "1 of 3 episodes"));
+    assert.match(dom.workspace.querySelector(".playlist-picker-title").textContent, /3 episodes/);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});

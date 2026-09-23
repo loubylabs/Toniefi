@@ -13,8 +13,10 @@ import {
   forgeProfileStatus,
   moveSourceEntries,
   looksLikePlaylist,
+  looksLikePodcast,
   parseSourceLines,
   playlistPickLabel,
+  previewPicks,
   removeSourceEntry,
   submitUploadBatch,
   staleRefreshAnnouncement,
@@ -948,4 +950,58 @@ test("a work cart snapshot with no dismissals field still renders", () => {
   } finally {
     dom.restore();
   }
+});
+
+test("podcast links and feed-shaped links are offered for picking", () => {
+  assert.equal(looksLikePodcast("https://open.spotify.com/show/4aBcDeFg"), true);
+  assert.equal(looksLikePodcast("https://open.spotify.com/show/4aBcDeFg?si=abc123"), true);
+  assert.equal(looksLikePodcast("https://open.spotify.com/embed/episode/7xYzWv"), true);
+  assert.equal(looksLikePodcast("https://podcasts.apple.com/us/podcast/moonbeam-bedtime-tales/id1234567890"), true);
+  assert.equal(looksLikePodcast("https://feeds.example.test/moonbeam"), true);
+  assert.equal(looksLikePodcast("https://example.test/moonbeam/feed.xml"), true);
+  assert.equal(looksLikePodcast("https://example.test/moonbeam/podcast/rss"), true);
+  assert.equal(looksLikePodcast("https://open.spotify.com/track/1a2b3c"), false);
+  assert.equal(looksLikePodcast("https://www.youtube.com/watch?v=aaa"), false);
+  assert.equal(looksLikePodcast("https://example.test/story"), false);
+  assert.equal(looksLikePodcast("not a url"), false);
+});
+
+test("a podcast preview's preselect decides what starts ticked", () => {
+  const entries = [
+    { index: 1, title: "The Owl Who Lost Her Hat", available: true },
+    { index: 2, title: "Two Snails Race", available: true },
+    { index: 3, title: "The Sleepy Lighthouse", available: true },
+  ];
+
+  assert.deepEqual(previewPicks({ kind: "podcast", entries, preselect: [2] }), [2]);
+  assert.deepEqual(previewPicks({ entries: [...entries, { index: 4, title: "Gone", available: false }] }), [1, 2, 3]);
+  assert.deepEqual(previewPicks({}), []);
+});
+
+test("the pick label counts episodes for a podcast", () => {
+  assert.equal(playlistPickLabel({ kind: "podcast" }), "Pick episodes");
+  assert.equal(playlistPickLabel({ total: 4, picked: [], kind: "podcast" }), "No episodes picked");
+  assert.equal(playlistPickLabel({ total: 4, picked: [1, 2, 3, 4], kind: "podcast" }), "All 4 episodes");
+  assert.equal(playlistPickLabel({ total: 4, picked: [2], kind: "podcast" }), "1 of 4 episodes");
+});
+
+test("prepare payload marks a previewed podcast and nothing else", () => {
+  const payload = buildPreparePayload([
+    { value: "https://feeds.example.test/moonbeam.xml", picked: [3, 1], kind: "podcast" },
+    { value: "https://www.youtube.com/playlist?list=PL1", picked: [2] },
+  ]);
+
+  assert.deepEqual(payload.sources, [
+    { url: "https://feeds.example.test/moonbeam.xml", playlist_items: [1, 3], kind: "podcast" },
+    { url: "https://www.youtube.com/playlist?list=PL1", playlist_items: [2] },
+  ]);
+});
+
+test("a podcast row with every episode unticked asks for an episode", () => {
+  const parsed = parseSourceLines([
+    { value: "https://open.spotify.com/show/4aBcDeFg", picked: [], kind: "podcast" },
+  ]);
+
+  assert.equal(parsed.valid, false);
+  assert.equal(parsed.rows[0].error, "Pick at least one episode from this podcast, or remove the row.");
 });
