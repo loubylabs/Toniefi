@@ -211,6 +211,11 @@ class ForgeRequest(RequestModel):
     split_oversized: bool = True
 
 
+class TrimRequest(RequestModel):
+    trim_head: ForgeTrimSeconds = 0
+    trim_tail: ForgeTrimSeconds = 0
+
+
 class ChapterRef(RequestModel):
     id: str
     title: str = ""
@@ -490,7 +495,7 @@ def run_forge(body: ForgeRequest) -> dict[str, Any]:
         raise fail(404, f"No collection named {body.slug}.")
     if collection.get("stage") == "forged":
         raise fail(409, "Forge is already complete for this collection.")
-    job_id = db.create_forge_job_once(f"Forge {body.slug}", body.model_dump())
+    job_id = db.create_collection_job_once("forge", f"Forge {body.slug}", body.model_dump())
     return {"job_id": job_id}
 
 
@@ -508,6 +513,19 @@ def get_collection(slug: str, refresh: bool = False) -> dict[str, Any]:
         raise fail(404, f"No collection named {slug}.")
     manifest["plan"] = library.plan(slug)
     return manifest
+
+
+@app.post("/api/collections/{slug}/trim")
+def trim_collection(slug: str, body: TrimRequest) -> dict[str, Any]:
+    if body.trim_head <= 0 and body.trim_tail <= 0:
+        raise fail(400, "Enter seconds to cut from the start or the end.")
+    collection = library.get(slug)
+    if not collection:
+        raise fail(404, f"No collection named {slug}.")
+    if collection.get("stage") != "forged":
+        raise fail(409, "Finish preparation before trimming this collection.")
+    job_id = db.create_collection_job_once("trim", f"Trim {slug}", {"slug": slug, **body.model_dump()})
+    return {"job_id": job_id}
 
 
 @app.patch("/api/collections/{slug}")

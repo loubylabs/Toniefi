@@ -233,13 +233,13 @@ def present(job: dict) -> dict:
     elif status == "running" and kind == "push":
         displayed["phase"] = "sending"
     elif status == "done" and (
-        kind in {"prepare_url", "upload_prepare", "forge"}
+        kind in {"prepare_url", "upload_prepare", "forge", "trim"}
         or (kind == "librivox" and collection_stage == "forged")
     ):
         displayed["phase"] = "ready"
     elif status == "running" and kind in {"prepare_url", "librivox", "upload_prepare"}:
         displayed["phase"] = "extracting"
-    elif status == "running" and kind == "forge":
+    elif status == "running" and kind in {"forge", "trim"}:
         displayed["phase"] = "forging"
     else:
         displayed["phase"] = status
@@ -377,6 +377,15 @@ def _handle(job: dict) -> dict:
             trim_head=float(payload.get("trim_head") or 0),
             trim_tail=float(payload.get("trim_tail") or 0),
             split_oversized=payload.get("split_oversized", True),
+            progress=progress,
+        )
+
+    if kind == "trim":
+        return forge.retrim(
+            payload["slug"],
+            operation_id=payload["trim_operation_id"],
+            trim_head=float(payload.get("trim_head") or 0),
+            trim_tail=float(payload.get("trim_tail") or 0),
             progress=progress,
         )
 

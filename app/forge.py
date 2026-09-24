@@ -175,6 +175,50 @@ def run(
             raise
 
 
+def retrim(
+    slug: str,
+    *,
+    operation_id: str,
+    trim_head: float = 0,
+    trim_tail: float = 0,
+    progress: Progress = _noop,
+) -> dict[str, Any]:
+    """Cut more off every track of a finished collection, all or nothing.
+
+    The cut is added to the trim the collection already records. Publication
+    stamps the operation id, so a retry after a crash returns instead of
+    cutting the same seconds twice.
+    """
+    with library.collection_lease():
+        library.recover_collection_publications()
+        manifest = library.get(slug)
+        if not manifest:
+            raise RuntimeError(f"No collection named {slug}.")
+        if manifest.get("forge_operation_id") == operation_id:
+            return manifest
+        if manifest.get("stage") != "forged":
+            raise RuntimeError("Finish preparation before trimming this collection.")
+        stage = library.create_replacement_stage(slug, operation_id)
+        try:
+            tracks = manifest["tracks"]
+            for index, track in enumerate(tracks, start=1):
+                progress(
+                    f"Trimming {index}/{len(tracks)}: {track['title']}",
+                    audio.step_percent(index - 1, len(tracks)),
+                )
+                trim_track(stage / track["name"], trim_head, trim_tail)
+            progress("Re-probing")
+            library.get_at_path(stage, refresh=True)
+            state = dict(manifest.get("forge") or {})
+            state["trim_head"] = float(state.get("trim_head") or 0) + trim_head
+            state["trim_tail"] = float(state.get("trim_tail") or 0) + trim_tail
+            library.set_forge_state_at_path(stage, state)
+            return library.publish_replacement(slug, stage, operation_id)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
+
+
 def run_collection_stage(
     stage_identity: str,
     *,
