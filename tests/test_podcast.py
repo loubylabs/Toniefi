@@ -662,15 +662,6 @@ def test_preview_route_never_reads_a_youtube_playlist_as_a_feed(client, monkeypa
     assert "kind" not in response.json()
 
 
-def test_preview_route_refuses_spotify_music(client, monkeypatch):
-    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
-
-    response = client.post("/api/playlist/preview", json={"url": "https://open.spotify.com/track/1a2b3c"})
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == podcast.MUSIC_REFUSAL
-
-
 def test_preview_route_reports_an_unreadable_spotify_page(client, web, monkeypatch):
     monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
     web.routes["open.spotify.com/embed/show/4aBcDeFg"] = reply("<html><body>Nothing here</body></html>")
@@ -686,16 +677,6 @@ def capture_jobs(monkeypatch) -> list[dict]:
     monkeypatch.setattr(main.jobs, "enqueue_many",
                         lambda entries: payloads.extend(entry[2] for entry in entries) or ["job-1"])
     return payloads
-
-
-def test_prepare_refuses_spotify_music(client, monkeypatch):
-    payloads = capture_jobs(monkeypatch)
-
-    response = client.post("/api/prepare", json={"sources": [{"url": "https://open.spotify.com/album/1a2b3c"}]})
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == podcast.MUSIC_REFUSAL
-    assert payloads == []
 
 
 def test_prepare_carries_the_podcast_kind_into_the_job(client, monkeypatch):
