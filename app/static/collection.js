@@ -58,7 +58,33 @@ function forgeSummary(collection) {
   if (forge.normalized) details.push("−16 LUFS normalized");
   if (forge.titles_cleaned) details.push("titles cleaned");
   if (forge.split) details.push("oversized tracks split");
+  if (forge.trim_head) details.push(`${forge.trim_head} sec cut from start`);
+  if (forge.trim_tail) details.push(`${forge.trim_tail} sec cut from end`);
   return details.length ? details.join(", ") : "Forge complete";
+}
+
+export function activeTrim(jobs, slug) {
+  return (jobs || []).find((job) => (
+    job.kind === "trim"
+    && job.payload?.slug === slug
+    && (job.status === "queued" || job.status === "running")
+  )) || null;
+}
+
+function trimSecondsField(id, label) {
+  return element("label", { className: "forge-number-control", for: id }, [
+    element("span", { text: label }),
+    element("input", {
+      id,
+      type: "number",
+      min: "0",
+      step: "0.1",
+      value: "0",
+      inputmode: "decimal",
+      "data-focus-key": id,
+      "data-collection-mutation": "",
+    }),
+  ]);
 }
 
 function loadingState(title, message) {
@@ -509,12 +535,64 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
       });
       preparationPanel.append(finish);
     }
+    const trimming = Boolean(activeTrim(jobs, slug));
+    const trimButton = element("button", {
+      type: "button",
+      className: "button button-secondary trim-button",
+      text: trimming ? "Trimming" : "Trim every chapter",
+      "data-focus-key": "trim-submit",
+      "data-collection-mutation": "",
+    });
+    const trimPanel = element("section", {
+      className: "assignment-panel trim-panel",
+      "aria-labelledby": "trim-title",
+    }, [
+      element("h2", { id: "trim-title", text: "Trim" }),
+      element("p", {
+        text: trimming
+          ? "Trimming every chapter. Editing stays locked until it finishes."
+          : "Cut the same seconds off every chapter. This changes the saved audio and cannot be undone.",
+      }),
+      trimSecondsField("trim-head-input", "Cut from start, seconds"),
+      trimSecondsField("trim-tail-input", "Cut from end, seconds"),
+      trimButton,
+    ]);
+    trimButton.addEventListener("click", async () => {
+      const trimHead = Number(trimPanel.querySelector("#trim-head-input").value) || 0;
+      const trimTail = Number(trimPanel.querySelector("#trim-tail-input").value) || 0;
+      if (trimHead <= 0 && trimTail <= 0) {
+        notify("Enter seconds to cut from the start or the end.", { kind: "failure", timeout: 0 });
+        return;
+      }
+      trimButton.disabled = true;
+      try {
+        const receipt = await request(`/api/collections/${encodeURIComponent(slug)}/trim`, {
+          method: "POST",
+          body: JSON.stringify({ trim_head: trimHead, trim_tail: trimTail }),
+          signal,
+        });
+        if (!active || signal.aborted) return;
+        jobs = [{ id: receipt.job_id, kind: "trim", status: "queued", payload: { slug } }, ...jobs];
+        renderDetail({ focusKey: "trim-submit" });
+        notify(`${collection.title || "Collection"} is queued to be trimmed.`, { kind: "success" });
+        await refresh.request();
+      } catch (error) {
+        if (!active || signal.aborted) return;
+        trimButton.disabled = false;
+        notify(error.message, { kind: "failure", timeout: 0 });
+      }
+    });
     replace(root, header, element("div", { className: "collection-detail-grid" }, [
       element("div", { className: "collection-detail-main" }, [chapters]),
       element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
-        ? [capacityPlan(collection, status.usable_limit_seconds)]
+        ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel]
         : [preparationPanel]),
     ]));
+    // A trim swaps the whole collection folder when it finishes, so an edit
+    // made meanwhile would wait on the server and then act on the old files.
+    if (trimming) {
+      for (const control of root.querySelectorAll("[data-collection-mutation]")) control.disabled = true;
+    }
     const fallbackTarget = fallback || root.querySelector("h1");
     restoreFocus(token, { root, fallback: fallbackTarget });
   }
@@ -533,9 +611,11 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
 
   function onRefresh(snapshot) {
     if (!active || signal.aborted) return;
+    const wasTrimming = Boolean(activeTrim(jobs, slug));
     if (!snapshot.stale?.includes("jobs")) jobs = snapshot.jobs || [];
     const indexed = snapshot.collections?.find((item) => item.slug === slug);
-    if (indexed?.stage === "forged" && collection?.stage !== "forged") {
+    const trimFinished = wasTrimming && !activeTrim(jobs, slug);
+    if (trimFinished || (indexed?.stage === "forged" && collection?.stage !== "forged")) {
       loadCollection().then(() => {
         if (active && !signal.aborted) renderDetail({ focusKey: "collection-detail-title" });
       }).catch((error) => {

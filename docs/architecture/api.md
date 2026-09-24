@@ -24,6 +24,7 @@ access control, so treat network reachability as the only gate and do not expose
 | `PATCH` | `/api/collections/{slug}` | Rename a collection |
 | `DELETE` | `/api/collections/{slug}` | Delete a collection and its audio files |
 | `POST` | `/api/collections/{slug}/reorder` | Reorder tracks |
+| `POST` | `/api/collections/{slug}/trim` | Cut seconds off every track of a finished collection |
 | `PATCH` | `/api/collections/{slug}/tracks/{name}` | Rename one track |
 | `DELETE` | `/api/collections/{slug}/tracks/{name}` | Delete one track |
 | `GET` | `/api/collections/{slug}/cover` | Cover image |
@@ -218,6 +219,23 @@ curl -s -X POST http://127.0.0.1:8080/api/forge \
 
 Assignment stays unavailable until the collection reaches manifest stage `forged` and appears in
 the Library ready to send.
+
+## Trim a finished collection
+
+The collection page's **Trim** panel cuts the same seconds off the start and end of every chapter
+of a `forged` collection. The route enqueues one `trim` job per collection; a second request while
+one is active returns the same `job_id`.
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/collections/my-story/trim \
+  -H 'content-type: application/json' \
+  -d '{"trim_head":4.5,"trim_tail":0}'
+```
+
+At least one value must be above zero (`400`). A collection that has not finished Forge is `409`.
+The job trims a hidden copy and swaps it in only when every chapter succeeded, so a chapter too
+short to cut fails the job and leaves the collection as it was. The cut adds to the manifest's
+`forge.trim_head` and `forge.trim_tail`. The saved audio changes for good; there is no undo.
 
 ## Jobs
 

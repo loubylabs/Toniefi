@@ -156,7 +156,8 @@ def test_manual_forge_retry_after_published_process_death_is_a_verified_noop(
     monkeypatch.setattr(forge, "trim_track", trim)
     monkeypatch.setattr(forge, "normalize_track", normalize)
     monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 1000)
-    job_id = db.create_forge_job_once(
+    job_id = db.create_collection_job_once(
+        "forge",
         f"Forge {slug}",
         {
             "slug": slug,
@@ -188,7 +189,7 @@ def test_manual_forge_retry_after_published_process_death_is_a_verified_noop(
 
 def test_duplicate_history_retry_reuses_the_active_forge_job(isolated):
     slug = make_collection()
-    failed_id = db.create_forge_job_once(f"Forge {slug}", {"slug": slug})
+    failed_id = db.create_collection_job_once("forge", f"Forge {slug}", {"slug": slug})
     db.update_job(failed_id, status="failed", error="worker stopped")
 
     first_retry = jobs.retry_failed_job(failed_id)
@@ -231,10 +232,10 @@ def test_forged_stage_is_terminal_for_every_stale_forge_worker_path(
         "trim_tail": 0,
         "split_oversized": False,
     }
-    failed_id = db.create_forge_job_once(f"Forge {slug}", payload)
+    failed_id = db.create_collection_job_once("forge", f"Forge {slug}", payload)
     failed = db.get_job(failed_id)
     db.update_job(failed_id, status="failed", error="first attempt stopped")
-    completed_id = db.create_forge_job_once(f"Forge {slug}", payload)
+    completed_id = db.create_collection_job_once("forge", f"Forge {slug}", payload)
     completed = db.claim_job()
 
     assert completed["id"] == completed_id
@@ -261,7 +262,7 @@ def test_failed_forge_history_resolves_to_the_terminal_collection(isolated):
     manifest = json.loads((path / library.MANIFEST).read_text(encoding="utf-8"))
     manifest["forge_operation_id"] = "forge-completed-by-newer-job"
     (path / library.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
-    failed_id = db.create_forge_job_once(f"Forge {slug}", {"slug": slug})
+    failed_id = db.create_collection_job_once("forge", f"Forge {slug}", {"slug": slug})
     db.update_job(failed_id, status="failed", error="older operation stopped")
 
     before = jobs.present(db.get_job(failed_id))
@@ -400,7 +401,7 @@ def test_init_leaves_an_unrecognisable_legacy_push_payload_alone(isolated):
 
 
 def test_generic_job_creation_cannot_bypass_canonical_forge_payloads(isolated):
-    with pytest.raises(ValueError, match="create_forge_job_once"):
+    with pytest.raises(ValueError, match="create_collection_job_once"):
         db.create_job("forge", "Legacy bypass", {"slug": "legacy-bypass"})
 
 

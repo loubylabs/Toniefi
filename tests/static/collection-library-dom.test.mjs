@@ -759,6 +759,92 @@ test("the collection screen stage-gates the capacity plan and offers the same Fi
   }
 });
 
+test("the collection screen trims a finished collection, locks editing meanwhile, and reloads after", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "trim-story",
+    title: "Trim Story",
+    stage: "forged",
+    forge: { normalized: true, trim_head: 2 },
+    track_count: 1,
+    total_duration: "10m",
+    tonies_needed: 1,
+    tracks: [{ name: "one.mp3", title: "One", seconds: 600, duration: "10m" }],
+    plan: [{ index: 1, seconds: 600, duration: "10m", tracks: [] }],
+  };
+  const calls = [];
+  const listeners = new Set();
+  let snapshot = {
+    status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 },
+    collections: [collection],
+    jobs: [],
+    stale: [],
+    errors: {},
+  };
+  const refresh = {
+    get snapshot() { return snapshot; },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async request() {
+      listeners.forEach((listener) => listener(snapshot));
+      return snapshot;
+    },
+  };
+  const request = async (url, options = {}) => {
+    calls.push([url, options]);
+    if (url === "/api/collections/trim-story") return collection;
+    if (url === "/api/collections/trim-story/trim") {
+      snapshot = {
+        ...snapshot,
+        jobs: [{ id: 7, kind: "trim", status: "queued", payload: { slug: collection.slug } }],
+      };
+      return { job_id: 7 };
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+  const trimCalls = () => calls.filter(([url]) => url === "/api/collections/trim-story/trim");
+  const reads = () => calls.filter(([url]) => url === "/api/collections/trim-story").length;
+
+  try {
+    createCollectionDetail({
+      workspace: dom.workspace,
+      slug: collection.slug,
+      request,
+      refresh,
+      player: { play() {} },
+      signal: controller.signal,
+    });
+    await flush();
+    assert.match(dom.workspace.textContent, /2 sec cut from start/);
+
+    await buttonWithText(dom.workspace, "Trim every chapter").click();
+    await flush();
+    assert.equal(trimCalls().length, 0, "nothing to cut sends nothing");
+
+    dom.workspace.querySelector("#trim-head-input").value = "3";
+    await buttonWithText(dom.workspace, "Trim every chapter").click();
+    await flush();
+    assert.equal(trimCalls().length, 1);
+    assert.deepEqual(JSON.parse(trimCalls()[0][1].body), { trim_head: 3, trim_tail: 0 });
+    assert.match(dom.workspace.textContent, /Editing stays locked/);
+    assert.equal(dom.workspace.querySelector("#collection-title-input").disabled, true);
+    assert.equal(buttonWithText(dom.workspace, "Trimming").disabled, true);
+
+    const before = reads();
+    snapshot = {
+      ...snapshot,
+      jobs: [{ id: 7, kind: "trim", status: "done", payload: { slug: collection.slug } }],
+    };
+    await refresh.request();
+    await flush();
+    assert.equal(reads(), before + 1, "a finished trim reloads the collection");
+    assert.equal(dom.workspace.querySelector("#collection-title-input").disabled, false);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("Desk sends only the playlist videos left ticked", async () => {
   const dom = installDom();
   globalThis.window.matchMedia = () => ({ matches: true });

@@ -11,7 +11,7 @@ import {
 } from "./shared.js";
 
 
-const PREPARATION_KINDS = new Set(["prepare_url", "upload_prepare", "librivox", "forge"]);
+const PREPARATION_KINDS = new Set(["prepare_url", "upload_prepare", "librivox", "forge", "trim"]);
 
 
 function resultSlug(job) {
@@ -100,6 +100,7 @@ function kindLabel(kind) {
     upload_prepare: "File preparation",
     librivox: "LibriVox preparation",
     forge: "Forge",
+    trim: "Trim",
     push: "Creative Tonie send",
   };
   return labels[kind] || String(kind || "Background job").replaceAll("_", " ");

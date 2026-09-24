@@ -389,8 +389,8 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
     """Create one logical batch atomically and return ids in input order."""
     if not entries:
         return []
-    if any(kind == "forge" for kind, _, _ in entries):
-        raise ValueError("Forge jobs must use create_forge_job_once().")
+    if any(kind in COLLECTION_JOB_KINDS for kind, _, _ in entries):
+        raise ValueError("Forge and trim jobs must use create_collection_job_once().")
     now = time.time()
     conn = connect()
     with _lock:
@@ -410,10 +410,17 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
     return created
 
 
-def _active_forge_job(conn: sqlite3.Connection, slug: str) -> int | None:
+# Jobs that rewrite one collection's audio. At most one of each kind may be
+# active per collection, and each carries a durable `<kind>_operation_id` so a
+# retry after publication is recognised instead of applied twice.
+COLLECTION_JOB_KINDS = frozenset({"forge", "trim"})
+
+
+def _active_collection_job(conn: sqlite3.Connection, kind: str, slug: str) -> int | None:
     rows = conn.execute(
-        "SELECT id,payload FROM jobs WHERE kind='forge' "
+        "SELECT id,payload FROM jobs WHERE kind=? "
         "AND status IN ('queued','running') ORDER BY id",
+        (kind,),
     ).fetchall()
     for row in rows:
         try:
@@ -425,26 +432,28 @@ def _active_forge_job(conn: sqlite3.Connection, slug: str) -> int | None:
     return None
 
 
-def create_forge_job_once(label: str, payload: dict[str, Any]) -> int:
-    """Return the active Forge job for a slug or enqueue exactly one."""
+def create_collection_job_once(kind: str, label: str, payload: dict[str, Any]) -> int:
+    """Return the active job of this kind for a slug or enqueue exactly one."""
+    if kind not in COLLECTION_JOB_KINDS:
+        raise ValueError(f"{kind} is not a collection job kind.")
     slug = payload.get("slug")
     if not slug:
-        raise ValueError("A Forge job needs a collection slug.")
+        raise ValueError(f"A {kind} job needs a collection slug.")
     conn = connect()
     with _lock:
         try:
             conn.execute("BEGIN IMMEDIATE")
-            active = _active_forge_job(conn, slug)
+            active = _active_collection_job(conn, kind, slug)
             if active is not None:
                 conn.commit()
                 return active
             stored_payload = dict(payload)
-            stored_payload["forge_operation_id"] = f"forge-{uuid4().hex}"
+            stored_payload[f"{kind}_operation_id"] = f"{kind}-{uuid4().hex}"
             now = time.time()
             cursor = conn.execute(
                 "INSERT INTO jobs(kind,status,label,payload,created_at,updated_at) "
-                "VALUES('forge','queued',?,?,?,?)",
-                (label, json.dumps(stored_payload), now, now),
+                "VALUES(?,'queued',?,?,?,?)",
+                (kind, label, json.dumps(stored_payload), now, now),
             )
             conn.commit()
             return int(cursor.lastrowid)
@@ -535,14 +544,14 @@ def clone_failed_job(job_id: int) -> int:
             if row is None or row["status"] != "failed" or row["kind"] == "push":
                 conn.commit()
                 return 0
-            if row["kind"] == "forge":
+            if row["kind"] in COLLECTION_JOB_KINDS:
                 try:
                     payload = json.loads(row["payload"])
                 except (json.JSONDecodeError, TypeError):
                     payload = {}
                 slug = payload.get("slug")
                 if isinstance(slug, str) and slug:
-                    active = _active_forge_job(conn, slug)
+                    active = _active_collection_job(conn, row["kind"], slug)
                     if active is not None:
                         conn.commit()
                         return active
