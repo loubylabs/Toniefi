@@ -345,6 +345,8 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
         raise fail(400, "At least one source URL is required.")
     if not all(valid_source_url(url) for url in sources):
         raise fail(400, "Sources must use HTTP or HTTPS.")
+    if any(podcast.is_spotify_music_url(url) for url in sources):
+        raise fail(400, podcast.MUSIC_REFUSAL)
     if len(set(sources)) != len(sources):
         raise fail(400, "Duplicate source URLs are not allowed.")
     if len(sources) > 50:
@@ -387,6 +389,8 @@ def playlist_preview(body: PlaylistPreviewRequest) -> dict[str, Any]:
     url = body.url.strip()
     if not valid_source_url(url):
         raise fail(400, "Sources must use HTTP or HTTPS.")
+    if podcast.is_spotify_music_url(url):
+        raise fail(400, podcast.MUSIC_REFUSAL)
     if podcast.is_podcast_url(url):
         try:
             return podcast.preview(url)
