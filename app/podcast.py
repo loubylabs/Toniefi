@@ -23,7 +23,6 @@ ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
 ITUNES_SEARCH = "https://itunes.apple.com/search"
 SPOTIFY_EMBED = "https://open.spotify.com/embed"
 
-MUSIC_REFUSAL = "TonieFi imports podcasts from Spotify, not music."
 SPOTIFY_UNREADABLE = (
     "Spotify changed its page, so TonieFi could not read that link. "
     "Try the show's Apple Podcasts link instead."
@@ -185,8 +184,6 @@ def _search_feed(show: str, publisher: str | None) -> str:
 
 def resolve_feed(url: str) -> Resolved:
     """Turn a pasted link into the feed URL that holds its audio."""
-    if is_spotify_music_url(url):
-        raise RuntimeError(MUSIC_REFUSAL)
     apple_id = _apple_id(url)
     if apple_id:
         return Resolved(_apple_feed(apple_id))
