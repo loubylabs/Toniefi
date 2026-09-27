@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import re
 import shutil
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import audio, config, library
+import httpx
+
+from . import adcut, audio, config, ingest, library, podcast
 
 Progress = Callable[..., None]
 """A progress reporter: progress(message) or progress(message, percent).
@@ -217,6 +221,84 @@ def retrim(
         except BaseException:
             shutil.rmtree(stage, ignore_errors=True)
             raise
+
+
+def remove_ads(slug: str, *, operation_id: str, progress: Progress = _noop) -> dict[str, Any]:
+    """Cut from each chapter what a fresh download of its episode lacks.
+
+    Hosts stitch different ads into every download, so audio the fresh copy
+    does not have is an ad. Only the library side is ever cut, which means an
+    ad that only the fresh copy has changes nothing. Chapters whose episode
+    has left the feed, or whose download fails, are listed as unchecked.
+    Publication stamps the operation id, so a retry returns instead of
+    cutting again.
+    """
+    with library.collection_lease():
+        library.recover_collection_publications()
+        manifest = library.get(slug)
+        if not manifest:
+            raise RuntimeError(f"No collection named {slug}.")
+        if manifest.get("forge_operation_id") == operation_id:
+            return manifest
+        if manifest.get("stage") != "forged":
+            raise RuntimeError("Finish preparation before removing ads.")
+        if manifest.get("source") != "podcast" or not manifest.get("feed_url"):
+            raise RuntimeError("Only podcast collections can have ads removed.")
+        progress("Reading the feed")
+        feed = podcast.read_feed(manifest["feed_url"])
+        stage = library.create_replacement_stage(slug, operation_id)
+        # A tmp* name lets the startup sweep remove it after a hard stop.
+        scratch = Path(tempfile.mkdtemp(prefix="tmp-remove-ads-", dir=config.WORK_DIR))
+        try:
+            tracks = manifest["tracks"]
+            fresh: dict[str, Path | None] = {}
+            unchecked: list[str] = []
+            cut_seconds = 0.0
+            changed = 0
+            with podcast._client(timeout=300.0) as client:
+                for index, track in enumerate(tracks, start=1):
+                    title = track.get("title") or track["name"]
+                    progress(
+                        f"Checking {index}/{len(tracks)}: {title}",
+                        audio.step_percent(index - 1, len(tracks)),
+                    )
+                    episode = podcast.episode_for_track(feed, track["name"])
+                    if episode is None:
+                        unchecked.append(title)
+                        continue
+                    if episode.guid not in fresh:
+                        target = scratch / f"{len(fresh):03d}{podcast._extension(episode.url)}"
+                        try:
+                            ingest._stream_download(client, episode.url, target)
+                            fresh[episode.guid] = target
+                        except httpx.HTTPError:
+                            fresh[episode.guid] = None
+                    source = fresh[episode.guid]
+                    if source is None:
+                        unchecked.append(title)
+                        continue
+                    finding = adcut.find_extra(stage / track["name"], source)
+                    if finding.cuts:
+                        adcut.cut(stage / track["name"], finding.cuts)
+                        cut_seconds += sum(end - start for start, end in finding.cuts)
+                        changed += 1
+            progress("Re-probing")
+            library.get_at_path(stage, refresh=True)
+            state = dict(manifest.get("forge") or {})
+            state["ads_cut_seconds"] = round(float(state.get("ads_cut_seconds") or 0) + cut_seconds, 1)
+            state["ads_last"] = {
+                "checked_at": time.time(),
+                "cut_seconds": round(cut_seconds, 1),
+                "chapters_changed": changed,
+                "unchecked": unchecked,
+            }
+            library.set_forge_state_at_path(stage, state)
+            return library.publish_replacement(slug, stage, operation_id)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 def run_collection_stage(
