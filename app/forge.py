@@ -229,7 +229,8 @@ def remove_ads(slug: str, *, operation_id: str, progress: Progress = _noop) -> d
     Hosts stitch different ads into every download, so audio the fresh copy
     does not have is an ad. Only the library side is ever cut, which means an
     ad that only the fresh copy has changes nothing. Chapters whose episode
-    has left the feed, or whose download fails, are listed as unchecked.
+    has left the feed, whose download fails, or whose fresh copy cannot be
+    decoded or lined up are listed as unchecked.
     Publication stamps the operation id, so a retry returns instead of
     cutting again.
     """
@@ -277,7 +278,14 @@ def remove_ads(slug: str, *, operation_id: str, progress: Progress = _noop) -> d
                     if source is None:
                         unchecked.append(title)
                         continue
-                    finding = adcut.find_extra(stage / track["name"], source)
+                    try:
+                        finding = adcut.find_extra(stage / track["name"], source)
+                    except audio.AudioError:
+                        unchecked.append(title)
+                        continue
+                    if finding.matched_fraction < adcut.MIN_MATCHED:
+                        unchecked.append(title)
+                        continue
                     if finding.cuts:
                         adcut.cut(stage / track["name"], finding.cuts)
                         cut_seconds += sum(end - start for start, end in finding.cuts)

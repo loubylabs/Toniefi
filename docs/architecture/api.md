@@ -255,7 +255,9 @@ A collection that is not a podcast is `400`; one that has not finished Forge is 
 map to episodes by file name, so a renamed chapter still maps. The job works on a hidden copy and
 swaps it in only when every chapter succeeded. It records the running total in
 `forge.ads_cut_seconds` and the last check in `forge.ads_last`
-(`checked_at`, `cut_seconds`, `chapters_changed`, `unchecked`). There is no undo.
+(`checked_at`, `cut_seconds`, `chapters_changed`, `unchecked`). `unchecked` lists the chapters
+with no episode in the feed, no download, or a fresh copy that could not be lined up. There is no
+undo.
 
 ## Jobs
 

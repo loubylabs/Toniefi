@@ -114,6 +114,41 @@ def test_a_failed_download_leaves_that_chapter_unchecked(isolated, fakes, monkey
     assert result["forge"]["ads_last"]["chapters_changed"] == 1
 
 
+def test_a_fresh_copy_that_cannot_be_decoded_leaves_that_chapter_unchecked(isolated, fakes, monkeypatch):
+    slug = make_podcast()
+    path = config.LIBRARY_DIR / slug
+
+    def find_extra(track: Path, fresh: Path):
+        if track.name.startswith("002"):
+            raise forge.audio.AudioError("Could not decode 001.mp3.")
+        return adcut.Finding(0.97, [(10.0, 40.0)])
+
+    monkeypatch.setattr(adcut, "find_extra", find_extra)
+
+    result = forge.remove_ads(slug, operation_id="ads-f")
+
+    assert result["forge"]["ads_last"]["unchecked"] == ["Second Story (part 1)", "Gone"]
+    assert result["forge"]["ads_last"]["chapters_changed"] == 1
+    assert (path / "001-first-story.mp3").read_bytes() == b"001-first-story.mp3|cut"
+
+
+def test_a_copy_that_does_not_line_up_leaves_that_chapter_unchecked(isolated, fakes, monkeypatch):
+    slug = make_podcast()
+
+    def find_extra(track: Path, fresh: Path):
+        if track.name.startswith("002"):
+            return adcut.Finding(0.2, [])
+        return adcut.Finding(0.97, [(10.0, 40.0)])
+
+    monkeypatch.setattr(adcut, "find_extra", find_extra)
+
+    result = forge.remove_ads(slug, operation_id="ads-g")
+
+    assert result["forge"]["ads_last"]["unchecked"] == ["Second Story (part 1)", "Gone"]
+    assert result["forge"]["ads_last"]["chapters_changed"] == 1
+    assert fakes["cut"] == [("001-first-story.mp3", [(10.0, 40.0)])]
+
+
 def test_a_failure_leaves_the_visible_collection_unchanged(isolated, fakes, monkeypatch):
     slug = make_podcast()
     path = config.LIBRARY_DIR / slug
