@@ -319,7 +319,7 @@ def _unpicked(feed: Feed, hint: str | None) -> list[Episode]:
 
 
 _PART = re.compile(r"-part\d+$")
-_TRACK_NAME = re.compile(r"^(\d{3,})-(.+)$")
+_TRACK_NAME = re.compile(r"^(\d{3,})-.+$")
 
 
 def episode_for_track(feed: Feed, track_name: str) -> Episode | None:
