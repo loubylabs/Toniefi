@@ -20,6 +20,7 @@ browser never cancels work.
 | `app/ingest.py` | URL, LibriVox, and staged upload extraction |
 | `app/podcast.py` | Podcast links to public feeds, feed reading, and episode download |
 | `app/forge.py` | Trim, loudness, title cleanup, splitting |
+| `app/adcut.py` | Podcast ad removal: aligns a chapter with a fresh download and cuts the difference |
 | `app/audio.py` | ffmpeg and ffprobe wrappers, capacity packing |
 | `app/library.py` | On-disk manifests, writer leases, atomic staged publication |
 | `app/archive.py` | Streamed zip download of one collection |

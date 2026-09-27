@@ -528,6 +528,19 @@ def trim_collection(slug: str, body: TrimRequest) -> dict[str, Any]:
     return {"job_id": job_id}
 
 
+@app.post("/api/collections/{slug}/remove-ads")
+def remove_collection_ads(slug: str) -> dict[str, Any]:
+    collection = library.get(slug)
+    if not collection:
+        raise fail(404, f"No collection named {slug}.")
+    if collection.get("stage") != "forged":
+        raise fail(409, "Finish preparation before removing ads.")
+    if collection.get("source") != "podcast" or not collection.get("feed_url"):
+        raise fail(400, "Only podcast collections can have ads removed.")
+    job_id = db.create_collection_job_once("remove_ads", f"Remove ads from {slug}", {"slug": slug})
+    return {"job_id": job_id}
+
+
 @app.patch("/api/collections/{slug}")
 def rename_collection(slug: str, body: TitlePatch) -> dict[str, Any]:
     try:

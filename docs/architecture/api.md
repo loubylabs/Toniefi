@@ -25,6 +25,7 @@ access control, so treat network reachability as the only gate and do not expose
 | `DELETE` | `/api/collections/{slug}` | Delete a collection and its audio files |
 | `POST` | `/api/collections/{slug}/reorder` | Reorder tracks |
 | `POST` | `/api/collections/{slug}/trim` | Cut seconds off every track of a finished collection |
+| `POST` | `/api/collections/{slug}/remove-ads` | Cut ads from a finished podcast collection |
 | `PATCH` | `/api/collections/{slug}/tracks/{name}` | Rename one track |
 | `DELETE` | `/api/collections/{slug}/tracks/{name}` | Delete one track |
 | `GET` | `/api/collections/{slug}/cover` | Cover image |
@@ -236,6 +237,27 @@ At least one value must be above zero (`400`). A collection that has not finishe
 The job trims a hidden copy and swaps it in only when every chapter succeeded, so a chapter too
 short to cut fails the job and leaves the collection as it was. The cut adds to the manifest's
 `forge.trim_head` and `forge.trim_tail`. The saved audio changes for good; there is no undo.
+
+## Remove ads from a podcast collection
+
+Podcast hosts stitch ads into each download and change them over hours or days. The collection
+page's **Remove ads** panel downloads every episode of a `forged` podcast collection again, lines
+each chapter up against the fresh copy, and cuts the stretches the fresh copy does not have. An ad
+that only the fresh copy has changes nothing, and an ad in both copies stays until a later run.
+The route enqueues one `remove_ads` job per collection; a second request while one is active
+returns the same `job_id`.
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/collections/my-story/remove-ads
+```
+
+A collection that is not a podcast is `400`; one that has not finished Forge is `409`. Chapters
+map to episodes by file name, so a renamed chapter still maps. The job works on a hidden copy and
+swaps it in only when every cut succeeded. It records the running total in
+`forge.ads_cut_seconds` and the last check in `forge.ads_last`
+(`checked_at`, `cut_seconds`, `chapters_changed`, `unchecked`). `unchecked` lists the chapters
+with no episode in the feed, no download, or a fresh copy that could not be lined up. There is no
+undo.
 
 ## Jobs
 

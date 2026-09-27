@@ -123,6 +123,11 @@ feed, then press **Pick episodes** and tick the stories you want. Episodes are l
 and the audio comes from the publisher's own feed. Only shows with a public feed work. Spotify-only
 shows cannot be imported.
 
+Podcast hosts stitch ads into each download. A podcast collection's page has a **Remove ads** button:
+it downloads every episode again and cuts whatever the new copy does not have. The ads change from
+one download to the next, so an ad that happens to be in both copies stays until a later run. Send
+the story to your Tonie again afterward.
+
 Every source is downloaded and then run through **Forge**, which is the automatic cleanup pass:
 
 | Pass | What it does |

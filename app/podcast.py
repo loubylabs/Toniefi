@@ -318,6 +318,34 @@ def _unpicked(feed: Feed, hint: str | None) -> list[Episode]:
     return list(feed.episodes)
 
 
+_PART = re.compile(r"-part\d+$")
+_TRACK_NAME = re.compile(r"^(\d{3,})-.+$")
+
+
+def episode_for_track(feed: Feed, track_name: str) -> Episode | None:
+    """The episode a collection track was downloaded from.
+
+    Import names each file `<position>-<slug of title>`, with the position
+    three digits or more. The forge's split adds a part suffix after slugging
+    that name again, which cuts a long one short, so both the full and the
+    shortened name count. Renaming a chapter changes its title, never its
+    file, so the name still leads back to the episode. A name two episodes
+    share is ambiguous and maps to nothing.
+    """
+    base = _PART.sub("", PurePosixPath(track_name).stem)
+    match = _TRACK_NAME.match(base)
+    if not match:
+        return None
+    prefix = match.group(1)
+
+    def named(episode: Episode) -> bool:
+        full = f"{prefix}-{audio.slugify(episode.title)}"
+        return base in (full, audio.slugify(full))
+
+    found = [episode for episode in feed.episodes if named(episode)]
+    return found[0] if len(found) == 1 else None
+
+
 def preview(url: str) -> dict[str, Any]:
     """The picker's view of a podcast, in the playlist preview's shape.
 

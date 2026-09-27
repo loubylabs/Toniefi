@@ -390,7 +390,7 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
     if not entries:
         return []
     if any(kind in COLLECTION_JOB_KINDS for kind, _, _ in entries):
-        raise ValueError("Forge and trim jobs must use create_collection_job_once().")
+        raise ValueError("Forge, trim and remove_ads jobs must use create_collection_job_once().")
     now = time.time()
     conn = connect()
     with _lock:
@@ -413,7 +413,7 @@ def create_jobs(entries: list[tuple[str, str, dict[str, Any]]]) -> list[int]:
 # Jobs that rewrite one collection's audio. At most one of each kind may be
 # active per collection, and each carries a durable `<kind>_operation_id` so a
 # retry after publication is recognised instead of applied twice.
-COLLECTION_JOB_KINDS = frozenset({"forge", "trim"})
+COLLECTION_JOB_KINDS = frozenset({"forge", "trim", "remove_ads"})
 
 
 def _active_collection_job(conn: sqlite3.Connection, kind: str, slug: str) -> int | None:
