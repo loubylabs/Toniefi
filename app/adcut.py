@@ -38,6 +38,8 @@ LOUD = 0.12  # above this share, a frame is surely sound
 MIN_ANCHOR = _frames(10.0)
 MAX_LAGS = 8
 LAG_SPACING = _frames(2.0)
+LOCAL_LAGS = 3  # lags kept from each unmatched stretch's own search
+SAME_LAG = 2  # frames: lags this close are one lag
 MARGIN = _frames(3.0)  # how far smoothing can blur a stretch's edge
 
 MIN_MATCHED = 0.7
@@ -235,6 +237,18 @@ def _place(first: _Anchor, second: _Anchor, low: int, high: int,
     return start, start + extra
 
 
+def _local_lags(anchors: list[_Anchor], lib_logs: np.ndarray,
+                fresh_logs: np.ndarray) -> list[int]:
+    """The strongest lag within each unmatched library stretch of anchor
+    length or more."""
+    edges = [0] + [edge for anchor in anchors for edge in (anchor.start, anchor.end)] + [len(lib_logs)]
+    found: list[int] = []
+    for start, end in zip(edges[::2], edges[1::2]):
+        if end - start >= MIN_ANCHOR:
+            found += [lag + start for lag in _candidate_lags(lib_logs[start:end], fresh_logs)[:LOCAL_LAGS]]
+    return found
+
+
 def find_extra(library_track: Path, fresh: Path) -> Finding:
     """Where the library track has audio the fresh copy does not, in seconds."""
     return compare(decode(library_track), decode(fresh))
@@ -248,6 +262,15 @@ def compare(library_samples: np.ndarray, fresh_samples: np.ndarray) -> Finding:
     lags = _candidate_lags(lib_logs, new_logs)
     raw = {lag: _similarity(lib, new, lib_level, new_level, lag) for lag in lags}
     anchors = _anchors({lag: _smooth(values) for lag, values in raw.items()})
+    # A lag search over the whole track can miss an offset close to a
+    # stronger one, as when both copies carry an ad at the same spot and the
+    # ads differ by a second or two. Searching each long unmatched stretch on
+    # its own finds the offset that dominates there.
+    for lag in _local_lags(anchors, lib_logs, new_logs):
+        if all(abs(lag - known) > SAME_LAG for known in raw):
+            raw[lag] = _similarity(lib, new, lib_level, new_level, lag)
+    if len(raw) > len(lags):
+        anchors = _anchors({lag: _smooth(values) for lag, values in raw.items()})
     matched = sum(a.end - a.start for a in anchors) / len(lib)
     if not anchors or matched < MIN_MATCHED:
         return Finding(round(matched, 3))

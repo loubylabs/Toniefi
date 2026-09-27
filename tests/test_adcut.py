@@ -67,6 +67,13 @@ def test_different_ads_in_the_same_spot_cut_the_library_one_whole():
     assert_cuts(compare(with_ad(STORY, 120, AD), with_ad(STORY, 120, OTHER_AD)), [(120, 140)])
 
 
+def test_different_ads_of_nearly_equal_length_are_found():
+    # Both copies carry an ad at 120 s; they differ by 1.4 s, closer than
+    # the whole-track lag search can separate from the lag before the ads.
+    found = compare(with_ad(STORY, 120, AD), with_ad(STORY, 120, tones(18.6, 8)))
+    assert_cuts(found, [(120, 140)])
+
+
 def test_a_preroll_and_a_postroll_are_found():
     assert_cuts(compare(np.concatenate([AD, STORY]), STORY), [(0, 20)])
     assert_cuts(compare(np.concatenate([STORY, AD]), STORY), [(300, 320)])
