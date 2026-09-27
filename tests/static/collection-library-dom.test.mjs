@@ -845,6 +845,122 @@ test("the collection screen trims a finished collection, locks editing meanwhile
   }
 });
 
+test("a podcast collection removes ads, locks editing meanwhile, and reloads after", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "pod-story",
+    title: "Pod Story",
+    source: "podcast",
+    stage: "forged",
+    forge: {
+      normalized: true,
+      ads_cut_seconds: 31.1,
+      ads_last: { checked_at: 1790400000, cut_seconds: 31.1, chapters_changed: 1, unchecked: ["Gone"] },
+    },
+    track_count: 1,
+    total_duration: "10m",
+    tonies_needed: 1,
+    tracks: [{ name: "001-one.mp3", title: "One", seconds: 600, duration: "10m" }],
+    plan: [{ index: 1, seconds: 600, duration: "10m", tracks: [] }],
+  };
+  const calls = [];
+  const listeners = new Set();
+  let snapshot = {
+    status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 },
+    collections: [collection],
+    jobs: [],
+    stale: [],
+    errors: {},
+  };
+  const refresh = {
+    get snapshot() { return snapshot; },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async request() {
+      listeners.forEach((listener) => listener(snapshot));
+      return snapshot;
+    },
+  };
+  const request = async (url, options = {}) => {
+    calls.push([url, options]);
+    if (url === "/api/collections/pod-story") return collection;
+    if (url === "/api/collections/pod-story/remove-ads") {
+      snapshot = {
+        ...snapshot,
+        jobs: [{ id: 9, kind: "remove_ads", status: "queued", payload: { slug: collection.slug } }],
+      };
+      return { job_id: 9 };
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+  const adCalls = () => calls.filter(([url]) => url === "/api/collections/pod-story/remove-ads");
+  const reads = () => calls.filter(([url]) => url === "/api/collections/pod-story").length;
+
+  try {
+    createCollectionDetail({
+      workspace: dom.workspace,
+      slug: collection.slug,
+      request,
+      refresh,
+      player: { play() {} },
+      signal: controller.signal,
+    });
+    await flush();
+    assert.match(dom.workspace.textContent, /31\.1 sec of ads cut/);
+    assert.match(dom.workspace.textContent, /Last check cut 31\.1 sec from 1 chapter/);
+    assert.match(dom.workspace.textContent, /Not checked: Gone/);
+
+    await buttonWithText(dom.workspace, "Remove ads").click();
+    await flush();
+    assert.equal(adCalls().length, 1);
+    assert.equal(adCalls()[0][1].method, "POST");
+    assert.match(dom.workspace.textContent, /Editing stays locked/);
+    assert.equal(dom.workspace.querySelector("#collection-title-input").disabled, true);
+    assert.equal(buttonWithText(dom.workspace, "Removing ads").disabled, true);
+    assert.equal(buttonWithText(dom.workspace, "Trim every chapter").disabled, true);
+
+    const before = reads();
+    snapshot = {
+      ...snapshot,
+      jobs: [{ id: 9, kind: "remove_ads", status: "done", payload: { slug: collection.slug } }],
+    };
+    await refresh.request();
+    await flush();
+    assert.equal(reads(), before + 1, "a finished ad removal reloads the collection");
+    assert.equal(dom.workspace.querySelector("#collection-title-input").disabled, false);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("a collection that is not a podcast has no Remove ads panel", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "yt-story", title: "YT Story", source: "url", stage: "forged", forge: {},
+    track_count: 1, total_duration: "10m", tonies_needed: 1,
+    tracks: [{ name: "one.mp3", title: "One", seconds: 600, duration: "10m" }],
+    plan: [{ index: 1, seconds: 600, duration: "10m", tracks: [] }],
+  };
+  const snapshot = {
+    status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 },
+    collections: [collection], jobs: [], stale: [], errors: {},
+  };
+  const refresh = { get snapshot() { return snapshot; }, subscribe: () => () => {}, request: async () => snapshot };
+  try {
+    createCollectionDetail({
+      workspace: dom.workspace, slug: collection.slug,
+      request: async () => collection, refresh, player: { play() {} }, signal: controller.signal,
+    });
+    await flush();
+    assert.doesNotMatch(dom.workspace.textContent, /Remove ads/);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("Desk sends only the playlist videos left ticked", async () => {
   const dom = installDom();
   globalThis.window.matchMedia = () => ({ matches: true });

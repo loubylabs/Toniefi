@@ -11,7 +11,7 @@ import {
 } from "./shared.js";
 
 
-const PREPARATION_KINDS = new Set(["prepare_url", "upload_prepare", "librivox", "forge", "trim"]);
+const PREPARATION_KINDS = new Set(["prepare_url", "upload_prepare", "librivox", "forge", "trim", "remove_ads"]);
 
 
 function resultSlug(job) {

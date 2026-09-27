@@ -60,12 +60,16 @@ function forgeSummary(collection) {
   if (forge.split) details.push("oversized tracks split");
   if (forge.trim_head) details.push(`${forge.trim_head} sec cut from start`);
   if (forge.trim_tail) details.push(`${forge.trim_tail} sec cut from end`);
+  if (forge.ads_cut_seconds) details.push(`${forge.ads_cut_seconds} sec of ads cut`);
   return details.length ? details.join(", ") : "Forge complete";
 }
 
-export function activeTrim(jobs, slug) {
+const REWRITE_KINDS = new Set(["trim", "remove_ads"]);
+
+// Trim and ad removal both swap the whole collection folder when they finish.
+export function activeRewrite(jobs, slug, kinds = REWRITE_KINDS) {
   return (jobs || []).find((job) => (
-    job.kind === "trim"
+    kinds.has(job.kind)
     && job.payload?.slug === slug
     && (job.status === "queued" || job.status === "running")
   )) || null;
@@ -535,7 +539,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
       });
       preparationPanel.append(finish);
     }
-    const trimming = Boolean(activeTrim(jobs, slug));
+    const trimming = Boolean(activeRewrite(jobs, slug, new Set(["trim"])));
     const trimButton = element("button", {
       type: "button",
       className: "button button-secondary trim-button",
@@ -582,15 +586,72 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         notify(error.message, { kind: "failure", timeout: 0 });
       }
     });
+    let adsPanel = null;
+    if (collection.source === "podcast") {
+      const removing = Boolean(activeRewrite(jobs, slug, new Set(["remove_ads"])));
+      const last = collection.forge?.ads_last;
+      const adsButton = element("button", {
+        type: "button",
+        className: "button button-secondary remove-ads-button",
+        text: removing ? "Removing ads" : "Remove ads",
+        "data-focus-key": "remove-ads-submit",
+        "data-collection-mutation": "",
+      });
+      const lastLines = [];
+      if (last) {
+        const chapters = last.chapters_changed === 1 ? "1 chapter" : `${last.chapters_changed} chapters`;
+        lastLines.push(element("p", {
+          text: last.cut_seconds
+            ? `Last check cut ${last.cut_seconds} sec from ${chapters}.`
+            : "Last check found no ads to cut.",
+        }));
+        if (last.unchecked?.length) {
+          lastLines.push(element("p", { text: `Not checked: ${last.unchecked.join(", ")}.` }));
+        }
+      }
+      adsPanel = element("section", {
+        className: "assignment-panel remove-ads-panel",
+        "aria-labelledby": "remove-ads-title",
+      }, [
+        element("h2", { id: "remove-ads-title", text: "Ads" }),
+        element("p", {
+          text: removing
+            ? "Removing ads from every chapter. Editing stays locked until it finishes."
+            : "Downloads each episode again and cuts what the new copy does not have. Ads left in may go on a later run. This cannot be undone. Send the story to your Tonie again afterward.",
+        }),
+        ...lastLines,
+        adsButton,
+      ]);
+      adsButton.addEventListener("click", async () => {
+        adsButton.disabled = true;
+        try {
+          const receipt = await request(`/api/collections/${encodeURIComponent(slug)}/remove-ads`, {
+            method: "POST",
+            signal,
+          });
+          if (!active || signal.aborted) return;
+          jobs = [{ id: receipt.job_id, kind: "remove_ads", status: "queued", payload: { slug } }, ...jobs];
+          renderDetail({ focusKey: "remove-ads-submit" });
+          notify(`${collection.title || "Collection"} is queued to have ads removed.`, { kind: "success" });
+          await refresh.request();
+        } catch (error) {
+          if (!active || signal.aborted) return;
+          adsButton.disabled = false;
+          notify(error.message, { kind: "failure", timeout: 0 });
+        }
+      });
+    }
     replace(root, header, element("div", { className: "collection-detail-grid" }, [
       element("div", { className: "collection-detail-main" }, [chapters]),
       element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
-        ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel]
+        ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel, adsPanel].filter(Boolean)
         : [preparationPanel]),
     ]));
-    // A trim swaps the whole collection folder when it finishes, so an edit
-    // made meanwhile would wait on the server and then act on the old files.
-    if (trimming) {
+    // A trim or an ad removal swaps the whole collection folder when it
+    // finishes, so an edit made meanwhile would wait on the server and then
+    // act on the old files.
+    const rewriting = Boolean(activeRewrite(jobs, slug));
+    if (rewriting) {
       for (const control of root.querySelectorAll("[data-collection-mutation]")) control.disabled = true;
     }
     const fallbackTarget = fallback || root.querySelector("h1");
@@ -611,11 +672,11 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
 
   function onRefresh(snapshot) {
     if (!active || signal.aborted) return;
-    const wasTrimming = Boolean(activeTrim(jobs, slug));
+    const wasRewriting = Boolean(activeRewrite(jobs, slug));
     if (!snapshot.stale?.includes("jobs")) jobs = snapshot.jobs || [];
     const indexed = snapshot.collections?.find((item) => item.slug === slug);
-    const trimFinished = wasTrimming && !activeTrim(jobs, slug);
-    if (trimFinished || (indexed?.stage === "forged" && collection?.stage !== "forged")) {
+    const rewriteFinished = wasRewriting && !activeRewrite(jobs, slug);
+    if (rewriteFinished || (indexed?.stage === "forged" && collection?.stage !== "forged")) {
       loadCollection().then(() => {
         if (active && !signal.aborted) renderDetail({ focusKey: "collection-detail-title" });
       }).catch((error) => {
