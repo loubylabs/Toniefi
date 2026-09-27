@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import httpx
@@ -171,6 +172,40 @@ def test_remove_ads_refuses_a_collection_that_is_not_a_podcast(isolated, fakes):
     slug = make_podcast(source="url")
     with pytest.raises(RuntimeError, match="podcast"):
         forge.remove_ads(slug, operation_id="ads-e")
+
+
+def test_remove_ads_refuses_a_collection_that_has_not_finished_forge(isolated, fakes):
+    slug = make_collection()
+    with pytest.raises(RuntimeError, match="Finish preparation"):
+        forge.remove_ads(slug, operation_id="ads-h")
+    assert not list(config.WORK_DIR.glob("tmp-remove-ads-*"))
+
+
+def test_downloads_happen_before_the_lease(isolated, fakes, monkeypatch):
+    slug = make_podcast()
+    free = []
+
+    def download(client, url, dest):
+        # The lock is reentrant, so only another thread can tell whether
+        # this one holds it.
+        acquired = []
+
+        def probe():
+            acquired.append(library._manifest_lock.acquire(blocking=False))
+            if acquired[0]:
+                library._manifest_lock.release()
+
+        thread = threading.Thread(target=probe)
+        thread.start()
+        thread.join()
+        free.append(acquired[0])
+        dest.write_bytes(b"fresh")
+
+    monkeypatch.setattr(forge.ingest, "_stream_download", download)
+
+    forge.remove_ads(slug, operation_id="ads-i")
+
+    assert free == [True, True]
 
 
 def test_remove_ads_job_runs_remove_ads(isolated, fakes):
