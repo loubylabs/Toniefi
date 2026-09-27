@@ -123,6 +123,17 @@ def test_audio_too_short_to_compare_cuts_nothing():
     assert compare(STORY[: at(5)], STORY).cuts == []
 
 
+def test_features_do_not_depend_on_block_size(monkeypatch):
+    samples = tones(300, 10)
+    monkeypatch.setattr(adcut, "FEATURE_BLOCK", 7)
+    small = adcut._features(samples)
+    monkeypatch.setattr(adcut, "FEATURE_BLOCK", len(samples))
+    whole = adcut._features(samples)
+    for blocked, single in zip(small[:2], whole[:2]):
+        np.testing.assert_allclose(blocked, single, rtol=0, atol=1e-6)
+    np.testing.assert_array_equal(small[2], whole[2])
+
+
 def test_cut_keeps_everything_outside_the_ranges_and_fades_each_join(monkeypatch, tmp_path):
     track = tmp_path / "one.mp3"
     track.write_bytes(b"audio")

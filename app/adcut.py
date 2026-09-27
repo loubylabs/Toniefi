@@ -19,6 +19,7 @@ RATE = 8000
 WINDOW = 800  # samples: each frame hears 100 ms
 HOP = 160  # samples: a frame starts every 20 ms
 BANDS = 16
+FEATURE_BLOCK = 4096  # frames whose spectra are held in memory at once
 STEP = HOP / RATE
 
 
@@ -85,18 +86,25 @@ def _features(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         empty = np.zeros((0, BANDS), np.float32)
         return empty, empty, np.zeros(0, np.int8)
     frames = np.lib.stride_tricks.sliding_window_view(samples, WINDOW)[::HOP][:count]
-    rms = np.sqrt((frames ** 2).mean(axis=1))
+    window = np.hanning(WINDOW)
+    # rfft gives WINDOW // 2 + 1 bins; the DC bin is dropped.
+    edges = np.geomspace(1, WINDOW // 2, BANDS + 1).astype(int)
+    loudness: list[np.ndarray] = []
+    bands = np.empty((count, BANDS))
+    # Whole-file frame matrices take tens of megabytes per minute of audio,
+    # so the spectra are built a block of frames at a time.
+    for first in range(0, count, FEATURE_BLOCK):
+        block = frames[first:first + FEATURE_BLOCK]
+        rows = slice(first, first + len(block))
+        loudness.append(np.sqrt((block ** 2).mean(axis=1)))
+        spectrum = np.abs(np.fft.rfft(block * window, axis=1))[:, 1:]
+        for i in range(BANDS):
+            bands[rows, i] = spectrum[:, edges[i]:max(edges[i + 1], edges[i] + 1)].sum(1)
+    rms = np.concatenate(loudness)
     median = max(float(np.median(rms)), 1.0)
     level = np.zeros(count, np.int8)
     level[rms < QUIET * median] = -1
     level[rms > LOUD * median] = 1
-    frames = frames * np.hanning(WINDOW)
-    spectrum = np.abs(np.fft.rfft(frames, axis=1))[:, 1:]
-    edges = np.geomspace(1, spectrum.shape[1], BANDS + 1).astype(int)
-    bands = np.stack(
-        [spectrum[:, edges[i]:max(edges[i + 1], edges[i] + 1)].sum(1) for i in range(BANDS)],
-        axis=1,
-    )
     logs = np.log(bands + 1e-3)
     # Speech shares one overall spectral tilt, which makes any two frames
     # look alike. Removing each band's average over the file leaves what
