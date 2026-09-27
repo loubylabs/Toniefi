@@ -155,6 +155,9 @@ def test_cut_keeps_everything_outside_the_ranges_and_fades_each_join(monkeypatch
     assert "concat=n=3:v=0:a=1[out]" in graph
     assert graph.count("afade=t=in") == 2
     assert graph.count("afade=t=out") == 2
+    # An embedded cover survives the cut.
+    command = " ".join(commands[0])
+    assert "-map [out] -map 0:v? -c:v copy" in command
     assert track.read_bytes() == b"cut"
 
 

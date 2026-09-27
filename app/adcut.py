@@ -344,7 +344,7 @@ def cut(path: Path, cuts: list[tuple[float, float]]) -> None:
     tmp = path.with_name(path.stem + ".adcut.mp3")
     audio._run([
         "ffmpeg", "-nostdin", "-y", "-i", str(path),
-        "-filter_complex", graph, "-map", "[out]",
+        "-filter_complex", graph, "-map", "[out]", "-map", "0:v?", "-c:v", "copy",
         "-c:a", "libmp3lame", "-b:a", config.AUDIO_BITRATE,
         "-ar", config.AUDIO_SAMPLE_RATE, "-ac", "2",
         "-map_metadata", "0", str(tmp),
