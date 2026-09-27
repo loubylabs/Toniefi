@@ -816,3 +816,33 @@ def test_prepare_run_leaves_other_links_to_yt_dlp(monkeypatch):
     seen = run_prepare(monkeypatch, {"url": "https://example.test/story", "kind": None})
 
     assert seen["via"] == "yt-dlp"
+
+
+def _feed_of(*titles: str) -> podcast.Feed:
+    episodes = [
+        podcast.Episode(index=i, guid=f"g{i}", title=title, url=f"https://x/{i}.mp3",
+                        published=None, duration=None)
+        for i, title in enumerate(titles, start=1)
+    ]
+    return podcast.Feed(title="Show", author="Maker", cover=None, episodes=episodes)
+
+
+def test_a_track_maps_to_its_episode_by_file_name():
+    feed = _feed_of("Making and Being Friends", "Try, Try Again!")
+    assert podcast.episode_for_track(feed, "002-making-and-being-friends.mp3").guid == "g1"
+    assert podcast.episode_for_track(feed, "005-try-try-again.mp3").guid == "g2"
+
+
+def test_a_split_part_maps_to_the_whole_episode():
+    feed = _feed_of("Making and Being Friends")
+    assert podcast.episode_for_track(feed, "002-making-and-being-friends-part02.mp3").guid == "g1"
+
+
+def test_a_track_with_no_episode_maps_to_nothing():
+    feed = _feed_of("Making and Being Friends")
+    assert podcast.episode_for_track(feed, "003-gone-from-the-feed.mp3") is None
+
+
+def test_two_episodes_with_one_name_map_to_nothing():
+    feed = _feed_of("Bonus", "Bonus!")
+    assert podcast.episode_for_track(feed, "001-bonus.mp3") is None
