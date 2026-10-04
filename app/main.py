@@ -501,9 +501,26 @@ def run_forge(body: ForgeRequest) -> dict[str, Any]:
 
 # --------------------------------------------------------- 4. collections
 
+def _mark_sent(manifests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Give each chapter its latest finished send, as `sent: {tonie, at}`.
+
+    Added after the fingerprint is taken, so a send never changes what the
+    next send must confirm. A send older than the collection belongs to an
+    earlier collection that had the same slug, and is ignored.
+    """
+    sent = db.sent_chapters()
+    for manifest in manifests:
+        created = manifest.get("created_at") or 0
+        for track in manifest.get("tracks", []):
+            mark = sent.get((manifest["slug"], track.get("name")))
+            if mark and mark["at"] >= created:
+                track["sent"] = mark
+    return manifests
+
+
 @app.get("/api/collections")
 def list_collections() -> list[dict[str, Any]]:
-    return library.list_all()
+    return _mark_sent(library.list_all())
 
 
 @app.get("/api/collections/{slug}")
@@ -512,7 +529,7 @@ def get_collection(slug: str, refresh: bool = False) -> dict[str, Any]:
     if not manifest:
         raise fail(404, f"No collection named {slug}.")
     manifest["plan"] = library.plan(slug)
-    return manifest
+    return _mark_sent([manifest])[0]
 
 
 @app.post("/api/collections/{slug}/trim")

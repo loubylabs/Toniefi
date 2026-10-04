@@ -462,7 +462,6 @@ PUBLIC_LIBRARY_SLUG_OPERATIONS = (
     "set_forge_state",
     "rename_track",
     "reorder",
-    "replace_track",
     "delete_track",
     "delete",
     "track_path",
@@ -486,8 +485,6 @@ def call_public_library_slug_operation(operation, slug, tmp_path):
         return library.rename_track(slug, "one.mp3", "Changed")
     if operation == "reorder":
         return library.reorder(slug, ["one.mp3"])
-    if operation == "replace_track":
-        return library.replace_track(slug, "one.mp3", ["part.mp3"])
     if operation == "delete_track":
         return library.delete_track(slug, "one.mp3")
     if operation == "track_path":

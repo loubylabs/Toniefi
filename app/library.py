@@ -702,13 +702,18 @@ def _rescan_path(path: Path, slug: str) -> dict[str, Any]:
             seconds = audio.duration_seconds(file)
         except audio.AudioError:
             seconds = 0.0
-        tracks.append({
+        rebuilt = {
             "name": name,
             "title": (prior or {}).get("title") or file.stem,
             "seconds": round(seconds, 1),
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
-        })
+        }
+        # Forge, trim and ad removal rewrite the audio, which lands here. The
+        # release date describes the episode, not the file, so it survives.
+        if (prior or {}).get("published") is not None:
+            rebuilt["published"] = prior["published"]
+        tracks.append(rebuilt)
     manifest["tracks"] = tracks
     cover = find_cover(path)
     if cover:
@@ -858,6 +863,9 @@ def replace_track_at_path(path: Path, name: str, new_names: list[str]) -> dict[s
             {"name": new, "title": f"{base.get('title', name)} (part {position})"}
             for position, new in enumerate(new_names, start=1)
         ]
+        if base.get("published") is not None:
+            for stand_in in stand_ins:
+                stand_in["published"] = base["published"]
         manifest["tracks"] = tracks[:index] + stand_ins + tracks[index + 1:]
     return mutate_at_path(path, apply)
 
@@ -900,22 +908,6 @@ def reorder(slug: str, names: list[str]) -> dict[str, Any]:
         ordered = [by_name[n] for n in names if n in by_name]
         ordered += [t for t in m.get("tracks", []) if t["name"] not in set(names)]
         m["tracks"] = ordered
-    return _mutate(slug, apply)
-
-
-def replace_track(slug: str, name: str, new_names: list[str]) -> dict[str, Any]:
-    """Swap one track for the parts it was split into, keeping its position."""
-    def apply(m: dict[str, Any]) -> None:
-        tracks = m.get("tracks", [])
-        index = next((i for i, t in enumerate(tracks) if t["name"] == name), None)
-        if index is None:
-            return
-        base = tracks[index]
-        stand_ins = [
-            {"name": new, "title": f"{base.get('title', name)} (part {i})"}
-            for i, new in enumerate(new_names, start=1)
-        ]
-        m["tracks"] = tracks[:index] + stand_ins + tracks[index + 1:]
     return _mutate(slug, apply)
 
 

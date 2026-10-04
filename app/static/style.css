@@ -3416,16 +3416,43 @@ img.collection-detail-cover {
   font-variant-numeric: tabular-nums;
 }
 
-.library-chapter-title {
+.library-chapter-text {
+  display: flex;
   flex: 1;
   min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-block: var(--space-1);
+}
+
+.library-chapter-title {
   overflow-wrap: anywhere;
 }
 
-.library-chapter-duration {
+.library-chapter-duration,
+.chapter-released {
   color: var(--ink-muted);
   font-size: var(--type-xs);
   font-variant-numeric: tabular-nums;
+}
+
+/* Under the title, so a long stamp never squeezes the title field. */
+.chapter-marks {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Lined up with the text inside the title input, not its border. */
+.chapter-title-field .chapter-marks {
+  padding-inline: calc(var(--space-3) + 1px);
+}
+
+.chapter-sent {
+  min-height: 1.5rem;
+  white-space: nowrap;
 }
 
 .library-send-bar {

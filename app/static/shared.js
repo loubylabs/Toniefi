@@ -69,6 +69,33 @@ export function exactDuration(seconds) {
 }
 
 
+function calendarDay(seconds) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(seconds * 1000));
+}
+
+
+export function chapterMarks(track) {
+  // A podcast episode's release date, and the chapter's latest finished send.
+  // "Sent" is history, not presence: a chapter removed from the Tonie by hand
+  // stays marked.
+  const marks = [];
+  if (track.published) {
+    marks.push(element("span", { className: "chapter-released", text: `Released ${calendarDay(track.published)}` }));
+  }
+  if (track.sent) {
+    const day = calendarDay(track.sent.at);
+    const tonie = track.sent.tonie || "a Tonie";
+    marks.push(element("span", {
+      className: "status-stamp chapter-sent",
+      "data-status": "sent",
+      title: `Sent to ${tonie} on ${day}`,
+      text: `Sent · ${tonie} · ${day}`,
+    }));
+  }
+  return marks;
+}
+
+
 export function tonieLabel(tonie) {
   // A Tonie name is unique inside a household and nowhere else, so a name on
   // its own can describe two different boxes. Every screen that names a Tonie

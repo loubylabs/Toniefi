@@ -3,6 +3,7 @@ import { icon } from "./icons.js";
 import { forgePreparationState } from "./library.js";
 import {
   announce,
+  chapterMarks,
   createMutationController,
   element,
   humanDuration,
@@ -443,10 +444,12 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         }
       });
       const controls = element("div", { className: "chapter-row-controls" }, [play, moveUp, moveDown, removeButton]);
+      const markList = chapterMarks(track);
+      const marks = markList.length ? element("span", { className: "chapter-marks" }, markList) : null;
       row.append(
         iconNode("grip", "chapter-grip"),
         element("span", { className: "chapter-index", text: String(index + 1) }),
-        element("div", { className: "chapter-title-field" }, [titleInput, element("span", { text: track.duration })]),
+        element("div", { className: "chapter-title-field" }, [titleInput, element("span", { text: track.duration }), marks]),
         controls,
       );
       row.addEventListener("dragstart", (event) => {

@@ -418,7 +418,7 @@ def import_feed(
         })
         dest = stage.path
 
-        stored: list[tuple[str, str]] = []
+        stored: dict[str, Episode] = {}
         total = len(picked)
         with _client(timeout=300.0) as client:
             for position, episode in enumerate(picked, start=1):
@@ -433,7 +433,7 @@ def import_feed(
                     except httpx.HTTPError as exc:
                         skipped.append(f"{episode.title}: {exc}")
                         continue
-                stored.append((name, episode.title))
+                stored[name] = episode
             if not stored:
                 raise RuntimeError(NONE_DOWNLOADED)
             if feed.cover and not (dest / "cover.jpg").is_file():
@@ -443,11 +443,19 @@ def import_feed(
                     pass
 
         library.rescan_collection_stage(stage_id)
-        for name, title in stored:
-            library.rename_track_at_path(dest, name, title)
         # A resumed stage keeps the extras it was created with, so this run's
         # skips are written once the downloads are done.
-        library.mutate_at_path(dest, lambda manifest: manifest.update(skipped=skipped))
+        def describe(manifest: dict[str, Any]) -> None:
+            manifest["skipped"] = skipped
+            for track in manifest.get("tracks", []):
+                episode = stored.get(track.get("name"))
+                if episode is None:
+                    continue
+                track["title"] = episode.title
+                # The feed's release date, the one Spotify and Apple show.
+                if episode.published is not None:
+                    track["published"] = episode.published
+        library.mutate_at_path(dest, describe)
 
         progress("Probing durations")
         library.collection_stage(stage_id, refresh=True)
