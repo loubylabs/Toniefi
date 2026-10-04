@@ -462,6 +462,37 @@ def test_no_pick_imports_every_episode(isolated_library, web):
     ]
 
 
+def test_each_chapter_keeps_its_release_date(isolated_library, web):
+    serve_stories(web)
+
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-dates")
+
+    published = [track.get("published") for track in result["tracks"]]
+    # 1 to 3 January 2024 at 06:00 UTC; the bonus has no pubDate.
+    assert published == [1704088800.0, 1704175200.0, 1704261600.0, None]
+    assert "published" not in result["tracks"][3]
+
+
+def test_a_release_date_survives_rewritten_and_split_audio(isolated_library, web):
+    serve_stories(web)
+    result = podcast.import_feed(FEED_URL, stage_id="podcast-rewrite", episode_ids=["ep-1", "ep-2"])
+    path = Path(result["path"])
+    first, second = names(result)
+
+    # Forge, trim and ad removal rewrite a file in place; a split replaces it.
+    (path / first).write_bytes(b"levelled owl audio")
+    (path / second).rename(path / "002-part1.mp3")
+    (path / "002-part2.mp3").write_bytes(b"snails part 2")
+    library.replace_track_at_path(path, second, ["002-part1.mp3", "002-part2.mp3"])
+    tracks = library.get_at_path(path, refresh=True)["tracks"]
+
+    assert [(track["name"], track.get("published")) for track in tracks] == [
+        (first, 1704088800.0),
+        ("002-part1.mp3", 1704175200.0),
+        ("002-part2.mp3", 1704175200.0),
+    ]
+
+
 def test_an_unpicked_episode_link_imports_only_its_own_episode(isolated_library, web, monkeypatch):
     serve_stories(web)
     monkeypatch.setattr(podcast, "resolve_feed",

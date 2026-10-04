@@ -636,6 +636,27 @@ def jobs_for_history(limit: int = 40) -> list[dict[str, Any]]:
     return [_hydrate(row) for row in rows]
 
 
+def sent_chapters() -> dict[tuple[str, str], dict[str, Any]]:
+    """The latest finished send of each chapter, keyed by (slug, file name).
+
+    Read from the push jobs themselves, which are never pruned, so there is no
+    second record to drift. It says a chapter was sent, never that it is still
+    on that Tonie: chapters removed by hand stay marked. A send that failed
+    partway is left out, since its job does not say which chapters landed.
+    """
+    rows = connect().execute(
+        "SELECT * FROM jobs WHERE kind='push' AND status='done' ORDER BY id"
+    ).fetchall()
+    sent: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        job = _hydrate(row)
+        mark = {"tonie": job["result"].get("tonie") or "", "at": job["updated_at"]}
+        for source in job["payload"].get("sources") or []:
+            for name in source.get("files") or []:
+                sent[(source.get("slug"), name)] = mark
+    return sent
+
+
 def active_upload_stages() -> set[str]:
     rows = connect().execute(
         "SELECT payload FROM jobs WHERE kind='upload_prepare' "

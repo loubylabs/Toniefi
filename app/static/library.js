@@ -18,6 +18,7 @@ import {
 } from "./send.js";
 import {
   announce,
+  chapterMarks,
   createMutationController,
   element,
   humanDuration,
@@ -326,6 +327,7 @@ export function createLibraryScreen({
           if (selection.size() === 1 && tonies === null) loadTargets(focusKey);
           render({ focusKey });
         });
+        const markList = chapterMarks(track);
         // A label bound to the box and holding it, the same shape the row tick
         // already uses, so the whole line is the hit target rather than a
         // 20px square.
@@ -333,7 +335,10 @@ export function createLibraryScreen({
           element("label", { className: "library-chapter-label", for: boxId }, [
             box,
             element("span", { className: "library-chapter-index", text: String(index + 1) }),
-            element("span", { className: "library-chapter-title", text: track.title || track.name }),
+            element("span", { className: "library-chapter-text" }, [
+              element("span", { className: "library-chapter-title", text: track.title || track.name }),
+              markList.length ? element("span", { className: "chapter-marks" }, markList) : null,
+            ]),
             element("span", { className: "library-chapter-duration", text: track.duration || "" }),
           ]),
         ]);

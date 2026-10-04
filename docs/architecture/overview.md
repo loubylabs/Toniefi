@@ -121,6 +121,13 @@ membership, target or effect change, and on success. **A target refresh never cl
 the refresh returned and whether it failed, because clearing it on refresh means a send that landed
 but lost its response gets appended a second time.
 
+Each chapter the collection routes return carries `sent: {tonie, at}`, its latest **finished** push,
+read from the push jobs (which are never pruned), so no second record can drift. It is history, not
+presence: a chapter removed from the Tonie by hand stays marked, and a partial send marks nothing.
+It is added after the manifest fingerprint is taken, so a send never invalidates the next one.
+Podcast chapters also carry `published`, the feed's release date, which survives forge, trim, split
+and ad removal.
+
 Activity offers no generic Retry for push jobs, because Creative Tonie writes have no undo and
 remote state may have changed. If a send fails, fix the problem on the Library and send again.
 
