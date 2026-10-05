@@ -47,7 +47,7 @@ These are read by the application itself and work in both run modes.
 | `TONIES_USERNAME` / `TONIES_PASSWORD` | unset | Environment myTonies credentials |
 | `AUDIO_BITRATE` | `128k` | Transcode target bitrate |
 | `AUDIO_SAMPLE_RATE` | `44100` | Transcode target sample rate |
-| `WORKER_THREADS` | `2` | Concurrent background jobs |
+| `WORKER_THREADS` | `2` | Concurrent background jobs; each start logs `Job N (kind) started after Xs queued` |
 | `YTDLP_PLAYER_CLIENTS` | `default,android` | YouTube clients that `yt-dlp` may use |
 
 `UPLOAD_STAGE_DIR` deliberately defaults inside `DATA_DIR` rather than `WORK_DIR`. Retained
