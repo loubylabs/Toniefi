@@ -404,10 +404,17 @@ def _handle(job: dict) -> dict:
 
 def _worker() -> None:
     while not _stop.is_set():
-        job = db.claim_job()
+        try:
+            job = db.claim_job()
+        except Exception:  # noqa: BLE001 - a dead thread would strand the queue
+            traceback.print_exc()
+            job = None
         if job is None:
             _stop.wait(1.5)
             continue
+        waited = time.time() - job["created_at"]
+        print(f"Job {job['id']} ({job['kind']}) started after {waited:.1f}s queued",
+              flush=True)
         try:
             result = _handle(job)
             db.update_job(job["id"], status="done", progress="Finished",
