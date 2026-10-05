@@ -151,6 +151,7 @@ an inline error rather than submitted, because none of them is not all of them.
 The work cart below shows each job as it runs. A row that is ready, has been sent, or has failed
 carries a **Dismiss** control that clears it out of the way. Dismissing hides the row and never deletes
 anything: a job is still in Activity afterwards, and a finished story is still in the Library.
+Only the newest finished send stays in the cart; older sends are in Activity.
 
 ### 2. Choose and send from the Library
 

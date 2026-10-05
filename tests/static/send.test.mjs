@@ -214,6 +214,7 @@ test("buildPushBatchPayload emits one assignment per group with its sources", ()
     assignments: [{
       household_id: "h1",
       tonie_id: "t1",
+      tonie_name: "Bedtime",
       replace: false,
       remote_chapters: [{ id: "c1", title: "Already there" }],
       sources: [

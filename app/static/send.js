@@ -5,7 +5,7 @@
 // The server plans the same way and refuses a batch whose group boundaries
 // disagree, so a drift here is a 409 the operator cannot clear.
 
-import { tonieLabel } from "./shared.js";
+import { tonieLabel, waitingMessage } from "./shared.js";
 
 export function packSelection(collections, limitSeconds) {
   const limit = Number(limitSeconds) || 0;
@@ -144,6 +144,9 @@ export function buildPushBatchPayload(groups, selections, operationKey) {
       return {
         household_id: tonie.householdId,
         tonie_id: tonie.id,
+        // Display only: it names the job, and the server keeps it out of the
+        // idempotency digest and the stored payload.
+        tonie_name: tonie.name || "",
         replace: replaceExisting,
         remote_chapters: (tonie.chapters || []).map(({ id, title }) => ({ id, title: title || "" })),
         sources: groupSources(group),
@@ -254,7 +257,7 @@ export function activeSendsByTonie(jobs) {
 }
 
 
-export function sendJobView(job) {
+export function sendJobView(job, now = Date.now() / 1000) {
   // The message is the worker's own sentence, shown verbatim. Nothing here
   // parses "7/30" back out of it: the bar's number comes from the column the
   // worker wrote, so the words and the figure can never disagree.
@@ -269,7 +272,7 @@ export function sendJobView(job) {
   return {
     phase: job?.phase || job?.status || "queued",
     label: queued ? "Queued" : "Sending",
-    message: job?.progress || (queued ? "Waiting for a worker" : "Working"),
+    message: job?.progress || (queued ? waitingMessage(job?.created_at, now) : "Working"),
     mode: determinate ? "determinate" : "indeterminate",
     percent: determinate ? percent : null,
   };

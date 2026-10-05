@@ -1812,8 +1812,26 @@ img.collection-detail-cover {
   border-bottom: 2px solid var(--ink);
 }
 
+/* In a narrow cart column the heading gives way before the controls beside
+   it. Once Clear finished joins, the heading's type steps down toward body
+   size with the column. Neither label ever wraps inside itself: below the
+   width where both fit on one line, Clear finished moves to its own line. */
+.work-cart-heading {
+  flex-wrap: wrap;
+  container-type: inline-size;
+}
+
+.work-cart-heading h2 {
+  white-space: nowrap;
+}
+
+.work-cart-heading:has(.work-cart-clear:not([hidden])) h2 {
+  font-size: clamp(var(--type-base), 4.6cqi, var(--type-lg));
+}
+
 .work-cart-count {
   display: grid;
+  flex: none;
   min-width: 1.75rem;
   height: 1.75rem;
   margin-left: auto;
@@ -2094,6 +2112,9 @@ img.collection-detail-cover {
 }
 
 .work-cart-clear {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
   min-height: 2.25rem;
   padding-inline: var(--space-2);
   font-size: var(--type-xs);

@@ -52,3 +52,9 @@ test("a queued send says it is waiting rather than showing an empty line", () =>
   assert.equal(view.label, "Queued");
   assert.equal(view.message, "Waiting for a worker");
 });
+
+test("a queued send says how many whole minutes it has waited", () => {
+  const queued = job({ status: "queued", phase: "queued", progress: "", progress_percent: null, created_at: 1000 });
+  assert.equal(sendJobView(queued, 1059).message, "Waiting for a worker");
+  assert.equal(sendJobView(queued, 1000 + 125).message, "Waiting for a worker · 2 min");
+});

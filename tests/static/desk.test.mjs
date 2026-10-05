@@ -8,6 +8,7 @@ import {
   buildWorkCartItems,
   createLiveWorkCart,
   deskRefreshNotice,
+  dismissLabels,
   forgeDefinitionValues,
   forgeOption,
   forgeProfileStatus,
@@ -860,7 +861,7 @@ test("a running row renders no dismiss control and a failed row does", () => {
     assert.equal(rows[1].querySelectorAll(".work-cart-dismiss").length, 1);
     assert.equal(
       rows[1].querySelector(".work-cart-dismiss").getAttribute("aria-label"),
-      "Dismiss Story 2 from the work cart",
+      "Dismiss Story 2",
     );
   } finally {
     dom.restore();
@@ -1018,4 +1019,82 @@ test("a podcast row with every episode unticked asks for an episode", () => {
 
   assert.equal(parsed.valid, false);
   assert.equal(parsed.rows[0].error, "Pick at least one episode from this podcast, or remove the row.");
+});
+
+
+// ------------------------------------------------- work cart is not a send log
+
+function sendJob(id, status, extra = {}) {
+  return {
+    id,
+    kind: "push",
+    status,
+    retryable: status === "failed",
+    label: `Send Moon Story to Bedtime Bear`,
+    error: status === "failed" ? "Tonie Cloud refused the upload" : "",
+    payload: { household_id: "h1", tonie_id: "t1", sources: [{ slug: "moon" }] },
+    created_at: 100,
+    ...extra,
+  };
+}
+
+test("only the newest finished send stays in the work cart", () => {
+  const jobs = [sendJob(5, "done"), sendJob(4, "done"), sendJob(3, "failed"), sendJob(6, "queued"), sendJob(2, "done")];
+
+  const items = buildWorkCartItems(jobs, [], {}, 7, 100);
+
+  assert.deepEqual(items.map((item) => [item.jobId, item.phase]), [[6, "queued"], [3, "failed"], [5, "sent"]]);
+});
+
+test("dismissing the newest send does not promote an older one", () => {
+  const jobs = [sendJob(5, "done"), sendJob(4, "done")];
+
+  assert.deepEqual(buildWorkCartItems(jobs, [], { "job-5": 500 }, 7, 100), []);
+});
+
+test("a send row wears its first collection's jacket and no repeated source line", () => {
+  const { dom, cart } = mountedCart();
+  try {
+    cart.onRefresh({
+      jobs: [sendJob(5, "done")],
+      collections: [{ slug: "moon", stage: "extracted", title: "Moon Story", cover: "cover.jpg" }],
+      dismissals: {},
+    });
+
+    const row = cart.host.querySelector(".work-cart-row");
+    const cover = row.querySelector(".work-cart-cover");
+    assert.equal(cover.tagName.toLowerCase(), "img");
+    assert.equal(cover.getAttribute("src"), "/api/collections/moon/cover");
+    assert.equal(row.querySelectorAll(".work-cart-source").length, 0);
+  } finally {
+    dom.restore();
+  }
+});
+
+test("a queued row says how long it has waited for a worker", () => {
+  const items = buildWorkCartItems([preparedJob(1, "queued", "", { created_at: 1000 })], [], {}, 7, 1000 + 180);
+
+  assert.equal(items[0].progress, "Waiting for a worker · 3 min");
+  assert.equal(
+    buildWorkCartItems([preparedJob(1, "queued", "", { created_at: 1000 })], [], {}, 7, 1030)[0].progress,
+    "Waiting for a worker",
+  );
+});
+
+test("two finished rows with one title get distinct dismiss labels", () => {
+  const items = buildWorkCartItems([sendJob(9, "failed"), sendJob(8, "failed"), sendJob(7, "running")], [], {}, 7, 100);
+
+  // The running row carries no control, so it is not counted.
+  assert.deepEqual(dismissLabels(items), [
+    "Dismiss Send Moon Story to Bedtime Bear",
+    "Dismiss Send Moon Story to Bedtime Bear (1 of 2)",
+    "Dismiss Send Moon Story to Bedtime Bear (2 of 2)",
+  ]);
+});
+
+test("Clear finished and the cart heading stay on one line", () => {
+  const styles = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
+
+  assert.equal(exactRuleDeclarations(styles, ".work-cart-clear")["white-space"], "nowrap");
+  assert.equal(exactRuleDeclarations(styles, ".work-cart-heading h2")["white-space"], "nowrap");
 });
