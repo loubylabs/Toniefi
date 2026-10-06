@@ -923,7 +923,7 @@ img.collection-detail-cover {
 }
 
 .collection-detail-heading h1 {
-  max-width: 20ch;
+  max-width: 100%;
   margin: var(--space-3) 0 var(--space-4);
   font-size: var(--type-xl);
   font-weight: 800;
@@ -932,18 +932,29 @@ img.collection-detail-cover {
   overflow-wrap: anywhere;
 }
 
-.collection-title-form {
-  display: grid;
-  max-width: 42rem;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--space-2);
+/* The h1 is the title field: bare at rest, raised paper and a rule on hover or
+   focus. The negative margin lines its text up with the page edge. */
+.collection-detail-heading h1 .collection-title-input {
+  width: calc(100% + 2 * (var(--space-3) + 1px));
+  max-width: none;
+  min-height: 0;
+  margin-inline: calc(-1 * (var(--space-3) + 1px));
+  padding-block: var(--space-1);
+  overflow: hidden;
+  border-color: transparent;
+  background: transparent;
+  field-sizing: content;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  resize: none;
 }
 
-.collection-title-form label {
-  grid-column: 1 / -1;
-  font-size: var(--type-sm);
-  font-weight: 750;
+.collection-detail-heading h1 .collection-title-input:hover:not(:disabled),
+.collection-detail-heading h1 .collection-title-input:focus {
+  border-color: var(--rule);
+  background: var(--paper-raised);
 }
 
 .collection-detail-facts {
@@ -2899,7 +2910,8 @@ img.collection-detail-cover {
   }
 }
 
-@media (max-width: 1279.98px) {
+/* Chapters keep the full column up to 1500px; the plan drops below them. */
+@media (max-width: 1499.98px) {
   .collection-detail-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3277,14 +3289,9 @@ img.collection-detail-cover {
     width: min(11rem, 48vw);
   }
 
-  .collection-title-form,
   .collection-detail-facts,
   .collection-detail-plan {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .collection-title-form label {
-    grid-column: auto;
   }
 
   .collection-detail-facts {
@@ -3605,6 +3612,7 @@ img.collection-detail-cover {
 
 .chapter-sent {
   min-height: 1.5rem;
+  text-transform: none;
   white-space: nowrap;
 }
 

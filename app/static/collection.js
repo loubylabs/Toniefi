@@ -219,33 +219,43 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
     if (!active || signal.aborted || !collection) return;
     const preparation = forgePreparationState(collection, jobs);
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
-    const titleInput = element("input", {
+    // A textarea, so a long title wraps instead of being cut off mid-word.
+    const titleInput = element("textarea", {
       id: "collection-title-input",
+      className: "collection-title-input",
       name: "collection-title",
-      value: collection.title || "",
+      rows: "1",
+      "aria-label": "Collection title",
       "data-focus-key": "collection-title",
       maxlength: "240",
       required: true,
       "data-collection-mutation": "",
     });
-    const renameButton = element("button", { type: "submit", className: "button button-secondary", "data-collection-mutation": "" }, [
-      iconNode("check"), element("span", { text: "Save title" }),
-    ]);
-    const titleForm = element("form", { className: "collection-title-form" }, [
-      element("label", { for: "collection-title-input", text: "Collection title" }),
-      titleInput,
-      renameButton,
-    ]);
-    titleForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
+    titleInput.value = collection.title || "";
+    // field-sizing grows the box with its text where supported; elsewhere fit it by hand.
+    const fitTitle = () => {
+      if (globalThis.CSS?.supports?.("field-sizing", "content")) return;
+      titleInput.style.height = "auto";
+      titleInput.style.height = `${titleInput.scrollHeight}px`;
+    };
+    window.requestAnimationFrame(fitTitle);
+    // The h1 is the field: Enter or leaving it saves, Escape puts the saved
+    // title back. One save at a time, so Enter and the blur it causes are one.
+    let savingTitle = false;
+    async function saveTitle() {
+      if (savingTitle || titleInput.isConnected === false) return;
       const title = titleInput.value.trim();
+      if (title && title === collection.title) {
+        titleInput.value = title;
+        return;
+      }
       if (!title) {
         titleInput.setCustomValidity("Enter a collection title.");
         titleInput.reportValidity();
         return;
       }
       titleInput.setCustomValidity("");
-      renameButton.disabled = true;
+      savingTitle = true;
       try {
         const saved = await mutation.run(async () => {
           await request(`/api/collections/${encodeURIComponent(slug)}`, {
@@ -262,11 +272,30 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         await refresh.request();
       } catch (error) {
         if (!active || signal.aborted) return;
-        renameButton.disabled = false;
         notify(error.message, { kind: "failure", timeout: 0 });
-        titleInput.focus({ preventScroll: true });
+        // The failed save reloaded the collection and redrew the field with
+        // the saved title; put the typed one back so it is not lost.
+        const current = root.querySelector("#collection-title-input") || titleInput;
+        current.value = title;
+        current.focus({ preventScroll: true });
+      } finally {
+        savingTitle = false;
+      }
+    }
+    titleInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        saveTitle();
+      } else if (event.key === "Escape") {
+        titleInput.setCustomValidity("");
+        titleInput.value = collection.title || "";
       }
     });
+    titleInput.addEventListener("input", () => {
+      titleInput.setCustomValidity("");
+      fitTitle();
+    });
+    titleInput.addEventListener("blur", saveTitle);
 
     const header = element("header", { className: "collection-detail-header" }, [
       element("a", { className: "back-link", href: "/library", "data-route": "library" }, [
@@ -284,8 +313,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
               ? "Ready to send"
               : preparation.state === "pending" ? "Forge queued" : "Forge incomplete",
           }),
-          element("h1", { id: "collection-detail-title", text: collection.title || "Untitled collection", tabindex: "-1" }),
-          titleForm,
+          element("h1", { id: "collection-detail-title", tabindex: "-1" }, [titleInput]),
           detailFacts(collection),
         ]),
       ]),

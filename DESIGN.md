@@ -227,7 +227,7 @@ The palette pairs a dark green library binding with cool paper, near-black green
 
 The desktop application shell is a two-column grid with a 17.5rem sticky service index and a flexible workspace. The workspace uses fluid outer padding from 1.5rem to 3.5rem. Its paper ruling repeats every 3rem. Desk itself uses a 1.45fr intake column and a 0.8fr live-work column with a fluid gap from 1rem to 2.5rem. The work cart is sticky, viewport-bounded, and separated by a thin vertical rule so active work stays visible beside intake.
 
-At 1279.98px and below, the collection page collapses to one main column and places its two planning panels side by side. At 1199.98px and below, the service index compacts to 14rem. At 1199px and below, Desk becomes a vertical flow, the work cart moves below intake, and its records form a two-column grid. From 760px through 1199px, navigation remains in the left service index.
+At 1499.98px and below, the collection page collapses to one main column, so chapter titles keep the full width, and places its two planning panels side by side beneath them. At 1199.98px and below, the service index compacts to 14rem. At 1199px and below, Desk becomes a vertical flow, the work cart moves below intake, and its records form a two-column grid. From 760px through 1199px, navigation remains in the left service index.
 
 Below 759.98px, the service index gives way to a fixed four-slot bottom bar. Desk, Library, and Creative Tonies remain first-class destinations; Activity and Settings sit in the labeled More menu. Content becomes one column, cover records retain a narrow jacket column, forms and row controls reflow, and all core controls meet a 44px minimum touch height. The workspace reserves the bottom bar plus safe-area inset. The document keeps a 20rem minimum width and prevents horizontal page scrolling.
 
@@ -291,7 +291,7 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 ### Inputs / Fields
 
 - **Style:** Raised white paper, a thin pale rule, working corners, 0.5rem by 0.75rem padding, and a 2.75rem minimum height.
-- **Inline Editing:** Row fields may rest on transparent paper with a transparent border, then reveal raised paper and a pale rule on hover or focus.
+- **Inline Editing:** Row fields may rest on transparent paper with a transparent border, then reveal raised paper and a pale rule on hover or focus. The collection page title is one: the h1 holds the field, Enter or leaving it saves, Escape restores the saved title, and there is no separate Save button. Long state stamps such as a chapter's "Sent · Tonie · date" use sentence case; short state stamps stay uppercase.
 - **Focus:** The universal electric-blue outline sits outside the field. Invalid fields also receive a failure-red border and adjacent error text.
 - **Disabled:** Disabled controls use 0.55 opacity and the blocked cursor. Explanatory copy must say why when the disabled state is consequential.
 

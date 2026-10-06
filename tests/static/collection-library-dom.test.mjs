@@ -1314,3 +1314,74 @@ test("Library opens a new screen on the filter the operator last chose", async (
     dom.restore();
   }
 });
+
+test("the collection title is the h1 field: Enter saves, Escape reverts, a failed save keeps the typed value", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "title-story",
+    title: "Title Story",
+    stage: "forged",
+    forge: { normalized: true },
+    track_count: 1,
+    total_duration: "10m",
+    tonies_needed: 1,
+    tracks: [{ name: "one.mp3", title: "One", seconds: 600, duration: "10m" }],
+    plan: [{ index: 1, seconds: 600, duration: "10m", tracks: [] }],
+  };
+  const patches = [];
+  let failNext = true;
+  const refresh = {
+    snapshot: { status: { usable_limit_seconds: 5370 }, collections: [collection], jobs: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const request = async (url, options = {}) => {
+    if (options.method === "PATCH") {
+      patches.push(JSON.parse(options.body).title);
+      if (failNext) { failNext = false; throw new Error("Title could not be saved."); }
+      collection.title = patches.at(-1);
+      return collection;
+    }
+    return collection;
+  };
+  const key = (input, name) => input.dispatchEvent({ type: "keydown", key: name });
+
+  try {
+    createCollectionDetail({
+      workspace: dom.workspace,
+      slug: collection.slug,
+      request,
+      refresh,
+      player: { play() {} },
+      signal: controller.signal,
+    });
+    await flush();
+    assert.equal(dom.workspace.querySelector("button[type=submit]"), null, "no separate Save button");
+    const input = dom.workspace.querySelector("#collection-title-input");
+    assert.equal(dom.workspace.querySelector("h1").childNodes[0], input, "the h1 holds the field");
+    assert.equal(input.getAttribute("aria-label"), "Collection title");
+
+    input.value = "Draft";
+    await key(input, "Escape");
+    assert.equal(input.value, "Title Story");
+    await input.dispatchEvent({ type: "blur" });
+    assert.deepEqual(patches, [], "an unchanged title sends nothing");
+
+    input.value = "Renamed";
+    await key(input, "Enter");
+    await flush();
+    assert.deepEqual(patches, ["Renamed"]);
+    assert.equal(dom.workspace.querySelector("#collection-title-input").value, "Renamed", "typed value kept after a failure");
+
+    const again = dom.workspace.querySelector("#collection-title-input");
+    await again.dispatchEvent({ type: "blur" });
+    await flush();
+    assert.deepEqual(patches, ["Renamed", "Renamed"], "blur saves too");
+    assert.equal(dom.workspace.querySelector("#collection-title-input").value, "Renamed");
+    assert.equal(collection.title, "Renamed");
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
