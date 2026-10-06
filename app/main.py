@@ -839,12 +839,30 @@ def healthz() -> JSONResponse:
 @app.get("/activity")
 @app.get("/settings")
 def application_document() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return shell_document()
 
 
 @app.get("/collection/{slug}")
 def collection_document(slug: str) -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return shell_document()
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# The browser modules import each other with no build step and no hashed
+# names, so a heuristically cached module survives a deploy beside its newer
+# importers and the route crashes on a missing export. `no-cache` keeps the
+# cache but makes every load revalidate; an unchanged file is a cheap 304.
+REVALIDATE = {"Cache-Control": "no-cache"}
+
+
+def shell_document() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html", headers=REVALIDATE)
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(REVALIDATE)
+        return response
+
+
+app.mount("/static", RevalidatedStaticFiles(directory=STATIC_DIR), name="static")

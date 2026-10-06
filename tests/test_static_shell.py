@@ -181,3 +181,16 @@ def test_the_retired_review_urls_exist_nowhere_and_answer_404():
     client = TestClient(main.app)
     assert client.get("/review").status_code == 404
     assert client.get("/review/the-wind-in-the-willows").status_code == 404
+
+
+def test_shell_and_modules_revalidate_so_a_deploy_never_mixes_versions():
+    client = TestClient(main.app)
+
+    for path in ("/", "/library", "/static/icons.js", "/static/library.js"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-cache", path
+
+    etag = client.get("/static/icons.js").headers["etag"]
+    unchanged = client.get("/static/icons.js", headers={"If-None-Match": etag})
+    assert unchanged.status_code == 304
