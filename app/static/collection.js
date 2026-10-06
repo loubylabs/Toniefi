@@ -222,12 +222,15 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
     const preparation = forgePreparationState(collection, jobs);
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
     // A refresh poll redraws the page every few seconds while work runs. A
-    // title being typed survives it rather than snapping back to the saved one.
-    // A redraw that names its focus target (after a save) shows the saved title.
-    const previousTitle = root.querySelector("#collection-title-input");
-    const titleDraft = !focusKey && previousTitle && document.activeElement === previousTitle
-      ? previousTitle.value
-      : null;
+    // title being typed (the collection's or a chapter's) survives it rather
+    // than snapping back to the saved one. A redraw that names its focus
+    // target (after a save) shows the saved titles.
+    const drafts = new Map();
+    const editing = document.activeElement;
+    const editingKey = editing && root.contains(editing) ? editing.getAttribute("data-focus-key") || "" : "";
+    if (!focusKey && (editingKey === "collection-title" || /^chapter-.+-title$/.test(editingKey))) {
+      drafts.set(editingKey, editing.value);
+    }
     // A textarea, so a long title wraps instead of being cut off mid-word.
     const titleInput = element("textarea", {
       id: "collection-title-input",
@@ -240,7 +243,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
       required: true,
       "data-collection-mutation": "",
     });
-    titleInput.value = titleDraft ?? (collection.title || "");
+    titleInput.value = drafts.get("collection-title") ?? (collection.title || "");
     // field-sizing grows the box with its text where supported; elsewhere fit it by hand.
     const fitTitle = () => {
       if (globalThis.CSS?.supports?.("field-sizing", "content")) return;
@@ -370,22 +373,30 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         "data-track-name": track.name,
       });
       const titleId = `chapter-title-${index}`;
+      const titleKey = `chapter-${track.name}-title`;
       const titleInput = element("input", {
         id: titleId,
-        value: track.title || "",
-        "data-focus-key": `chapter-${track.name}-title`,
+        "data-focus-key": titleKey,
         maxlength: "240",
         "data-collection-mutation": "",
         "aria-label": `Chapter ${index + 1} title`,
       });
-      titleInput.addEventListener("change", async () => {
+      titleInput.value = drafts.get(titleKey) ?? (track.title || "");
+      // Change saves; blur saves too, because a field redrawn with a carried
+      // draft has no change baseline left to fire against. One save at a time,
+      // and a blur caused by a redraw removing the field saves nothing.
+      let savingChapterTitle = false;
+      async function saveChapterTitle() {
+        if (redrawing || savingChapterTitle || titleInput.isConnected === false) return;
         const title = titleInput.value.trim();
+        if (title && title === track.title) return;
         if (!title) {
           titleInput.setCustomValidity("Enter a chapter title.");
           titleInput.reportValidity();
           return;
         }
         titleInput.setCustomValidity("");
+        savingChapterTitle = true;
         titleInput.disabled = true;
         try {
           const saved = await mutation.run(async () => {
@@ -405,8 +416,12 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           titleInput.disabled = false;
           notify(error.message, { kind: "failure", timeout: 0 });
           titleInput.focus({ preventScroll: true });
+        } finally {
+          savingChapterTitle = false;
         }
-      });
+      }
+      titleInput.addEventListener("change", saveChapterTitle);
+      titleInput.addEventListener("blur", saveChapterTitle);
       const play = element("button", {
         type: "button",
         className: "button button-secondary chapter-play",

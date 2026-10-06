@@ -1379,7 +1379,7 @@ test("Library neither takes focus on first paint nor on a refresh poll", async (
   }
 });
 
-test("a refresh poll keeps a collection title that is being typed, and saves nothing", async () => {
+test("a refresh poll keeps a collection or chapter title that is being typed, and saves nothing", async () => {
   const dom = installDom();
   const controller = new AbortController();
   const collection = {
@@ -1404,6 +1404,7 @@ test("a refresh poll keeps a collection title that is being typed, and saves not
     if (options.method === "PATCH") patches.push(JSON.parse(options.body).title);
     return collection;
   };
+  const key = (input, name) => input.dispatchEvent({ type: "keydown", key: name });
   try {
     createCollectionDetail({
       workspace: dom.workspace,
@@ -1426,6 +1427,26 @@ test("a refresh poll keeps a collection title that is being typed, and saves not
     assert.equal(redrawn.value, "Draft Story, half-typ");
     assert.equal(dom.document.activeElement, redrawn);
     assert.deepEqual(patches, []);
+
+    // A chapter title being typed survives a poll the same way, and leaving
+    // the redrawn field still saves the carried draft.
+    await key(redrawn, "Escape");
+    const chapterField = dom.workspace.querySelector("#chapter-title-0");
+    chapterField.focus();
+    chapterField.value = "One, half-typ";
+
+    onRefresh(refresh.snapshot);
+    await flush();
+
+    const chapterRedrawn = dom.workspace.querySelector("#chapter-title-0");
+    assert.notEqual(chapterRedrawn, chapterField, "the poll redrew the chapter field");
+    assert.equal(chapterRedrawn.value, "One, half-typ");
+    assert.equal(dom.document.activeElement, chapterRedrawn);
+    assert.deepEqual(patches, [], "a poll saves nothing");
+
+    await chapterRedrawn.dispatchEvent({ type: "blur" });
+    await flush();
+    assert.deepEqual(patches, ["One, half-typ"]);
   } finally {
     controller.abort();
     dom.restore();
