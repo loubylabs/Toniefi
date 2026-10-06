@@ -115,6 +115,9 @@ the collection slugs, their manifest fingerprints, and the exact files in that g
 - One selection holds one **operation key** until its payload changes, which makes an uncertain
   response safe to retry without creating a second send batch. An in-flight lock keeps a double
   click from queuing a second batch.
+- An assignment may carry `tonie_name`, the target's name as the picker showed it. It only names
+  the job ("Send Moon Story to Bedtime Bear"); it is kept out of the idempotency digest and the
+  stored payload, so a rename between a send and its retry is still the same operation.
 
 The operation key tracks the operator's intent, not the remote snapshot. It clears on a
 membership, target or effect change, and on success. **A target refresh never clears it**, whatever

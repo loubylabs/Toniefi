@@ -227,7 +227,7 @@ The palette pairs a dark green library binding with cool paper, near-black green
 
 The desktop application shell is a two-column grid with a 17.5rem sticky service index and a flexible workspace. The workspace uses fluid outer padding from 1.5rem to 3.5rem. Its paper ruling repeats every 3rem. Desk itself uses a 1.45fr intake column and a 0.8fr live-work column with a fluid gap from 1rem to 2.5rem. The work cart is sticky, viewport-bounded, and separated by a thin vertical rule so active work stays visible beside intake.
 
-At 1279.98px and below, the collection page collapses to one main column and places its two planning panels side by side. At 1199.98px and below, the service index compacts to 14rem. At 1199px and below, Desk becomes a vertical flow, the work cart moves below intake, and its records form a two-column grid. From 760px through 1199px, navigation remains in the left service index.
+At 1499.98px and below, the collection page collapses to one main column, so chapter titles keep the full width, and places its two planning panels side by side beneath them. At 1199.98px and below, the service index compacts to 14rem. At 1199px and below, Desk becomes a vertical flow, the work cart moves below intake, and its records form a two-column grid. From 760px through 1199px, navigation remains in the left service index.
 
 Below 759.98px, the service index gives way to a fixed four-slot bottom bar. Desk, Library, and Creative Tonies remain first-class destinations; Activity and Settings sit in the labeled More menu. Content becomes one column, cover records retain a narrow jacket column, forms and row controls reflow, and all core controls meet a 44px minimum touch height. The workspace reserves the bottom bar plus safe-area inset. The document keeps a 20rem minimum width and prevents horizontal page scrolling.
 
@@ -270,7 +270,7 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 - **Action:** Chartreuse fill, deep bookcloth text, and a deep bookcloth edge. Hover shifts to the shipped darker chartreuse.
 - **Prepare:** Periwinkle fill, white text, 1.25rem type, 3.75rem height, and a focused periwinkle shadow. This count-aware control closes the intake tray.
 - **Secondary:** Raised white paper, bottle-green text, and a bottle-green edge. Hover moves to muted paper.
-- **Danger:** Failure-red fill and border with white text. It is reserved for confirmed destructive action.
+- **Danger:** Failure-red fill and border with white text. It is reserved for the confirm button of an irreversible-action dialog. Initiators (Library Delete, Clear all chapters, Remove selected) are secondary or text buttons in failure ink; when disabled they fall to muted ink, never pink.
 - **Focus:** Every button uses the global 0.1875rem electric-blue outline with a 0.1875rem offset.
 - **Mobile:** Core buttons and icon buttons grow to at least 44px high. Primary actions usually expand to the available width.
 
@@ -291,7 +291,7 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 ### Inputs / Fields
 
 - **Style:** Raised white paper, a thin pale rule, working corners, 0.5rem by 0.75rem padding, and a 2.75rem minimum height.
-- **Inline Editing:** Row fields may rest on transparent paper with a transparent border, then reveal raised paper and a pale rule on hover or focus.
+- **Inline Editing:** Row fields may rest on transparent paper with a transparent border, then reveal raised paper and a pale rule on hover or focus. The collection page title is one: the h1 holds the field, Enter or leaving it saves, Escape restores the saved title, and there is no separate Save button. Long state stamps such as a chapter's "Sent · Tonie · date" use sentence case; short state stamps stay uppercase.
 - **Focus:** The universal electric-blue outline sits outside the field. Invalid fields also receive a failure-red border and adjacent error text.
 - **Disabled:** Disabled controls use 0.55 opacity and the blocked cursor. Explanatory copy must say why when the disabled state is consequential.
 
@@ -303,9 +303,11 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 
 ### Live Work Cart
 
-Work-cart records pair a cover jacket with a compact operational body. Each record keeps title or source, a square status stamp, progress copy, real percentage only when available, useful facts, and its next safe action. Active indeterminate work animates a periwinkle or success-colored meter. Failed work keeps the real error and Retry. Once any work is ready, one Open Library action appears below the cart for the whole batch; it never links per row.
+Work-cart records pair a cover jacket with a compact operational body. Each record keeps title or source, a square status stamp, progress copy, real percentage only when available, useful facts, and its next safe action. A source line that repeats the title is omitted. Active indeterminate work animates a periwinkle or success-colored meter. A queued record says how long it has waited ("Waiting for a worker · 2 min"). Failed work keeps the real error and Retry. Once any work is ready, one Open Library action appears below the cart for the whole batch; it never links per row.
 
-**The Dismiss Rule.** A finished record carries a square mark-only Dismiss control beside its Retry, and only a finished record does: failed, ready, and sent rows can be dismissed, while queued, extracting, forging, and sending rows carry none. Dismissal hides the row and deletes nothing, so the job keeps its error in Activity and the collection keeps its place in the Library. Once two or more finished records show at once, a compact Clear finished action joins the cart heading and dismisses them in one request. A dismissed collection record returns when newer work touches its slug.
+**The Not-a-Send-Log Rule.** A send record names its target ("Send Moon Story to Bedtime Bear", falling back to "a Creative Tonie" only when the name is unknown) and wears its first collection's jacket. Queued, sending, and failed sends always show; of the finished sends, only the newest stays, and older ones live in Activity.
+
+**The Dismiss Rule.** A finished record carries a square mark-only Dismiss control beside its Retry, and only a finished record does: failed, ready, and sent rows can be dismissed, while queued, extracting, forging, and sending rows carry none. Dismissal hides the row and deletes nothing, so the job keeps its error in Activity and the collection keeps its place in the Library. Each Dismiss control is labeled "Dismiss" plus the record's title, numbered when two records share a title. Once two or more finished records show at once, a compact Clear finished action joins the cart heading and dismisses them in one request; neither it nor the heading wraps; the heading type steps down toward body size first, and only below that width does Clear finished move to its own line. A dismissed collection record returns when newer work touches its slug.
 
 ### Library Selection Bar
 
@@ -333,7 +335,7 @@ Use real full-color cover art when available. If no cover exists, render a bottl
 
 ### Creative Tonies Chapter Selection
 
-Each chapter row on a Tonie carries a checkbox using the standard field styling. The list heading offers Select all beside a danger button labeled Remove N selected, disabled at zero selected. Bulk removal is one whole-list save behind the standard irreversible-action dialog. Clear all chapters remains as the separate one-step wipe.
+Each chapter row on a Tonie carries a checkbox using the standard field styling. The list heading offers Select all at the left of one toolbar row, beside a failure-ink secondary button labeled Remove N selected, disabled at zero selected; Clear all chapters sits apart at the right. Bulk removal is one whole-list save behind the standard irreversible-action dialog. Clear all chapters remains as the separate one-step wipe.
 
 ### Truthful State Surfaces
 
@@ -352,8 +354,8 @@ Each chapter row on a Tonie carries a checkbox using the standard field styling.
 - **Do** keep real cover jackets prominent enough to preserve collection identity across Desk, Library, and the collection page.
 - **Do** pair every semantic color with visible words, an icon, a border, or an explanatory message.
 - **Do** keep the 0.1875rem focus outline visible and provide 44px controls plus safe-area spacing below 759.98px.
-- **Do** use the 150ms to 220ms state-transition family for ordinary feedback, the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.
-- **Do** honor reduced motion by collapsing animation and transition duration to 0.01ms and replacing the moving indeterminate meter with a static centered bar.
+- **Do** use the 150ms to 220ms state-transition family for ordinary feedback (buttons ease their colors over 150ms and press to `scale(0.97)` under a pointer, never from the keyboard, over 160ms `cubic-bezier(0.16, 1, 0.3, 1)`; nothing else scales on press), the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.
+- **Do** honor reduced motion by collapsing animation and transition duration to 0.01ms, replacing the moving indeterminate meter with a static centered bar, and dropping the button press scale.
 - **Do** preserve truthful labels for configured, connected, stale, forged, failed, and irreversible states.
 
 ### Don't:

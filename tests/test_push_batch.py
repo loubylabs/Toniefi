@@ -983,3 +983,56 @@ def test_worker_uploads_tracks_from_two_collections(isolated, monkeypatch):
 
     assert uploaded == ["one.mp3", "two.mp3", "three.mp3"]
     assert result["chapters"] == 0
+
+
+def test_send_label_names_the_target_tonie(isolated):
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["tonie_name"] = "Bedtime Bear"
+
+    receipt = client.post("/api/push/batch", json=body).json()
+
+    stored = db.get_job(receipt["job_ids"][0])
+    assert stored["label"] == "Send Night Stories to Bedtime Bear"
+    # Display only: the worker's payload is unchanged by it.
+    assert "tonie_name" not in stored["payload"]
+
+
+def test_a_long_tonie_name_never_refuses_a_send(isolated):
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["tonie_name"] = "B" * 150
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 200
+    assert db.get_job(response.json()["job_ids"][0])["label"] == f"Send Night Stories to {'B' * 100}"
+
+
+def test_send_label_falls_back_only_when_the_name_is_unknown(isolated):
+    client = TestClient(main.app)
+    other = second_collection("Moon Tales", [("m1.mp3", "M1", 100)])
+    body = batch_body(isolated)
+    body["assignments"][0]["sources"].append({
+        "slug": other,
+        "manifest_fingerprint": library.get(other)["manifest_fingerprint"],
+        "files": ["m1.mp3"],
+    })
+
+    receipt = client.post("/api/push/batch", json=body).json()
+
+    assert db.get_job(receipt["job_ids"][0])["label"] == "Send 2 collections to a Creative Tonie"
+
+
+def test_a_renamed_target_on_retry_is_the_same_operation(isolated):
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["tonie_name"] = "Creative Tonie"
+    first = client.post("/api/push/batch", json=body)
+    body["assignments"][0]["tonie_name"] = "Bedtime Bear"
+
+    repeated = client.post("/api/push/batch", json=body)
+
+    assert repeated.status_code == 200
+    assert repeated.json() == first.json()
+    assert len(db.jobs_for_refresh()) == 1

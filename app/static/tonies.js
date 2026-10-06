@@ -175,7 +175,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         loadError = "";
         if (openKey && !tonies.some((tonie) => tonieKey(tonie) === openKey)) openKey = "";
         selectedChapters.clear();
-        render();
+        render({ passive: true });
         if (announceSuccess) {
           notify("Creative Tonies refreshed from myTonies.", { kind: "success" });
           announce("Creative Tonies refreshed from remote truth.");
@@ -330,18 +330,22 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         else selectedChapters.delete(chapter.id);
         render({ focusKey: `tonie-${chapter.id}-select` });
       });
-      const tickLabel = element("label", {
-        for: tickId,
-        className: "visually-hidden",
-        text: `Select ${chapter.title || `chapter ${index + 1}`} for removal`,
-      });
+      // The label wraps the box and is the hit area, so the box draws at the
+      // Select all size while a phone still gets a 44px target.
+      const tickLabel = element("label", { for: tickId, className: "tonie-chapter-tick" }, [
+        tick,
+        element("span", {
+          className: "visually-hidden",
+          text: `Select ${chapter.title || `chapter ${index + 1}`} for removal`,
+        }),
+      ]);
       const row = element("li", {
         className: "tonie-chapter-row",
         draggable: true,
         "data-tonie-chapter": chapter.id,
         "data-tonie-control": "",
       }, [
-        tick, tickLabel,
+        tickLabel,
         iconNode("grip", "tonie-grip"),
         element("span", { className: "tonie-chapter-number", text: String(index + 1) }),
         element("div", { className: "tonie-chapter-title" }, [
@@ -374,7 +378,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
 
       const clearButton = element("button", {
         type: "button",
-        className: "button button-danger tonie-clear",
+        className: "button button-secondary tonie-destructive tonie-clear",
         "data-tonie-control": "",
       }, [iconNode("trash"), element("span", { text: "Clear all chapters" })]);
       clearButton.addEventListener("click", async () => {
@@ -413,7 +417,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       });
       const removeSelected = element("button", {
         type: "button",
-        className: "button button-danger tonie-remove-selected",
+        className: "button button-secondary tonie-destructive tonie-remove-selected",
         disabled: selectedCount === 0,
         "data-tonie-control": "",
         "data-tonie-disabled": selectedCount === 0 ? "" : null,
@@ -444,7 +448,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         );
       });
       const intro = element("div", { className: "tonie-detail-heading" }, [
-        element("p", { text: "Tick chapters to remove them together. Rename or reorder in place; pointer drag and the Move buttons save the same canonical chapter list." }),
+        element("p", { text: "Tick chapters to remove them together, or rename and reorder them in place." }),
         element("div", { className: "tonie-detail-bulk" }, [
           element("label", { className: "tonie-select-all-field" }, [selectAll, element("span", { text: "Select all" })]),
           removeSelected,
@@ -505,7 +509,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         ]);
       });
       return element("div", { className: "tonie-send-panel", role: "status", "aria-live": "polite" }, [
-        element("h3", {
+        element("h2", {
           text: entries.length === 1 ? "Sending to this Tonie" : `${entries.length} sends to this Tonie`,
         }),
         element("ol", {}, rows),
@@ -548,7 +552,9 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       return element("li", { className: "tonie-row", "data-open": String(open) }, children);
     }
 
-    function render({ focusKey = "" } = {}) {
+    // A passive render (first paint, a poll, a load) never rescues focus into
+    // Refresh: with no focused control to keep, focus stays where it is.
+    function render({ focusKey = "", passive = false } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
       const loadView = tonieLoadView({ state: loadState, tonies, error: loadError });
@@ -607,7 +613,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       });
       root.querySelectorAll("[data-tonie-summary]").forEach((control) => { control.disabled = mutation.pending; });
       setBusy(root, mutation.pending, "Saving Creative Tonie changes");
-      restoreFocus(token, { root, fallback: refreshButton });
+      restoreFocus(token, { root, fallback: passive ? null : refreshButton });
     }
 
     function onRefresh(snapshot) {
@@ -620,7 +626,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       // rather than leaving stale figures beside a bar that just filled.
       const finished = [...sendingKeys].some((key) => !nextKeys.has(key));
       sendingKeys = nextKeys;
-      render();
+      render({ passive: true });
       if (finished) load().catch(() => {});
     }
 
@@ -637,7 +643,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
 
     root.append(header, stale, list);
     replace(workspace, root);
-    render();
+    render({ passive: true });
     load().catch((error) => {
       if (active && !signal?.aborted) notify(error.message, { kind: "failure", timeout: 0 });
     });

@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
-import { forgePreparationState } from "./library.js";
+import { forgePreparationState, sourceLabel } from "./library.js";
 import {
   announce,
   chapterMarks,
@@ -102,7 +102,7 @@ function loadingState(title, message) {
 
 function detailFacts(collection) {
   const facts = [
-    ["Source", collection.source || "Local audio"],
+    ["Source", sourceLabel(collection)],
     ["Uploader", collection.uploader || "Not provided"],
     ["Duration", collection.total_duration || "No duration yet"],
     ["Chapters", String(collection.track_count || 0)],
@@ -215,37 +215,61 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
     signal,
   });
 
+  let redrawing = false;
+
   function renderDetail({ focusKey = "", fallback = null } = {}) {
     if (!active || signal.aborted || !collection) return;
     const preparation = forgePreparationState(collection, jobs);
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
-    const titleInput = element("input", {
+    // A refresh poll redraws the page every few seconds while work runs. A
+    // title being typed (the collection's or a chapter's) survives it rather
+    // than snapping back to the saved one. A redraw that names its focus
+    // target (after a save) shows the saved titles.
+    const drafts = new Map();
+    const editing = document.activeElement;
+    const editingKey = editing && root.contains(editing) ? editing.getAttribute("data-focus-key") || "" : "";
+    if (!focusKey && (editingKey === "collection-title" || /^chapter-.+-title$/.test(editingKey))) {
+      drafts.set(editingKey, editing.value);
+    }
+    // A textarea, so a long title wraps instead of being cut off mid-word.
+    const titleInput = element("textarea", {
       id: "collection-title-input",
+      className: "collection-title-input",
       name: "collection-title",
-      value: collection.title || "",
+      rows: "1",
+      "aria-label": "Collection title",
       "data-focus-key": "collection-title",
       maxlength: "240",
       required: true,
       "data-collection-mutation": "",
     });
-    const renameButton = element("button", { type: "submit", className: "button button-secondary", "data-collection-mutation": "" }, [
-      iconNode("check"), element("span", { text: "Save title" }),
-    ]);
-    const titleForm = element("form", { className: "collection-title-form" }, [
-      element("label", { for: "collection-title-input", text: "Collection title" }),
-      titleInput,
-      renameButton,
-    ]);
-    titleForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
+    titleInput.value = drafts.get("collection-title") ?? (collection.title || "");
+    // field-sizing grows the box with its text where supported; elsewhere fit it by hand.
+    const fitTitle = () => {
+      if (globalThis.CSS?.supports?.("field-sizing", "content")) return;
+      titleInput.style.height = "auto";
+      titleInput.style.height = `${titleInput.scrollHeight}px`;
+    };
+    window.requestAnimationFrame(fitTitle);
+    // The h1 is the field: Enter or leaving it saves, Escape puts the saved
+    // title back. One save at a time, so Enter and the blur it causes are one.
+    let savingTitle = false;
+    async function saveTitle() {
+      // Some engines fire blur on a focused node as a redraw removes it; that
+      // is not the operator leaving the field, so it saves nothing.
+      if (redrawing || savingTitle || titleInput.isConnected === false) return;
       const title = titleInput.value.trim();
+      if (title && title === collection.title) {
+        titleInput.value = title;
+        return;
+      }
       if (!title) {
         titleInput.setCustomValidity("Enter a collection title.");
         titleInput.reportValidity();
         return;
       }
       titleInput.setCustomValidity("");
-      renameButton.disabled = true;
+      savingTitle = true;
       try {
         const saved = await mutation.run(async () => {
           await request(`/api/collections/${encodeURIComponent(slug)}`, {
@@ -262,11 +286,30 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         await refresh.request();
       } catch (error) {
         if (!active || signal.aborted) return;
-        renameButton.disabled = false;
         notify(error.message, { kind: "failure", timeout: 0 });
-        titleInput.focus({ preventScroll: true });
+        // The failed save reloaded the collection and redrew the field with
+        // the saved title; put the typed one back so it is not lost.
+        const current = root.querySelector("#collection-title-input") || titleInput;
+        current.value = title;
+        current.focus({ preventScroll: true });
+      } finally {
+        savingTitle = false;
+      }
+    }
+    titleInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        saveTitle();
+      } else if (event.key === "Escape") {
+        titleInput.setCustomValidity("");
+        titleInput.value = collection.title || "";
       }
     });
+    titleInput.addEventListener("input", () => {
+      titleInput.setCustomValidity("");
+      fitTitle();
+    });
+    titleInput.addEventListener("blur", saveTitle);
 
     const header = element("header", { className: "collection-detail-header" }, [
       element("a", { className: "back-link", href: "/library", "data-route": "library" }, [
@@ -284,8 +327,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
               ? "Ready to send"
               : preparation.state === "pending" ? "Forge queued" : "Forge incomplete",
           }),
-          element("h1", { id: "collection-detail-title", text: collection.title || "Untitled collection", tabindex: "-1" }),
-          titleForm,
+          element("h1", { id: "collection-detail-title", tabindex: "-1" }, [titleInput]),
           detailFacts(collection),
         ]),
       ]),
@@ -331,22 +373,30 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         "data-track-name": track.name,
       });
       const titleId = `chapter-title-${index}`;
+      const titleKey = `chapter-${track.name}-title`;
       const titleInput = element("input", {
         id: titleId,
-        value: track.title || "",
-        "data-focus-key": `chapter-${track.name}-title`,
+        "data-focus-key": titleKey,
         maxlength: "240",
         "data-collection-mutation": "",
         "aria-label": `Chapter ${index + 1} title`,
       });
-      titleInput.addEventListener("change", async () => {
+      titleInput.value = drafts.get(titleKey) ?? (track.title || "");
+      // Change saves; blur saves too, because a field redrawn with a carried
+      // draft has no change baseline left to fire against. One save at a time,
+      // and a blur caused by a redraw removing the field saves nothing.
+      let savingChapterTitle = false;
+      async function saveChapterTitle() {
+        if (redrawing || savingChapterTitle || titleInput.isConnected === false) return;
         const title = titleInput.value.trim();
+        if (title && title === track.title) return;
         if (!title) {
           titleInput.setCustomValidity("Enter a chapter title.");
           titleInput.reportValidity();
           return;
         }
         titleInput.setCustomValidity("");
+        savingChapterTitle = true;
         titleInput.disabled = true;
         try {
           const saved = await mutation.run(async () => {
@@ -366,8 +416,12 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           titleInput.disabled = false;
           notify(error.message, { kind: "failure", timeout: 0 });
           titleInput.focus({ preventScroll: true });
+        } finally {
+          savingChapterTitle = false;
         }
-      });
+      }
+      titleInput.addEventListener("change", saveChapterTitle);
+      titleInput.addEventListener("blur", saveChapterTitle);
       const play = element("button", {
         type: "button",
         className: "button button-secondary chapter-play",
@@ -644,12 +698,17 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         }
       });
     }
-    replace(root, header, element("div", { className: "collection-detail-grid" }, [
-      element("div", { className: "collection-detail-main" }, [chapters]),
-      element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
-        ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel, adsPanel].filter(Boolean)
-        : [preparationPanel]),
-    ]));
+    redrawing = true;
+    try {
+      replace(root, header, element("div", { className: "collection-detail-grid" }, [
+        element("div", { className: "collection-detail-main" }, [chapters]),
+        element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
+          ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel, adsPanel].filter(Boolean)
+          : [preparationPanel]),
+      ]));
+    } finally {
+      redrawing = false;
+    }
     // A trim or an ad removal swaps the whole collection folder when it
     // finishes, so an edit made meanwhile would wait on the server and then
     // act on the old files.

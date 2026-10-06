@@ -230,6 +230,12 @@ class PushSource(RequestModel):
 class PushAssignment(RequestModel):
     household_id: str
     tonie_id: str
+    # The Tonie's name as the picker showed it. Display only: it names the job,
+    # and it stays out of the idempotency digest and the stored payload, so a
+    # rename between a send and its retry is still the same operation. Never
+    # length-checked: a long name from the cloud must not refuse a send, so the
+    # label clips it instead.
+    tonie_name: str = ""
     replace: bool
     remote_chapters: list[ChapterRef]
     # One assignment is one Creative Tonie, and a Tonie can hold chapters from
@@ -667,13 +673,15 @@ def list_tonies() -> list[dict[str, Any]]:
     return [push.describe_tonie(tonie) for tonie in result]
 
 
-def _push_job_title(assignment: dict[str, Any]) -> str:
-    """Name a send by what it carries, in the words the operator chose.
+def _push_job_title(assignment: dict[str, Any], tonie_name: str) -> str:
+    """Name a send by what it carries and where, in the words the operator chose.
 
     The raw slug was unreadable in Activity two weeks later. The collection's
     own title is already on disk, and costs one lookup per assignment at
-    enqueue time.
+    enqueue time. The target is the name the picker showed; a send made
+    without one falls back to the generic phrase rather than a bare id.
     """
+    target = tonie_name.strip()[:100].strip() or "a Creative Tonie"
     slugs: list[str] = []
     for source in assignment["sources"]:
         if source["slug"] not in slugs:
@@ -681,13 +689,14 @@ def _push_job_title(assignment: dict[str, Any]) -> str:
     if len(slugs) == 1:
         manifest = library.get(slugs[0])
         title = (manifest or {}).get("title") or slugs[0]
-        return f"Send {title} to a Creative Tonie"
-    return f"Send {len(slugs)} collections to a Creative Tonie"
+        return f"Send {title} to {target}"
+    return f"Send {len(slugs)} collections to {target}"
 
 
 @app.post("/api/push/batch")
 def push_batch(body: PushBatch) -> dict[str, Any]:
-    assignments = [assignment.model_dump() for assignment in body.assignments]
+    assignments = [assignment.model_dump(exclude={"tonie_name"}) for assignment in body.assignments]
+    names = [assignment.tonie_name for assignment in body.assignments]
     for assignment in assignments:
         for source in assignment["sources"]:
             library.validate_public_collection_slug(source["slug"])
@@ -695,7 +704,7 @@ def push_batch(body: PushBatch) -> dict[str, Any]:
     if len(targets) != len(set(targets)):
         raise fail(400, "Each capacity group needs a different Creative Tonie.")
     try:
-        canonical = body.model_dump(exclude={"operation_key"})
+        canonical = {"assignments": assignments}
         digest = hashlib.sha256(
             json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -704,8 +713,8 @@ def push_batch(body: PushBatch) -> dict[str, Any]:
             return {"operation_key": body.operation_key, "job_ids": existing}
         push.validate_confirmed_batch(assignments)
         entries = [
-            ("push", _push_job_title(assignment), assignment)
-            for assignment in assignments
+            ("push", _push_job_title(assignment, name), assignment)
+            for assignment, name in zip(assignments, names)
         ]
         job_ids, _ = db.create_idempotent_jobs(body.operation_key, digest, entries)
     except (push.StalePush, ValueError) as exc:

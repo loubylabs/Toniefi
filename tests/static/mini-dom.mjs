@@ -51,6 +51,8 @@ class MiniElement {
     this.id = "";
     this._textContent = "";
     this.dataset = {};
+    this.style = {};
+    this.scrollHeight = 0;
     this.disabled = false;
     this.hidden = false;
     this.checked = false;

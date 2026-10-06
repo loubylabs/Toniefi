@@ -203,6 +203,8 @@ test("a running send appears on the Tonie it is sending to, and nowhere else", a
   assert.equal(panels.length, 1, "only the target Tonie gets a panel");
   assert.match(panels[0].textContent, /Uploading 7\/30: Whale Shark Rescue/);
   assert.match(panels[0].textContent, /23%/);
+  assert.equal(panels[0].querySelector("h2")?.textContent, "Sending to this Tonie");
+  assert.equal(panels[0].querySelector("h3"), null, "the page is h1 then h2, never h3 without an h2");
   const meter = panels[0].querySelector(".work-cart-progress-track");
   assert.equal(meter.getAttribute("data-mode"), "determinate");
   assert.equal(meter.getAttribute("aria-valuenow"), "23");

@@ -92,6 +92,12 @@ summary:focus-visible,
   outline-offset: 0.1875rem;
 }
 
+/* Headings and containers focused by script (route changes) are not controls;
+   a ring on them is noise. Real controls above keep theirs. */
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
 button:disabled,
 input:disabled,
 select:disabled,
@@ -524,6 +530,18 @@ body.audio-player-visible #workspace {
   line-height: 1.2;
   text-decoration: none;
   cursor: pointer;
+  transition:
+    transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out;
+}
+
+/* Press feedback: the button gives a little under the pointer and springs
+   back on release. Subtle, because buttons are pressed many times a day.
+   Pointer presses only: a keyboard press (focus-visible) does not move. */
+.button:active:not(:disabled):not(:focus-visible) {
+  transform: scale(0.97);
 }
 
 .button-primary {
@@ -805,7 +823,6 @@ textarea::placeholder {
   display: grid;
   min-width: 0;
   overflow: hidden;
-  grid-template-columns: clamp(7rem, 16vw, 10rem) minmax(0, 1fr);
   border: var(--rule-thin);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.84);
@@ -815,9 +832,13 @@ textarea::placeholder {
 .library-cover {
   width: 100%;
   height: 100%;
-  min-height: 11rem;
+  min-height: 0;
   object-fit: cover;
   border-right: var(--rule-thin);
+}
+
+.library-cover.collection-cover-fallback {
+  font-size: 1.5rem;
 }
 
 img.library-cover {
@@ -828,7 +849,7 @@ img.library-cover {
 .library-row-body {
   display: grid;
   min-width: 0;
-  padding: var(--space-5);
+  padding: var(--space-4);
   align-content: start;
 }
 
@@ -920,7 +941,7 @@ img.collection-detail-cover {
 }
 
 .collection-detail-heading h1 {
-  max-width: 20ch;
+  max-width: 100%;
   margin: var(--space-3) 0 var(--space-4);
   font-size: var(--type-xl);
   font-weight: 800;
@@ -929,18 +950,30 @@ img.collection-detail-cover {
   overflow-wrap: anywhere;
 }
 
-.collection-title-form {
-  display: grid;
-  max-width: 42rem;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--space-2);
+/* The h1 is the title field: bare at rest, raised paper and a rule on hover or
+   focus. The negative margin lines its text up with the page edge. */
+.collection-detail-heading h1 .collection-title-input {
+  width: calc(100% + 2 * (var(--space-3) + 1px));
+  max-width: none;
+  min-height: 0;
+  margin-inline: calc(-1 * (var(--space-3) + 1px));
+  padding-block: var(--space-1);
+  overflow: hidden;
+  border-color: transparent;
+  background: transparent;
+  field-sizing: content;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  resize: none;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
 }
 
-.collection-title-form label {
-  grid-column: 1 / -1;
-  font-size: var(--type-sm);
-  font-weight: 750;
+.collection-detail-heading h1 .collection-title-input:hover:not(:disabled),
+.collection-detail-heading h1 .collection-title-input:focus {
+  border-color: var(--rule);
+  background: var(--paper-raised);
 }
 
 .collection-detail-facts {
@@ -1081,6 +1114,7 @@ img.collection-detail-cover {
   border-color: transparent;
   background: transparent;
   font-weight: 680;
+  text-overflow: ellipsis;
 }
 
 .chapter-title-field input:hover,
@@ -1227,6 +1261,34 @@ img.collection-detail-cover {
   color: var(--bookcloth);
 }
 
+/* The in-design clear control replaces the browser's own mark, which ignores
+   the palette and is not keyboard operable. */
+.library-search-control {
+  position: relative;
+  min-width: 0;
+}
+
+.library-search-control input {
+  padding-right: 2.75rem;
+}
+
+.library-search-control input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.library-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  color: var(--bookcloth);
+  transform: translateY(-50%);
+}
+
+.library-search-clear[hidden] {
+  display: none;
+}
+
 .library-summary {
   margin: 0 0 var(--space-3);
   color: var(--ink-muted);
@@ -1234,14 +1296,113 @@ img.collection-detail-cover {
   font-weight: 720;
 }
 
+/* Buttons keep their labels on one line and wrap as whole buttons when the
+   row narrows beside the compact service index. */
 .library-row-actions {
   display: flex;
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
+.library-row-actions .button {
+  white-space: nowrap;
+}
+
+.library-row-heading .status-stamp {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Open is the row's action. Delete is irreversible but rare, so it sits last
+   as failure-ink text with no border; the confirmation dialog carries the
+   weight. */
 .library-delete {
+  margin-left: auto;
+  border-color: transparent;
+  background: transparent;
   color: var(--failure);
+}
+
+.library-delete:hover {
+  background: rgba(199, 44, 38, 0.08);
+}
+
+.library-toolbar {
+  display: flex;
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3) var(--space-5);
+}
+
+.library-toolbar .library-search-field {
+  min-width: min(100%, 18rem);
+  margin-bottom: 0;
+  flex: 1 1 18rem;
+}
+
+/* The search caps at a readable width; the filter holds the right edge so it
+   lines up with Rescan and the rows. */
+.library-toolbar .library-filter {
+  margin-left: auto;
+}
+
+/* A segmented radio group: the native radios stay in the tab order and the
+   arrow keys move between them, the label draws the segment. */
+.library-filter {
+  display: inline-flex;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--bookcloth);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  overflow: hidden;
+}
+
+.library-filter label {
+  position: relative;
+  display: inline-flex;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-4);
+  align-items: center;
+  color: var(--bookcloth);
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.library-filter label + label {
+  border-left: 1px solid var(--bookcloth);
+}
+
+.library-filter label:hover {
+  background: var(--paper-muted);
+}
+
+.library-filter label:has(input:checked) {
+  background: var(--bookcloth);
+  color: var(--paper-raised);
+}
+
+.library-filter label:has(input:focus-visible) {
+  outline: 0.1875rem solid var(--focus);
+  outline-offset: -0.1875rem;
+}
+
+.library-filter input:focus-visible {
+  outline: none;
+}
+
+.library-filter input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .desk-screen {
@@ -1812,8 +1973,26 @@ img.collection-detail-cover {
   border-bottom: 2px solid var(--ink);
 }
 
+/* In a narrow cart column the heading gives way before the controls beside
+   it. Once Clear finished joins, the heading's type steps down toward body
+   size with the column. Neither label ever wraps inside itself: below the
+   width where both fit on one line, Clear finished moves to its own line. */
+.work-cart-heading {
+  flex-wrap: wrap;
+  container-type: inline-size;
+}
+
+.work-cart-heading h2 {
+  white-space: nowrap;
+}
+
+.work-cart-heading:has(.work-cart-clear:not([hidden])) h2 {
+  font-size: clamp(var(--type-base), 4.6cqi, var(--type-lg));
+}
+
 .work-cart-count {
   display: grid;
+  flex: none;
   min-width: 1.75rem;
   height: 1.75rem;
   margin-left: auto;
@@ -1955,6 +2134,7 @@ img.collection-detail-cover {
 
 .work-cart-row .status-stamp {
   flex: 0 0 auto;
+  justify-self: start;
 }
 
 .work-cart-row .status-stamp svg {
@@ -2055,7 +2235,7 @@ img.collection-detail-cover {
   min-height: 2.75rem;
   align-items: center;
   gap: var(--space-1);
-  color: #334fcb;
+  color: var(--info);
   font-size: var(--type-sm);
   font-weight: 760;
   text-decoration: none;
@@ -2094,6 +2274,9 @@ img.collection-detail-cover {
 }
 
 .work-cart-clear {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
   min-height: 2.25rem;
   padding-inline: var(--space-2);
   font-size: var(--type-xs);
@@ -2245,11 +2428,9 @@ img.collection-detail-cover {
 }
 
 .tonie-detail-heading {
-  display: flex;
+  display: grid;
   margin-bottom: var(--space-4);
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-5);
+  gap: var(--space-3);
 }
 
 .tonie-detail-heading p {
@@ -2258,13 +2439,32 @@ img.collection-detail-cover {
   color: var(--ink-muted);
 }
 
+/* Both Tonie wipes are irreversible: secondary shape, failure ink. The red
+   fill belongs to the confirmation dialog's confirm button alone. */
+.tonie-destructive {
+  border-color: var(--failure);
+  color: var(--failure);
+}
+
+.tonie-destructive:hover:not(:disabled) {
+  background: rgba(199, 44, 38, 0.08);
+}
+
+.tonie-destructive:disabled {
+  border-color: var(--rule);
+  background: var(--paper-muted);
+  color: var(--ink-muted);
+  opacity: 1;
+}
+
 .tonie-clear {
+  margin-left: auto;
   flex: 0 0 auto;
 }
 
 .tonie-detail-bulk {
   display: flex;
-  gap: 0.75rem;
+  gap: var(--space-3);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -2273,11 +2473,25 @@ img.collection-detail-cover {
   display: inline-flex;
   gap: 0.4rem;
   align-items: center;
+  white-space: nowrap;
 }
 
+/* Same box and ink as the Library's selection checkboxes, not the browser's
+   default blue; Select all matches the rows it controls. */
+.tonie-select-all,
 .tonie-chapter-select {
   width: 1.25rem;
   height: 1.25rem;
+  margin: 0;
+  accent-color: var(--bookcloth);
+}
+
+/* The label is the hit area; the box inside keeps the Select all size. */
+.tonie-chapter-tick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
 .tonie-chapter-list {
@@ -2384,63 +2598,71 @@ img.collection-detail-cover {
 
 .activity-list {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
+/* One compact log line: title and metadata, stamp, relative time, action.
+   The stamp and time columns have fixed widths so they line up down the log. */
 .activity-row {
   display: grid;
   min-width: 0;
-  padding: var(--space-5);
-  /* auto-fit with a min() floor, so the columns can never demand more width
-     than the row has. The fixed 16rem + 14rem + 14rem minimums overflowed by
-     273px at 768px, which fell into an 8.02px gap above the 759.98px
-     collapse rule. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
-  align-items: start;
-  gap: var(--space-4) var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  grid-template-columns: minmax(0, 1fr) 9rem 6rem 13.5rem;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
   border: var(--rule-thin);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 0.3rem 0.8rem rgba(11, 42, 32, 0.07), 0 0.1rem 0.2rem rgba(11, 42, 32, 0.05);
 }
 
-.activity-row-heading {
+.activity-title {
   display: flex;
   min-width: 0;
-  grid-column: 1 / -1;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
 }
 
 .activity-row h2 {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: var(--type-lg);
+  font-size: var(--type-base);
   font-weight: 790;
-  letter-spacing: -0.025em;
-  line-height: 1.18;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
 }
 
-.activity-job-id {
-  display: block;
-  margin-top: var(--space-1);
+.activity-row .status-stamp {
+  justify-self: start;
+}
+
+.activity-time {
+  color: var(--ink-muted);
+  font-size: var(--type-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.activity-facts {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
   color: var(--ink-muted);
   font-size: var(--type-xs);
   font-weight: 700;
 }
 
-.activity-facts {
-  display: grid;
-  min-width: 0;
-  margin: 0;
-  grid-template-columns: repeat(2, minmax(8rem, 1fr));
-  gap: var(--space-3);
-}
-
 .activity-facts div,
 .settings-facts > div {
   min-width: 0;
+}
+
+.activity-facts div {
+  display: flex;
+  gap: var(--space-1);
 }
 
 .activity-facts dt,
@@ -2458,8 +2680,18 @@ img.collection-detail-cover {
   font-weight: 700;
 }
 
-.activity-messages p,
-.activity-action p {
+.activity-facts dd {
+  margin: 0;
+}
+
+.activity-messages {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  gap: var(--space-2);
+}
+
+.activity-messages p {
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -2476,15 +2708,19 @@ img.collection-detail-cover {
   color: var(--failure);
 }
 
-.activity-action {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-3);
-}
-
-.activity-action p {
+.activity-guidance {
   color: var(--ink-muted);
   font-size: var(--type-sm);
+}
+
+.activity-action {
+  justify-self: end;
+}
+
+.activity-action .button {
+  min-height: 2.25rem;
+  padding-block: var(--space-1);
+  white-space: nowrap;
 }
 
 .activity-empty {
@@ -2754,7 +2990,8 @@ img.collection-detail-cover {
   }
 }
 
-@media (max-width: 1279.98px) {
+/* Chapters keep the full column up to 1500px; the plan drops below them. */
+@media (max-width: 1499.98px) {
   .collection-detail-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2813,6 +3050,11 @@ img.collection-detail-cover {
     padding: var(--space-3);
   }
 
+  /* Beside the compact index, two settings columns break every heading and
+     the account email; one column keeps them whole. */
+  .settings-screen {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (min-width: 1100px) and (max-width: 1279.98px) {
@@ -2876,7 +3118,7 @@ img.collection-detail-cover {
     border-radius: calc(var(--radius) / 2);
     background: transparent;
     color: inherit;
-    font-size: clamp(0.625rem, 2.5vw, 0.75rem);
+    font-size: clamp(0.6875rem, 2.5vw, 0.75rem);
     font-weight: 700;
     line-height: 1.05;
     text-align: center;
@@ -3072,22 +3314,24 @@ img.collection-detail-cover {
     flex-direction: column;
   }
 
+  /* The link and the row buttons stay on one line and wrap only when they must;
+     the mark-only Dismiss keeps its square, it never stretches into a bar. */
   .work-cart-actions {
-    align-items: stretch;
-    flex-direction: column;
+    flex-wrap: wrap;
   }
 
   .work-cart-row-buttons {
-    align-items: stretch;
-    flex-direction: column;
+    margin-left: auto;
   }
 
   .work-cart-link,
-  .work-cart-retry,
-  .work-cart-dismiss {
-    width: 100%;
+  .work-cart-retry {
     min-height: 44px;
-    justify-content: center;
+  }
+
+  .work-cart-dismiss {
+    width: 44px;
+    min-height: 44px;
   }
 
   .screen-heading {
@@ -3098,10 +3342,6 @@ img.collection-detail-cover {
 
   .screen-heading > .button {
     width: 100%;
-  }
-
-  .library-cover {
-    min-height: 12rem;
   }
 
   .library-row-body {
@@ -3121,6 +3361,11 @@ img.collection-detail-cover {
     content: none;
   }
 
+  .library-row .collection-facts {
+    display: flex;
+    gap: var(--space-1) var(--space-3);
+  }
+
   .collection-detail-heading {
     padding-bottom: var(--space-5);
     grid-template-columns: minmax(0, 1fr);
@@ -3131,14 +3376,9 @@ img.collection-detail-cover {
     width: min(11rem, 48vw);
   }
 
-  .collection-title-form,
   .collection-detail-facts,
   .collection-detail-plan {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .collection-title-form label {
-    grid-column: auto;
   }
 
   .collection-detail-facts {
@@ -3156,6 +3396,12 @@ img.collection-detail-cover {
 
   .chapter-title-field {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Stacked under the field, the duration aligns with the title text inside
+     it, as the marks already do. */
+  .chapter-title-field > span {
+    padding-inline: calc(var(--space-3) + 1px);
   }
 
   .chapter-row-controls {
@@ -3187,13 +3433,27 @@ img.collection-detail-cover {
     display: none;
   }
 
+  .library-filter {
+    width: 100%;
+  }
+
+  .library-filter label {
+    padding-inline: var(--space-2);
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
   .library-row-actions {
     align-items: stretch;
     flex-direction: column;
   }
 
+  /* The row body beside the jacket is narrow; tighter insets keep
+     "Choose chapters" on one line at phone widths. */
   .library-row-actions .button {
     width: 100%;
+    padding-inline: var(--space-2);
+    white-space: normal;
   }
 
   .tonie-summary {
@@ -3222,12 +3482,8 @@ img.collection-detail-cover {
     padding: var(--space-3);
   }
 
-  .tonie-detail-heading {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .tonie-clear {
+    margin-left: 0;
     width: 100%;
   }
 
@@ -3235,8 +3491,11 @@ img.collection-detail-cover {
     width: 100%;
   }
 
+  /* A label never breaks inside the button; when Select all and Remove N
+     selected cannot share the line, the button takes its own. */
   .tonie-detail-bulk .button {
-    flex: 1;
+    flex: 1 1 auto;
+    white-space: nowrap;
   }
 
   .tonie-chapter-row {
@@ -3244,9 +3503,13 @@ img.collection-detail-cover {
     align-items: start;
   }
 
-  .tonie-chapter-select {
-    min-width: 44px;
+  .tonie-chapter-tick,
+  .tonie-select-all-field {
     min-height: 44px;
+  }
+
+  .tonie-chapter-tick {
+    min-width: 44px;
   }
 
   .tonie-chapter-actions {
@@ -3259,21 +3522,22 @@ img.collection-detail-cover {
   }
 
   .activity-row {
-    padding: var(--space-4);
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4);
+    padding: var(--space-3);
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-2) var(--space-3);
   }
 
-  .activity-row-heading {
-    align-items: flex-start;
-    flex-direction: column;
+  .activity-title,
+  .activity-action {
+    grid-column: 1 / -1;
   }
 
-  .activity-facts {
-    grid-template-columns: minmax(0, 1fr);
+  .activity-action {
+    justify-self: stretch;
   }
 
   .activity-action .button {
+    min-height: 44px;
     width: 100%;
   }
 
@@ -3335,10 +3599,15 @@ img.collection-detail-cover {
     transform: scaleX(0.3);
     transform-origin: center;
   }
+
+  /* Color still confirms the press; the button does not move. */
+  .button:active:not(:disabled):not(:focus-visible) {
+    transform: none;
+  }
 }
 
 .library-row {
-  grid-template-columns: auto clamp(7rem, 16vw, 10rem) minmax(0, 1fr);
+  grid-template-columns: auto clamp(4.5rem, 7vw, 6.5rem) minmax(0, 1fr);
 }
 
 /* The cell is the hit target, not the box. A 20x20 checkbox fails WCAG 2.2 AA
@@ -3346,9 +3615,9 @@ img.collection-detail-cover {
 .library-select-cell {
   display: flex;
   align-items: flex-start;
-  min-width: 2.75rem;
+  min-width: 2.875rem;
   min-height: 2.75rem;
-  padding: var(--space-5) var(--space-2) var(--space-5) var(--space-4);
+  padding: var(--space-4) var(--space-2) var(--space-4) var(--space-4);
   cursor: pointer;
 }
 
@@ -3452,6 +3721,7 @@ img.collection-detail-cover {
 
 .chapter-sent {
   min-height: 1.5rem;
+  text-transform: none;
   white-space: nowrap;
 }
 
@@ -3578,7 +3848,7 @@ img.collection-detail-cover {
 
 @media (max-width: 759.98px) {
   .library-row {
-    grid-template-columns: auto 5.75rem minmax(0, 1fr);
+    grid-template-columns: auto 5rem minmax(0, 1fr);
   }
 
   .library-select-cell {
@@ -3690,7 +3960,7 @@ img.collection-detail-cover {
   background: var(--paper-muted);
 }
 
-.tonie-send-panel h3 {
+.tonie-send-panel h2 {
   margin: 0 0 var(--space-2);
   font-size: var(--type-xs);
   letter-spacing: 0.06em;

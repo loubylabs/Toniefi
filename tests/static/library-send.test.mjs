@@ -406,6 +406,7 @@ test("choosing a target sends one batch and clears the selection", async () => {
     assert.deepEqual(payload.assignments, [{
       household_id: "h1",
       tonie_id: "t1",
+      tonie_name: "Blue Tonie",
       replace: false,
       remote_chapters: [{ id: "c1", title: "Old chapter" }],
       sources: [{ slug: "night-story", manifest_fingerprint: "f-night", files: ["01.mp3", "02.mp3"] }],

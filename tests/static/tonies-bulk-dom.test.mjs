@@ -88,7 +88,9 @@ test("every chapter tick box has a real, if visually hidden, label", async () =>
     const label = screen.dom.workspace.querySelectorAll("label").find((item) => item.getAttribute("for") === ticks[0].id);
     assert.ok(label, "the tick box has an associated label element");
     assert.equal(label.textContent, "Select One for removal");
-    assert.equal(label.className, "visually-hidden");
+    // The label wraps the box, so the whole label is the hit area.
+    assert.equal(label.className, "tonie-chapter-tick");
+    assert.ok(label.contains(ticks[0]), "the label wraps its tick box");
   } finally {
     screen.stop();
   }
@@ -102,6 +104,13 @@ test("ticking rows updates the count, Select all reflects a full set, and the bu
 
     assert.equal(screen.node(".tonie-remove-selected").disabled, true);
     assert.equal(screen.node(".tonie-remove-selected").textContent.includes("Remove selected"), true);
+    // Initiators are failure-ink secondary buttons; red fill is the dialog's.
+    for (const selector of [".tonie-remove-selected", ".tonie-clear"]) {
+      const classes = screen.node(selector).className;
+      assert.match(classes, /\bbutton-secondary\b/);
+      assert.match(classes, /\btonie-destructive\b/);
+      assert.doesNotMatch(classes, /\bbutton-danger\b/);
+    }
 
     const ticks = screen.nodes(".tonie-chapter-select");
     await screen.tick(`#${ticks[0].id}`);

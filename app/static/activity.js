@@ -117,13 +117,40 @@ function timestamp(job) {
 }
 
 
-export function activityFacts(job, formatTime = timestamp) {
-  const facts = [
-    ["Type", kindLabel(job.kind)],
-    ["Phase", phaseLabel(job.phase)],
-    ["Status", phaseLabel(job.status)],
-    ["Updated", formatTime(job)],
-  ];
+// "just now", "5 min ago", "3 h ago", "2 d ago", then the date. The exact
+// time stays in the element's title.
+export function relativeTime(job, now = Date.now() / 1000) {
+  const seconds = Number(job.updated_at || job.created_at || 0);
+  if (!seconds) return "Time unavailable";
+  const minutes = Math.floor((now - seconds) / 60);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 14) return `${days} d ago`;
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(seconds * 1000));
+}
+
+
+// The stamp already says the phase (or the status when a job has no phase),
+// so phase and status are not facts. Progress shows only when it says more.
+function stampText(job) {
+  return phaseLabel(job.phase || job.status);
+}
+
+
+export function activityDetail(job) {
+  const progress = String(job.progress || "").trim();
+  if (!progress) return "";
+  const same = (a, b) => a.toLowerCase().replace(/[.\s]+$/, "") === b.toLowerCase();
+  const repeats = [stampText(job), phaseLabel(job.status), "Done"].some((label) => same(progress, label));
+  return repeats ? "" : progress;
+}
+
+
+export function activityFacts(job) {
+  const facts = [["Type", kindLabel(job.kind)], ["Job", `#${job.id}`]];
   // A finished send already stores what it delivered. Printing it is what
   // lets someone returning in two weeks tell which figure got which stories.
   const result = job.result || {};
@@ -164,7 +191,6 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       const action = activityAction(job);
       if (action.kind === "none") return null;
       const host = element("div", { className: "activity-action" });
-      if (action.guidance) host.append(element("p", { text: action.guidance }));
       if (action.kind === "collection") {
         host.append(element("a", {
           className: "button button-primary",
@@ -202,30 +228,38 @@ export function createActivityScreen({ request = api, refresh } = {}) {
 
     function jobRow(job) {
       const titleId = `activity-job-${job.id}`;
-      const phase = phaseLabel(job.phase);
       const facts = element("dl", { className: "activity-facts" }, activityFacts(job).map(([term, description]) => (
-        element("div", {}, [element("dt", { text: term }), element("dd", { text: description })])
+        // Type and job number read as plain log text; only the delivery
+        // line needs its label.
+        element("div", {}, [
+          element("dt", { className: term === "Delivered" ? "" : "visually-hidden", text: term }),
+          element("dd", { text: description }),
+        ])
       )));
       const messages = element("div", { className: "activity-messages" });
-      if (job.progress) messages.append(element("p", { className: "activity-progress", text: job.progress }));
+      const detail = activityDetail(job);
+      if (detail) messages.append(element("p", { className: "activity-progress", text: detail }));
       if (job.error) messages.append(element("p", { className: "activity-error", role: "alert", text: job.error }));
-      if (!job.progress && !job.error) messages.append(element("p", { className: "activity-progress", text: "No additional progress detail." }));
-      const action = actionNode(job);
+      const guidance = activityAction(job).guidance;
+      if (guidance) messages.append(element("p", { className: "activity-guidance", text: guidance }));
+      const when = element("time", { className: "activity-time", title: timestamp(job), text: relativeTime(job) });
+      const seconds = Number(job.updated_at || job.created_at || 0);
+      if (seconds) when.setAttribute("datetime", new Date(seconds * 1000).toISOString());
       return element("li", { className: "activity-row", "aria-labelledby": titleId }, [
-        element("div", { className: "activity-row-heading" }, [
-          element("div", {}, [
-            element("h2", { id: titleId, text: job.label || `Job ${job.id}` }),
-            element("span", { className: "activity-job-id", text: `Job ${job.id}` }),
-          ]),
-          element("span", { className: "status-stamp", "data-status": job.phase || job.status, text: phase }),
+        element("div", { className: "activity-title" }, [
+          element("h2", { id: titleId, text: job.label || `Job ${job.id}` }),
+          facts,
         ]),
-        facts,
-        messages,
-        action,
+        element("span", { className: "status-stamp", "data-status": job.phase || job.status, text: stampText(job) }),
+        when,
+        actionNode(job),
+        detail || job.error || guidance ? messages : null,
       ]);
     }
 
-    function render({ focusKey = "" } = {}) {
+    // A passive render (first paint, a poll) never rescues focus into Refresh:
+    // with no focused control to keep, focus stays where it is.
+    function render({ focusKey = "", passive = false } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
       summary.textContent = jobs.length
@@ -243,7 +277,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       } else {
         replace(list, ...jobs.map(jobRow));
       }
-      restoreFocus(token, { root, fallback: refreshButton });
+      restoreFocus(token, { root, fallback: passive ? null : refreshButton });
     }
 
     function onRefresh(snapshot) {
@@ -262,7 +296,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
         replace(stale);
         jobs = activityHistory(snapshot);
       }
-      render();
+      render({ passive: true });
     }
 
     refreshButton.addEventListener("click", async () => {
@@ -282,7 +316,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
 
     root.append(header, stale, summary, list);
     replace(workspace, root);
-    render();
+    render({ passive: true });
     const unsubscribe = refresh.subscribe(onRefresh);
     refresh.request();
     return () => {

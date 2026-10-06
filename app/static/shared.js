@@ -69,6 +69,16 @@ export function exactDuration(seconds) {
 }
 
 
+export function waitingMessage(createdAt, now = Date.now() / 1000) {
+  // A queued job with no worker says how long it has waited, so a stuck queue
+  // reads differently from one that just started. Whole minutes from the
+  // job's own created_at; under a minute, or with no stamp, the bare sentence.
+  const minutes = Math.floor((Number(now) - Number(createdAt)) / 60);
+  if (!Number.isFinite(minutes) || minutes < 1) return "Waiting for a worker";
+  return `Waiting for a worker · ${minutes} min`;
+}
+
+
 function calendarDay(seconds) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(seconds * 1000));
 }

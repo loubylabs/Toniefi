@@ -9,6 +9,7 @@ import {
   replace,
   restoreFocus,
   setBusy,
+  waitingMessage,
   withFocusRestored,
 } from "./shared.js";
 
@@ -326,10 +327,22 @@ function sourceLabel(job, collection) {
   return job.payload?.url || collection?.url || collection?.source || job.label || "Local collection";
 }
 
-export function buildWorkCartItems(jobs, collections, dismissals = {}, limit = 7) {
+function pushCoverSlug(job) {
+  // A send carries no slug of its own, but its first source names the story
+  // whose jacket identifies it.
+  return job.payload?.sources?.[0]?.slug || "";
+}
+
+export function buildWorkCartItems(jobs, collections, dismissals = {}, limit = 7, now = Date.now() / 1000) {
   const collectionBySlug = new Map(collections.map((collection) => [collection.slug, collection]));
   const represented = new Set();
   const items = [];
+  // The cart is not a send log. Only the newest finished send stays as the
+  // receipt for the last thing done; every older one lives in Activity.
+  // Queued, running and failed sends are not history and always show.
+  const newestSent = Math.max(-Infinity, ...jobs
+    .filter((job) => job.kind === "push" && job.status === "done")
+    .map((job) => Number(job.id)));
 
   const active = jobs.filter((job) => job.status === "queued" || job.status === "running");
   const failed = jobs.filter((job) => job.status === "failed");
@@ -343,6 +356,9 @@ export function buildWorkCartItems(jobs, collections, dismissals = {}, limit = 7
     const collection = slug ? collectionBySlug.get(slug) : null;
     if (workRelevance(job, collection) === "collection") continue;
     if (job.kind !== "push" && job.status === "done" && collection?.stage !== "forged") continue;
+    // Checked before the dismissal skip below, so dismissing the newest send
+    // clears the slot rather than promoting the one before it.
+    if (job.kind === "push" && job.status === "done" && Number(job.id) !== newestSent) continue;
     // A push must not claim the slug, or sending a collection would hide the
     // collection's own row: the one thing the operator needs to still see.
     if (slug && job.kind !== "push") represented.add(slug);
@@ -353,6 +369,8 @@ export function buildWorkCartItems(jobs, collections, dismissals = {}, limit = 7
     if (dismissals[key] !== undefined) continue;
     const phase = workPhase(job, collection);
     const workProgress = truthfulWorkProgress(job);
+    const coverSlug = job.kind === "push" ? pushCoverSlug(job) : slug;
+    const coverCollection = coverSlug ? collectionBySlug.get(coverSlug) : null;
     items.push({
       key,
       jobId: job.id,
@@ -360,14 +378,15 @@ export function buildWorkCartItems(jobs, collections, dismissals = {}, limit = 7
       phase,
       title: collection?.title || job.label || "Untitled collection",
       source: sourceLabel(job, collection),
-      progress: job.progress || (phase === "queued" ? "Waiting for a worker" : ""),
+      progress: job.progress || (phase === "queued" ? waitingMessage(job.created_at, now) : ""),
       error: job.error || "",
       slug,
       canRetry: Boolean(job.retryable),
       canDismiss: DISMISSIBLE_PHASES.has(phase),
       trackCount: Number(collection?.track_count) || 0,
       duration: collection?.total_duration || "",
-      hasCover: Boolean(collection?.cover),
+      coverSlug,
+      hasCover: Boolean(coverCollection?.cover),
       progressMode: workProgress.mode,
       progressPercent: workProgress.percent,
     });
@@ -397,6 +416,7 @@ export function buildWorkCartItems(jobs, collections, dismissals = {}, limit = 7
       canDismiss: true,
       trackCount: Number(collection.track_count) || 0,
       duration: collection.total_duration || "",
+      coverSlug: collection.slug,
       hasCover: Boolean(collection.cover),
     });
   }
@@ -541,13 +561,30 @@ function readForgeOptions(root) {
   });
 }
 
-function workCartRow(item, { request, requestRefresh, navigate, dismiss, signal }) {
+export function dismissLabels(items) {
+  // Only rows that carry the control count, so a title shared with a running
+  // row is not numbered against a button that does not exist.
+  const totals = new Map();
+  for (const item of items) {
+    if (item.canDismiss) totals.set(item.title, (totals.get(item.title) || 0) + 1);
+  }
+  const seen = new Map();
+  return items.map((item) => {
+    const total = totals.get(item.title) || 0;
+    if (!item.canDismiss || total < 2) return `Dismiss ${item.title}`;
+    const position = (seen.get(item.title) || 0) + 1;
+    seen.set(item.title, position);
+    return `Dismiss ${item.title} (${position} of ${total})`;
+  });
+}
+
+function workCartRow(item, { request, requestRefresh, navigate, dismiss, signal, dismissLabel }) {
   const details = phaseDetails(item.phase);
   const row = element("li", { className: "work-cart-row", "data-phase": item.phase });
-  const cover = item.hasCover && item.slug
+  const cover = item.hasCover && item.coverSlug
     ? element("img", {
       className: "work-cart-cover",
-      src: `/api/collections/${encodeURIComponent(item.slug)}/cover`,
+      src: `/api/collections/${encodeURIComponent(item.coverSlug)}/cover`,
       alt: "",
       loading: "lazy",
     })
@@ -558,12 +595,16 @@ function workCartRow(item, { request, requestRefresh, navigate, dismiss, signal 
   ]);
   const heading = element("h3", { text: item.title });
   const header = element("div", { className: "work-cart-row-header" }, [heading, stamp]);
-  const source = element("p", { className: "work-cart-source", text: item.source });
   const facts = element("p", { className: "work-cart-facts" });
   if (item.trackCount) facts.append(element("span", { text: `${item.trackCount} ${item.trackCount === 1 ? "chapter" : "chapters"}` }));
   if (item.duration) facts.append(element("span", { text: item.duration }));
   const progress = element("p", { className: "work-cart-progress", text: item.progress || details.label });
-  const body = element("div", { className: "work-cart-row-body" }, [header, source]);
+  const body = element("div", { className: "work-cart-row-body" }, [header]);
+  // A send's label is both its title and its only source, so the line would
+  // repeat the heading word for word.
+  if (item.source && item.source !== item.title) {
+    body.append(element("p", { className: "work-cart-source", text: item.source }));
+  }
   if (facts.childNodes.length) body.append(facts);
   if (item.phase === "failed") {
     body.append(element("p", { className: "work-cart-error", text: item.error || "Preparation stopped before this collection was ready." }));
@@ -603,7 +644,7 @@ function workCartRow(item, { request, requestRefresh, navigate, dismiss, signal 
   if (item.canRetry) {
     const retry = element("button", {
       type: "button",
-      className: "button button-danger work-cart-retry",
+      className: "button button-secondary work-cart-retry",
       "data-focus-key": `${item.key}-retry`,
     }, [
       iconNode("retry"),
@@ -629,8 +670,9 @@ function workCartRow(item, { request, requestRefresh, navigate, dismiss, signal 
       type: "button",
       className: "button button-secondary work-cart-dismiss",
       // The row already names the collection, so the visible control is the
-      // mark alone. Assistive technology gets the whole sentence.
-      "aria-label": `Dismiss ${item.title} from the work cart`,
+      // mark alone. Assistive technology gets the title, numbered when two
+      // rows share one so every control stays distinct in a list of buttons.
+      "aria-label": dismissLabel,
       title: "Dismiss from the work cart",
       "data-focus-key": `${item.key}-dismiss`,
     }, [iconNode("close")]);
@@ -768,8 +810,11 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
     count.setAttribute("aria-label", `${items.length} ${items.length === 1 ? "collection" : "collections"} in the work cart`);
     empty.hidden = items.length > 0;
     list.hidden = items.length === 0;
+    const labels = dismissLabels(items);
     withFocusRestored(() => {
-      replace(list, ...items.map((item) => workCartRow(item, { request, requestRefresh, navigate, dismiss, signal })));
+      replace(list, ...items.map((item, index) => workCartRow(item, {
+        request, requestRefresh, navigate, dismiss, signal, dismissLabel: labels[index],
+      })));
     }, { root: host });
     finishedKeys = items.filter((item) => item.canDismiss).map((item) => item.key);
     clearFinished.hidden = finishedKeys.length < 2;

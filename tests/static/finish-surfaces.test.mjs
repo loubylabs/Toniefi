@@ -255,18 +255,17 @@ test("Activity consumes only chronological history from the refresh snapshot", (
 });
 
 
-test("Activity presents job type, phase, status, and update time as separate facts", () => {
+test("Activity facts carry type and job number, not the phase or status the stamp already shows", () => {
   assert.deepEqual(activityFacts({
+    id: 12,
     kind: "prepare_url",
     phase: "forging",
     status: "running",
     created_at: 100,
     updated_at: 200,
-  }, () => "Jan 1, 1970, 12:03 AM"), [
+  }), [
     ["Type", "URL preparation"],
-    ["Phase", "Forging"],
-    ["Status", "Running"],
-    ["Updated", "Jan 1, 1970, 12:03 AM"],
+    ["Job", "#12"],
   ]);
 });
 
