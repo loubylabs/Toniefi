@@ -1315,6 +1315,31 @@ test("Library opens a new screen on the filter the operator last chose", async (
   }
 });
 
+test("Library neither takes focus on first paint nor on a refresh poll", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collections = [{ slug: "a", title: "A", stage: "forged", track_count: 1 }];
+  let onRefresh = null;
+  const refresh = {
+    snapshot: { collections, jobs: [] },
+    subscribe: (fn) => { onRefresh = fn; return () => {}; },
+    async request() {
+      return { collections, stale: [], errors: {} };
+    },
+  };
+  try {
+    createLibraryScreen({ request: async () => ({}), refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    assert.notEqual(dom.document.activeElement, dom.workspace.querySelector("#library-search"));
+    onRefresh({ collections, jobs: [], stale: [] });
+    await flush();
+    assert.notEqual(dom.document.activeElement, dom.workspace.querySelector("#library-search"));
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("the collection title is the h1 field: Enter saves, Escape reverts, a failed save keeps the typed value", async () => {
   const dom = installDom();
   const controller = new AbortController();

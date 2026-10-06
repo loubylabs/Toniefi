@@ -92,6 +92,12 @@ summary:focus-visible,
   outline-offset: 0.1875rem;
 }
 
+/* Headings and containers focused by script (route changes) are not controls;
+   a ring on them is noise. Real controls above keep theirs. */
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
 button:disabled,
 input:disabled,
 select:disabled,
@@ -3033,7 +3039,7 @@ img.collection-detail-cover {
     border-radius: calc(var(--radius) / 2);
     background: transparent;
     color: inherit;
-    font-size: clamp(0.625rem, 2.5vw, 0.75rem);
+    font-size: clamp(0.6875rem, 2.5vw, 0.75rem);
     font-weight: 700;
     line-height: 1.05;
     text-align: center;

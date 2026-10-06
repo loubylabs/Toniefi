@@ -175,7 +175,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         loadError = "";
         if (openKey && !tonies.some((tonie) => tonieKey(tonie) === openKey)) openKey = "";
         selectedChapters.clear();
-        render();
+        render({ passive: true });
         if (announceSuccess) {
           notify("Creative Tonies refreshed from myTonies.", { kind: "success" });
           announce("Creative Tonies refreshed from remote truth.");
@@ -548,7 +548,9 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       return element("li", { className: "tonie-row", "data-open": String(open) }, children);
     }
 
-    function render({ focusKey = "" } = {}) {
+    // A passive render (first paint, a poll, a load) never rescues focus into
+    // Refresh: with no focused control to keep, focus stays where it is.
+    function render({ focusKey = "", passive = false } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
       const loadView = tonieLoadView({ state: loadState, tonies, error: loadError });
@@ -607,7 +609,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       });
       root.querySelectorAll("[data-tonie-summary]").forEach((control) => { control.disabled = mutation.pending; });
       setBusy(root, mutation.pending, "Saving Creative Tonie changes");
-      restoreFocus(token, { root, fallback: refreshButton });
+      restoreFocus(token, { root, fallback: passive ? null : refreshButton });
     }
 
     function onRefresh(snapshot) {
@@ -620,7 +622,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       // rather than leaving stale figures beside a bar that just filled.
       const finished = [...sendingKeys].some((key) => !nextKeys.has(key));
       sendingKeys = nextKeys;
-      render();
+      render({ passive: true });
       if (finished) load().catch(() => {});
     }
 
@@ -637,7 +639,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
 
     root.append(header, stale, list);
     replace(workspace, root);
-    render();
+    render({ passive: true });
     load().catch((error) => {
       if (active && !signal?.aborted) notify(error.message, { kind: "failure", timeout: 0 });
     });

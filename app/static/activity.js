@@ -257,7 +257,9 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       ]);
     }
 
-    function render({ focusKey = "" } = {}) {
+    // A passive render (first paint, a poll) never rescues focus into Refresh:
+    // with no focused control to keep, focus stays where it is.
+    function render({ focusKey = "", passive = false } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
       summary.textContent = jobs.length
@@ -275,7 +277,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       } else {
         replace(list, ...jobs.map(jobRow));
       }
-      restoreFocus(token, { root, fallback: refreshButton });
+      restoreFocus(token, { root, fallback: passive ? null : refreshButton });
     }
 
     function onRefresh(snapshot) {
@@ -294,7 +296,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
         replace(stale);
         jobs = activityHistory(snapshot);
       }
-      render();
+      render({ passive: true });
     }
 
     refreshButton.addEventListener("click", async () => {
@@ -314,7 +316,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
 
     root.append(header, stale, summary, list);
     replace(workspace, root);
-    render();
+    render({ passive: true });
     const unsubscribe = refresh.subscribe(onRefresh);
     refresh.request();
     return () => {

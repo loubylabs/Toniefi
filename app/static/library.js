@@ -650,7 +650,9 @@ export function createLibraryScreen({
       return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
     }
 
-    function render({ focusKey = "" } = {}) {
+    // A passive render (first paint, a refresh poll) never rescues focus into
+    // the search box: with no focused control to keep, focus stays where it is.
+    function render({ focusKey = "", passive = false } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
       // The list below is about to be torn down and rebuilt whatever branch
@@ -709,7 +711,7 @@ export function createLibraryScreen({
       // in flight, so it is the region that reports being busy.
       sendBar.setAttribute("aria-busy", String(Boolean(sending)));
       mutation.sync();
-      restoreFocus(token, { root, fallback: search });
+      restoreFocus(token, { root, fallback: passive ? null : search });
     }
 
     function limitSeconds() {
@@ -1114,7 +1116,7 @@ export function createLibraryScreen({
       if (failed) showStale("Library information could not refresh. Showing the last available local collection index.");
       else replace(stale);
       if (!failed) collections = snapshot.collections || [];
-      render();
+      render({ passive: true });
     }
 
     search.addEventListener("input", () => {
@@ -1151,7 +1153,7 @@ export function createLibraryScreen({
 
     root.append(header, toolbar, stale, summary, list, sendBar);
     replace(workspace, root);
-    render();
+    render({ passive: true });
     const unsubscribe = refresh.subscribe(onRefresh);
     refresh.request();
     return () => {
