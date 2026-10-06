@@ -330,18 +330,22 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         else selectedChapters.delete(chapter.id);
         render({ focusKey: `tonie-${chapter.id}-select` });
       });
-      const tickLabel = element("label", {
-        for: tickId,
-        className: "visually-hidden",
-        text: `Select ${chapter.title || `chapter ${index + 1}`} for removal`,
-      });
+      // The label wraps the box and is the hit area, so the box draws at the
+      // Select all size while a phone still gets a 44px target.
+      const tickLabel = element("label", { for: tickId, className: "tonie-chapter-tick" }, [
+        tick,
+        element("span", {
+          className: "visually-hidden",
+          text: `Select ${chapter.title || `chapter ${index + 1}`} for removal`,
+        }),
+      ]);
       const row = element("li", {
         className: "tonie-chapter-row",
         draggable: true,
         "data-tonie-chapter": chapter.id,
         "data-tonie-control": "",
       }, [
-        tick, tickLabel,
+        tickLabel,
         iconNode("grip", "tonie-grip"),
         element("span", { className: "tonie-chapter-number", text: String(index + 1) }),
         element("div", { className: "tonie-chapter-title" }, [

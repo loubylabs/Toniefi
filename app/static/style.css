@@ -1261,6 +1261,34 @@ img.collection-detail-cover {
   color: var(--bookcloth);
 }
 
+/* The in-design clear control replaces the browser's own mark, which ignores
+   the palette and is not keyboard operable. */
+.library-search-control {
+  position: relative;
+  min-width: 0;
+}
+
+.library-search-control input {
+  padding-right: 2.75rem;
+}
+
+.library-search-control input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.library-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  color: var(--bookcloth);
+  transform: translateY(-50%);
+}
+
+.library-search-clear[hidden] {
+  display: none;
+}
+
 .library-summary {
   margin: 0 0 var(--space-3);
   color: var(--ink-muted);
@@ -2458,6 +2486,14 @@ img.collection-detail-cover {
   accent-color: var(--bookcloth);
 }
 
+/* The label is the hit area; the box inside keeps the Select all size. */
+.tonie-chapter-tick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
 .tonie-chapter-list {
   display: grid;
   gap: var(--space-2);
@@ -3467,9 +3503,13 @@ img.collection-detail-cover {
     align-items: start;
   }
 
-  .tonie-chapter-select {
-    min-width: 44px;
+  .tonie-chapter-tick,
+  .tonie-select-all-field {
     min-height: 44px;
+  }
+
+  .tonie-chapter-tick {
+    min-width: 44px;
   }
 
   .tonie-chapter-actions {

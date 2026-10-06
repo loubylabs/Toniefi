@@ -289,11 +289,18 @@ def _handle(job: dict) -> dict:
         )
 
     if kind == "prepare_url":
-        return prepare.run(
+        published = prepare.run(
             payload,
             progress=progress,
             checkpoint=lambda updated_payload: db.update_job(job_id, payload=updated_payload),
         )
+        # The job was labelled with the raw URL at enqueue, before anything
+        # knew the title. Once the collection exists, Activity names it by
+        # its title; the URL stays in the payload.
+        title = str((published or {}).get("title") or "").strip()
+        if title:
+            db.update_job(job_id, label=title)
+        return published
 
     if kind == "upload_prepare":
         current = dict(payload)

@@ -1315,6 +1315,45 @@ test("Library opens a new screen on the filter the operator last chose", async (
   }
 });
 
+test("Library search has a labelled clear button only while there is a query", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collections = [
+    { slug: "a", title: "Apple", stage: "forged", track_count: 1 },
+    { slug: "b", title: "Berry", stage: "forged", track_count: 1 },
+  ];
+  const refresh = {
+    snapshot: { collections, jobs: [] },
+    subscribe: () => () => {},
+    async request() {
+      return { collections, stale: [], errors: {} };
+    },
+  };
+  try {
+    createLibraryScreen({ request: async () => ({}), refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    const clear = () => dom.workspace.querySelector(".library-search-clear");
+    assert.equal(clear().getAttribute("type"), "button");
+    assert.equal(clear().getAttribute("aria-label"), "Clear search");
+    assert.equal(clear().hidden, true);
+
+    const search = dom.workspace.querySelector("#library-search");
+    search.value = "app";
+    await search.dispatchEvent({ type: "input" });
+    assert.equal(dom.workspace.querySelectorAll(".library-row").length, 1);
+    assert.equal(clear().hidden, false);
+
+    await clear().dispatchEvent({ type: "click" });
+    assert.equal(search.value, "");
+    assert.equal(clear().hidden, true);
+    assert.equal(dom.workspace.querySelectorAll(".library-row").length, 2);
+    assert.equal(dom.document.activeElement, search, "focus returns to the search box");
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("Library neither takes focus on first paint nor on a refresh poll", async () => {
   const dom = installDom();
   const controller = new AbortController();

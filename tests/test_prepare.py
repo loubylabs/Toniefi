@@ -529,6 +529,30 @@ def test_retry_returns_the_new_job(client, monkeypatch):
     assert response.json()["id"] == 12
 
 
+def test_a_finished_url_preparation_is_labelled_with_its_collection_title(isolated_db, monkeypatch):
+    url = "https://www.youtube.com/watch?v=abc123"
+    job_id = db.create_job("prepare_url", url, {"url": url, "options": {}})
+    monkeypatch.setattr(jobs.prepare, "run", lambda payload, **kwargs: {
+        "slug": "alice", "title": "Alice in Wonderland", "stage": "forged",
+    })
+
+    jobs._handle(db.get_job(job_id))
+
+    stored = db.get_job(job_id)
+    assert stored["label"] == "Alice in Wonderland"
+    assert stored["payload"]["url"] == url
+
+
+def test_a_url_preparation_without_a_title_keeps_its_url_label(isolated_db, monkeypatch):
+    url = "https://example.com/story.mp3"
+    job_id = db.create_job("prepare_url", url, {"url": url, "options": {}})
+    monkeypatch.setattr(jobs.prepare, "run", lambda payload, **kwargs: {"slug": "story", "title": "  "})
+
+    jobs._handle(db.get_job(job_id))
+
+    assert db.get_job(job_id)["label"] == url
+
+
 def test_job_presentation_splits_progress_phase():
     job = {"kind": "prepare_url", "status": "running", "progress": "extracting: Fetching audio"}
 

@@ -88,7 +88,9 @@ test("every chapter tick box has a real, if visually hidden, label", async () =>
     const label = screen.dom.workspace.querySelectorAll("label").find((item) => item.getAttribute("for") === ticks[0].id);
     assert.ok(label, "the tick box has an associated label element");
     assert.equal(label.textContent, "Select One for removal");
-    assert.equal(label.className, "visually-hidden");
+    // The label wraps the box, so the whole label is the hit area.
+    assert.equal(label.className, "tonie-chapter-tick");
+    assert.ok(label.contains(ticks[0]), "the label wraps its tick box");
   } finally {
     screen.stop();
   }

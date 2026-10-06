@@ -277,9 +277,26 @@ export function createLibraryScreen({
       autocomplete: "off",
       "data-focus-key": "library-search",
     });
+    // The browser's own clear mark is hidden in CSS; this one is in the
+    // design, reachable by keyboard, and only present while there is a query.
+    const clearSearch = element("button", {
+      type: "button",
+      className: "icon-button library-search-clear",
+      "aria-label": "Clear search",
+      title: "Clear search",
+      hidden: true,
+    }, [iconNode("close")]);
+    clearSearch.addEventListener("click", () => {
+      query = "";
+      search.value = "";
+      render({ focusKey: "library-search" });
+    });
     const searchField = element("div", { className: "library-search-field" }, [
       iconNode("search"),
-      element("div", { className: "form-field" }, [searchLabel, search]),
+      element("div", { className: "form-field" }, [
+        searchLabel,
+        element("div", { className: "library-search-control" }, [search, clearSearch]),
+      ]),
     ]);
     const filterInputs = LIBRARY_FILTERS.map(({ value, label }) => {
       const input = element("input", {
@@ -665,6 +682,7 @@ export function createLibraryScreen({
       const shown = filterCollectionsByReadiness(filterCollectionsByTitle(collections, query), filter, jobs);
       for (const entry of filterInputs) entry.input.checked = entry.value === filter;
       const searching = Boolean(query.trim());
+      clearSearch.hidden = !query;
       if (!collections.length) {
         summary.textContent = "No local collections";
         replace(list, element("li", { className: "empty-state library-empty" }, [
