@@ -354,8 +354,8 @@ Each chapter row on a Tonie carries a checkbox using the standard field styling.
 - **Do** keep real cover jackets prominent enough to preserve collection identity across Desk, Library, and the collection page.
 - **Do** pair every semantic color with visible words, an icon, a border, or an explanatory message.
 - **Do** keep the 0.1875rem focus outline visible and provide 44px controls plus safe-area spacing below 759.98px.
-- **Do** use the 150ms to 220ms state-transition family for ordinary feedback, the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.
-- **Do** honor reduced motion by collapsing animation and transition duration to 0.01ms and replacing the moving indeterminate meter with a static centered bar.
+- **Do** use the 150ms to 220ms state-transition family for ordinary feedback (buttons ease their colors over 150ms and press to `scale(0.97)` under a pointer, never from the keyboard, over 160ms `cubic-bezier(0.16, 1, 0.3, 1)`; nothing else scales on press), the 650ms source-slip motion for accepted batch intake, and the 1.4s loop only for explicitly indeterminate progress.
+- **Do** honor reduced motion by collapsing animation and transition duration to 0.01ms, replacing the moving indeterminate meter with a static centered bar, and dropping the button press scale.
 - **Do** preserve truthful labels for configured, connected, stale, forged, failed, and irreversible states.
 
 ### Don't:
