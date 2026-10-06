@@ -1114,6 +1114,7 @@ img.collection-detail-cover {
   border-color: transparent;
   background: transparent;
   font-weight: 680;
+  text-overflow: ellipsis;
 }
 
 .chapter-title-field input:hover,
@@ -1267,10 +1268,22 @@ img.collection-detail-cover {
   font-weight: 720;
 }
 
+/* Buttons keep their labels on one line and wrap as whole buttons when the
+   row narrows beside the compact service index. */
 .library-row-actions {
   display: flex;
   margin-top: var(--space-3);
+  flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.library-row-actions .button {
+  white-space: nowrap;
+}
+
+.library-row-heading .status-stamp {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* Open is the row's action. Delete is irreversible but rare, so it sits last
@@ -1299,6 +1312,12 @@ img.collection-detail-cover {
   min-width: min(100%, 18rem);
   margin-bottom: 0;
   flex: 1 1 18rem;
+}
+
+/* The search caps at a readable width; the filter holds the right edge so it
+   lines up with Rescan and the rows. */
+.library-toolbar .library-filter {
+  margin-left: auto;
 }
 
 /* A segmented radio group: the native radios stay in the tab order and the
@@ -2087,6 +2106,7 @@ img.collection-detail-cover {
 
 .work-cart-row .status-stamp {
   flex: 0 0 auto;
+  justify-self: start;
 }
 
 .work-cart-row .status-stamp svg {
@@ -2187,7 +2207,7 @@ img.collection-detail-cover {
   min-height: 2.75rem;
   align-items: center;
   gap: var(--space-1);
-  color: #334fcb;
+  color: var(--info);
   font-size: var(--type-sm);
   font-weight: 760;
   text-decoration: none;
@@ -2428,9 +2448,14 @@ img.collection-detail-cover {
   white-space: nowrap;
 }
 
+/* Same box and ink as the Library's selection checkboxes, not the browser's
+   default blue; Select all matches the rows it controls. */
+.tonie-select-all,
 .tonie-chapter-select {
   width: 1.25rem;
   height: 1.25rem;
+  margin: 0;
+  accent-color: var(--bookcloth);
 }
 
 .tonie-chapter-list {
@@ -2989,6 +3014,11 @@ img.collection-detail-cover {
     padding: var(--space-3);
   }
 
+  /* Beside the compact index, two settings columns break every heading and
+     the account email; one column keeps them whole. */
+  .settings-screen {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (min-width: 1100px) and (max-width: 1279.98px) {
@@ -3248,22 +3278,24 @@ img.collection-detail-cover {
     flex-direction: column;
   }
 
+  /* The link and the row buttons stay on one line and wrap only when they must;
+     the mark-only Dismiss keeps its square, it never stretches into a bar. */
   .work-cart-actions {
-    align-items: stretch;
-    flex-direction: column;
+    flex-wrap: wrap;
   }
 
   .work-cart-row-buttons {
-    align-items: stretch;
-    flex-direction: column;
+    margin-left: auto;
   }
 
   .work-cart-link,
-  .work-cart-retry,
-  .work-cart-dismiss {
-    width: 100%;
+  .work-cart-retry {
     min-height: 44px;
-    justify-content: center;
+  }
+
+  .work-cart-dismiss {
+    width: 44px;
+    min-height: 44px;
   }
 
   .screen-heading {
@@ -3330,6 +3362,12 @@ img.collection-detail-cover {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Stacked under the field, the duration aligns with the title text inside
+     it, as the marks already do. */
+  .chapter-title-field > span {
+    padding-inline: calc(var(--space-3) + 1px);
+  }
+
   .chapter-row-controls {
     grid-column: 3;
     justify-content: flex-end;
@@ -3374,8 +3412,12 @@ img.collection-detail-cover {
     flex-direction: column;
   }
 
+  /* The row body beside the jacket is narrow; tighter insets keep
+     "Choose chapters" on one line at phone widths. */
   .library-row-actions .button {
     width: 100%;
+    padding-inline: var(--space-2);
+    white-space: normal;
   }
 
   .tonie-summary {
@@ -3413,8 +3455,11 @@ img.collection-detail-cover {
     width: 100%;
   }
 
+  /* A label never breaks inside the button; when Select all and Remove N
+     selected cannot share the line, the button takes its own. */
   .tonie-detail-bulk .button {
-    flex: 1;
+    flex: 1 1 auto;
+    white-space: nowrap;
   }
 
   .tonie-chapter-row {
@@ -3763,7 +3808,7 @@ img.collection-detail-cover {
 
 @media (max-width: 759.98px) {
   .library-row {
-    grid-template-columns: auto 5.75rem minmax(0, 1fr);
+    grid-template-columns: auto 5rem minmax(0, 1fr);
   }
 
   .library-select-cell {

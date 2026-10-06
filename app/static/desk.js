@@ -644,7 +644,7 @@ function workCartRow(item, { request, requestRefresh, navigate, dismiss, signal,
   if (item.canRetry) {
     const retry = element("button", {
       type: "button",
-      className: "button button-danger work-cart-retry",
+      className: "button button-secondary work-cart-retry",
       "data-focus-key": `${item.key}-retry`,
     }, [
       iconNode("retry"),

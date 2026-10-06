@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
-import { forgePreparationState } from "./library.js";
+import { forgePreparationState, sourceLabel } from "./library.js";
 import {
   announce,
   chapterMarks,
@@ -102,7 +102,7 @@ function loadingState(title, message) {
 
 function detailFacts(collection) {
   const facts = [
-    ["Source", collection.source || "Local audio"],
+    ["Source", sourceLabel(collection)],
     ["Uploader", collection.uploader || "Not provided"],
     ["Duration", collection.total_duration || "No duration yet"],
     ["Chapters", String(collection.track_count || 0)],
