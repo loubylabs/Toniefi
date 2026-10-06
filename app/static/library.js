@@ -149,8 +149,73 @@ function collectionCover(collection) {
   });
 }
 
+// Ready is the one thing an operator scans for, and an unforged story is a
+// state of its own ("Needs Forge") rather than a neutral stage name.
 function stageLabel(stage) {
-  return stage === "forged" ? "Forge complete" : stage === "extracted" ? "Extracted" : stage || "Local";
+  return stage === "forged" ? "Ready to send" : "Needs Forge";
+}
+
+// The manifest's `source` names the importer ("url", "podcast", "librivox",
+// "upload") and `url` holds the address it read. The row shows what kind of
+// thing this is; the full address stays in the row's title attribute.
+export function sourceLabel(collection) {
+  const kind = collection?.source;
+  if (kind === "upload") return "Upload";
+  if (kind === "librivox") return "LibriVox";
+  let parsed = null;
+  try {
+    parsed = new URL(collection?.url || "");
+  } catch {
+    parsed = null;
+  }
+  const host = (parsed?.hostname || "").replace(/^www\./, "").toLocaleLowerCase();
+  const onHost = (domain) => host === domain || host.endsWith(`.${domain}`);
+  if (onHost("youtube.com") || host === "youtu.be") {
+    return parsed.searchParams.has("list") || parsed.pathname.startsWith("/playlist")
+      ? "YouTube playlist"
+      : "YouTube video";
+  }
+  if (onHost("spotify.com")) return "Spotify episode";
+  if (onHost("podcasts.apple.com")) return "Apple Podcasts";
+  if (kind === "podcast") return "RSS feed";
+  if (onHost("librivox.org")) return "LibriVox";
+  return host || (kind === "url" ? "Web link" : "Local collection");
+}
+
+function addedDate(collection) {
+  const seconds = Number(collection?.created_at);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  return new Date(seconds * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+export const LIBRARY_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "ready", label: "Ready to send" },
+  { value: "needs-forge", label: "Needs Forge" },
+];
+const FILTER_STORAGE_KEY = "toniefi.library.filter";
+
+export function filterCollectionsByReadiness(collections, filter, jobs = []) {
+  if (filter !== "ready" && filter !== "needs-forge") return collections.slice();
+  const wantReady = filter === "ready";
+  return collections.filter((collection) => (forgePreparationState(collection, jobs).state === "ready") === wantReady);
+}
+
+function storedFilter() {
+  try {
+    const value = globalThis.sessionStorage?.getItem(FILTER_STORAGE_KEY);
+    return LIBRARY_FILTERS.some((entry) => entry.value === value) ? value : "all";
+  } catch {
+    return "all";
+  }
+}
+
+function storeFilter(value) {
+  try {
+    globalThis.sessionStorage?.setItem(FILTER_STORAGE_KEY, value);
+  } catch {
+    // Private mode or a blocked store: the filter just does not persist.
+  }
 }
 
 // A playlist that held a private or deleted video arrives short. The chapters
@@ -190,6 +255,7 @@ export function createLibraryScreen({
     let collections = refresh.snapshot.collections || [];
     let jobs = refresh.snapshot.jobs || [];
     let query = "";
+    let filter = storedFilter();
     const selection = createSelectionState();
     const root = element("section", { className: "library-screen", "aria-labelledby": "library-title" });
     const titleGroup = element("div", {}, [
@@ -215,6 +281,26 @@ export function createLibraryScreen({
       iconNode("search"),
       element("div", { className: "form-field" }, [searchLabel, search]),
     ]);
+    const filterInputs = LIBRARY_FILTERS.map(({ value, label }) => {
+      const input = element("input", {
+        type: "radio",
+        name: "library-filter",
+        value,
+        checked: value === filter,
+        "data-focus-key": `library-filter-${value}`,
+      });
+      input.addEventListener("change", () => {
+        filter = value;
+        storeFilter(filter);
+        render({ focusKey: `library-filter-${value}` });
+      });
+      return { value, input, label: element("label", {}, [input, element("span", { text: label })]) };
+    });
+    const filterGroup = element("fieldset", { className: "library-filter" }, [
+      element("legend", { className: "visually-hidden", text: "Show collections" }),
+      ...filterInputs.map((entry) => entry.label),
+    ]);
+    const toolbar = element("div", { className: "library-toolbar" }, [searchField, filterGroup]);
     const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
     const summary = element("p", { className: "library-summary", role: "status", "aria-live": "polite" });
     const list = element("ul", { className: "library-list" });
@@ -427,7 +513,7 @@ export function createLibraryScreen({
       });
       const removeButton = element("button", {
         type: "button",
-        className: "button button-secondary library-delete",
+        className: "button library-delete",
         "data-focus-key": `library-${collection.slug}-delete`,
         "data-collection-mutation": "",
       }, [iconNode("trash"), element("span", { text: "Delete" })]);
@@ -499,11 +585,17 @@ export function createLibraryScreen({
           text: `Select ${collection.title || collection.slug} to send`,
         })])
         : element("div", { className: "library-select-cell" });
+      const added = addedDate(collection);
       const facts = element("ul", { className: "collection-facts", "aria-label": "Collection facts" }, [
         element("li", { text: `${collection.track_count || 0} ${collection.track_count === 1 ? "chapter" : "chapters"}` }),
         element("li", { text: collection.total_duration || "No duration yet" }),
         element("li", { text: `${collection.tonies_needed || 0} ${collection.tonies_needed === 1 ? "Tonie" : "Tonies"} needed` }),
-      ]);
+        // Same-titled imports are common (a re-import, two uploads), and the
+        // source kind and date are what tell them apart. The full address is
+        // on hover rather than printed across the row.
+        element("li", { title: collection.url || collection.path || "", text: sourceLabel(collection) }),
+        added ? element("li", { text: `Added ${added}` }) : null,
+      ].filter(Boolean));
       const panelId = `library-chapters-${collection.slug}`;
       const open = selectable && expanded.has(collection.slug);
       const chooseChapters = selectable
@@ -515,7 +607,7 @@ export function createLibraryScreen({
           // the id does not exist in the document while it is closed.
           "aria-controls": open ? panelId : null,
           "data-focus-key": `library-${collection.slug}-chapters`,
-        }, [iconNode("more"), element("span", { text: open ? "Hide chapters" : "Choose chapters" })])
+        }, [iconNode("listCheck"), element("span", { text: open ? "Hide chapters" : "Choose chapters" })])
         : null;
       if (chooseChapters) {
         chooseChapters.addEventListener("click", () => {
@@ -537,7 +629,6 @@ export function createLibraryScreen({
           text: `${selection.chosenCount(collection)} of ${(collection.tracks || []).length} chapters selected`,
         })
         : null;
-      const source = collection.url || collection.source || collection.path || "Local collection";
       const body = element("div", { className: "library-row-body" }, [
         element("div", { className: "library-row-heading" }, [
           element("h2", { id: titleId, text: collection.title || "Untitled collection" }),
@@ -549,7 +640,6 @@ export function createLibraryScreen({
         ]),
         facts,
         chapterCount,
-        element("p", { className: "library-source", text: source }),
         skippedNote(collection),
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
@@ -570,7 +660,9 @@ export function createLibraryScreen({
         const slug = node.dataset.collectionSlug;
         if (slug) chapterScroll.set(slug, node.scrollTop || 0);
       }
-      const shown = filterCollectionsByTitle(collections, query);
+      const shown = filterCollectionsByReadiness(filterCollectionsByTitle(collections, query), filter, jobs);
+      for (const entry of filterInputs) entry.input.checked = entry.value === filter;
+      const searching = Boolean(query.trim());
       if (!collections.length) {
         summary.textContent = "No local collections";
         replace(list, element("li", { className: "empty-state library-empty" }, [
@@ -582,18 +674,20 @@ export function createLibraryScreen({
           ]),
         ]));
       } else if (!shown.length) {
-        summary.textContent = `No titles match “${query.trim()}”`;
+        summary.textContent = searching ? `No titles match “${query.trim()}”` : "No collections match this filter";
         replace(list, element("li", { className: "empty-state library-empty" }, [
           iconNode("search"),
-          element("strong", { text: "No matching collection titles" }),
-          element("p", { text: "Try a shorter title or clear the search." }),
+          element("strong", { text: searching ? "No matching collection titles" : "No collections match this filter" }),
+          element("p", { text: searching ? "Try a shorter title, another filter, or clear the search." : "Choose All to see every collection." }),
           element("button", {
             type: "button",
             className: "button button-secondary",
-            text: "Clear search",
+            text: searching ? "Clear search and filter" : "Show all",
             onclick: () => {
               query = "";
               search.value = "";
+              filter = "all";
+              storeFilter(filter);
               render({ focusKey: "library-search" });
             },
           }),
@@ -1055,7 +1149,7 @@ export function createLibraryScreen({
       }
     });
 
-    root.append(header, searchField, stale, summary, list, sendBar);
+    root.append(header, toolbar, stale, summary, list, sendBar);
     replace(workspace, root);
     render();
     const unsubscribe = refresh.subscribe(onRefresh);

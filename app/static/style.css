@@ -805,7 +805,6 @@ textarea::placeholder {
   display: grid;
   min-width: 0;
   overflow: hidden;
-  grid-template-columns: clamp(7rem, 16vw, 10rem) minmax(0, 1fr);
   border: var(--rule-thin);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.84);
@@ -815,9 +814,13 @@ textarea::placeholder {
 .library-cover {
   width: 100%;
   height: 100%;
-  min-height: 11rem;
+  min-height: 0;
   object-fit: cover;
   border-right: var(--rule-thin);
+}
+
+.library-cover.collection-cover-fallback {
+  font-size: 1.5rem;
 }
 
 img.library-cover {
@@ -828,7 +831,7 @@ img.library-cover {
 .library-row-body {
   display: grid;
   min-width: 0;
-  padding: var(--space-5);
+  padding: var(--space-4);
   align-content: start;
 }
 
@@ -1236,12 +1239,93 @@ img.collection-detail-cover {
 
 .library-row-actions {
   display: flex;
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
   gap: var(--space-2);
 }
 
+/* Open is the row's action. Delete is irreversible but rare, so it sits last
+   as failure-ink text with no border; the confirmation dialog carries the
+   weight. */
 .library-delete {
+  margin-left: auto;
+  border-color: transparent;
+  background: transparent;
   color: var(--failure);
+}
+
+.library-delete:hover {
+  background: rgba(199, 44, 38, 0.08);
+}
+
+.library-toolbar {
+  display: flex;
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3) var(--space-5);
+}
+
+.library-toolbar .library-search-field {
+  min-width: min(100%, 18rem);
+  margin-bottom: 0;
+  flex: 1 1 18rem;
+}
+
+/* A segmented radio group: the native radios stay in the tab order and the
+   arrow keys move between them, the label draws the segment. */
+.library-filter {
+  display: inline-flex;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--bookcloth);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  overflow: hidden;
+}
+
+.library-filter label {
+  position: relative;
+  display: inline-flex;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-4);
+  align-items: center;
+  color: var(--bookcloth);
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.library-filter label + label {
+  border-left: 1px solid var(--bookcloth);
+}
+
+.library-filter label:hover {
+  background: var(--paper-muted);
+}
+
+.library-filter label:has(input:checked) {
+  background: var(--bookcloth);
+  color: var(--paper-raised);
+}
+
+.library-filter label:has(input:focus-visible) {
+  outline: 0.1875rem solid var(--focus);
+  outline-offset: -0.1875rem;
+}
+
+.library-filter input:focus-visible {
+  outline: none;
+}
+
+.library-filter input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .desk-screen {
@@ -3121,10 +3205,6 @@ img.collection-detail-cover {
     width: 100%;
   }
 
-  .library-cover {
-    min-height: 12rem;
-  }
-
   .library-row-body {
     padding: var(--space-3);
   }
@@ -3140,6 +3220,11 @@ img.collection-detail-cover {
 
   .collection-facts li + li::before {
     content: none;
+  }
+
+  .library-row .collection-facts {
+    display: flex;
+    gap: var(--space-1) var(--space-3);
   }
 
   .collection-detail-heading {
@@ -3206,6 +3291,16 @@ img.collection-detail-cover {
 
   .library-search-field > span {
     display: none;
+  }
+
+  .library-filter {
+    width: 100%;
+  }
+
+  .library-filter label {
+    padding-inline: var(--space-2);
+    flex: 1 1 auto;
+    justify-content: center;
   }
 
   .library-row-actions {
@@ -3359,7 +3454,7 @@ img.collection-detail-cover {
 }
 
 .library-row {
-  grid-template-columns: auto clamp(7rem, 16vw, 10rem) minmax(0, 1fr);
+  grid-template-columns: auto clamp(4.5rem, 7vw, 6.5rem) minmax(0, 1fr);
 }
 
 /* The cell is the hit target, not the box. A 20x20 checkbox fails WCAG 2.2 AA
@@ -3367,9 +3462,9 @@ img.collection-detail-cover {
 .library-select-cell {
   display: flex;
   align-items: flex-start;
-  min-width: 2.75rem;
+  min-width: 2.875rem;
   min-height: 2.75rem;
-  padding: var(--space-5) var(--space-2) var(--space-5) var(--space-4);
+  padding: var(--space-4) var(--space-2) var(--space-4) var(--space-4);
   cursor: pointer;
 }
 

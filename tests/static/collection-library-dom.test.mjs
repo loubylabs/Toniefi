@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createDeskScreen, createLiveWorkCart } from "../../app/static/desk.js";
 import { createForgeDefaultsCoordinator } from "../../app/static/forge-defaults.js";
-import { createLibraryScreen, forgePreparationState } from "../../app/static/library.js";
+import { createLibraryScreen, forgePreparationState, sourceLabel } from "../../app/static/library.js";
 import { createCollectionDetail } from "../../app/static/collection.js";
 
 import { buttonWithText, flush, installDom } from "./mini-dom.mjs";
@@ -1210,6 +1210,107 @@ test("Desk picker ticks only the episode a podcast preview preselects", async ()
     ]);
   } finally {
     controller.abort();
+    dom.restore();
+  }
+});
+
+test("sourceLabel names the kind of source and never prints the raw address", () => {
+  assert.equal(sourceLabel({ source: "url", url: "https://www.youtube.com/playlist?list=PL1" }), "YouTube playlist");
+  assert.equal(sourceLabel({ source: "url", url: "https://www.youtube.com/watch?v=abc&list=PL1" }), "YouTube playlist");
+  assert.equal(sourceLabel({ source: "url", url: "https://youtu.be/abc" }), "YouTube video");
+  assert.equal(sourceLabel({ source: "url", url: "https://open.spotify.com/episode/x" }), "Spotify episode");
+  assert.equal(sourceLabel({ source: "podcast", url: "https://podcasts.apple.com/us/podcast/id1" }), "Apple Podcasts");
+  assert.equal(sourceLabel({ source: "podcast", url: "https://example.org/feed.xml" }), "RSS feed");
+  assert.equal(sourceLabel({ source: "librivox", url: "https://librivox.org/x" }), "LibriVox");
+  assert.equal(sourceLabel({ source: "upload" }), "Upload");
+  assert.equal(sourceLabel({ source: "url", url: "https://www.example.com/a" }), "example.com");
+  assert.equal(sourceLabel({}), "Local collection");
+});
+
+test("Library row names readiness, source and date, and filters by readiness", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const stored = new Map();
+  globalThis.sessionStorage = {
+    getItem: (key) => (stored.has(key) ? stored.get(key) : null),
+    setItem: (key, value) => stored.set(key, String(value)),
+  };
+  const base = { track_count: 2, total_duration: "12m", tonies_needed: 1, created_at: Date.UTC(2026, 9, 5, 12) / 1000 };
+  const collections = [
+    { ...base, slug: "ready-one", title: "Ready One", stage: "forged", source: "url", url: "https://www.youtube.com/playlist?list=PL1" },
+    { ...base, slug: "raw-one", title: "Raw One", stage: "extracted", source: "upload" },
+  ];
+  const refresh = {
+    snapshot: { collections, jobs: [] },
+    subscribe: () => () => {},
+    async request() {
+      return { collections, stale: [], errors: {} };
+    },
+  };
+  try {
+    createLibraryScreen({ request: async () => ({}), refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    const rows = () => dom.workspace.querySelectorAll(".library-row");
+    assert.equal(rows().length, 2);
+    const stamps = dom.workspace.querySelectorAll(".status-stamp").map((node) => node.textContent);
+    assert.deepEqual(stamps, ["Ready to send", "Needs Forge"]);
+    const facts = dom.workspace.querySelectorAll(".collection-facts")[0].querySelectorAll("li");
+    const texts = facts.map((node) => node.textContent);
+    assert.ok(texts.includes("YouTube playlist"));
+    assert.ok(texts.some((text) => /^Added .*2026/.test(text)));
+    assert.equal(facts.find((node) => node.textContent === "YouTube playlist").getAttribute("title"), "https://www.youtube.com/playlist?list=PL1");
+    assert.equal(dom.workspace.querySelectorAll(".library-source").length, 0);
+
+    const radios = dom.workspace.querySelector(".library-filter").querySelectorAll("input");
+    assert.deepEqual(radios.map((node) => node.value), ["all", "ready", "needs-forge"]);
+    assert.equal(radios[0].checked, true);
+
+    const choose = async (value) => {
+      const radio = dom.workspace.querySelector(".library-filter").querySelectorAll("input").find((node) => node.value === value);
+      radio.checked = true;
+      await radio.dispatchEvent({ type: "change" });
+    };
+    await choose("needs-forge");
+    assert.deepEqual(rows().map((row) => row.querySelector("h2").textContent), ["Raw One"]);
+    assert.equal(stored.get("toniefi.library.filter"), "needs-forge");
+    await choose("ready");
+    assert.deepEqual(rows().map((row) => row.querySelector("h2").textContent), ["Ready One"]);
+
+    const search = dom.workspace.querySelector("#library-search");
+    search.value = "raw";
+    await search.dispatchEvent({ type: "input" });
+    assert.equal(rows().length, 0, "search and filter combine");
+    assert.match(dom.workspace.querySelector(".library-summary").textContent, /No titles match/);
+  } finally {
+    controller.abort();
+    delete globalThis.sessionStorage;
+    dom.restore();
+  }
+});
+
+test("Library opens a new screen on the filter the operator last chose", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  globalThis.sessionStorage = { getItem: () => "ready", setItem() {} };
+  const collections = [
+    { slug: "a", title: "A", stage: "forged", track_count: 1 },
+    { slug: "b", title: "B", stage: "extracted", track_count: 1 },
+  ];
+  const refresh = {
+    snapshot: { collections, jobs: [] },
+    subscribe: () => () => {},
+    async request() {
+      return { collections, stale: [], errors: {} };
+    },
+  };
+  try {
+    createLibraryScreen({ request: async () => ({}), refresh })({ workspace: dom.workspace, signal: controller.signal });
+    await flush();
+    assert.deepEqual(dom.workspace.querySelectorAll("h2").map((node) => node.textContent), ["A"]);
+    assert.equal(dom.workspace.querySelector(".library-filter").querySelectorAll("input").find((node) => node.value === "ready").checked, true);
+  } finally {
+    controller.abort();
+    delete globalThis.sessionStorage;
     dom.restore();
   }
 });
