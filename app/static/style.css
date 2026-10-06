@@ -2507,63 +2507,71 @@ img.collection-detail-cover {
 
 .activity-list {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
+/* One compact log line: title and metadata, stamp, relative time, action.
+   The stamp and time columns have fixed widths so they line up down the log. */
 .activity-row {
   display: grid;
   min-width: 0;
-  padding: var(--space-5);
-  /* auto-fit with a min() floor, so the columns can never demand more width
-     than the row has. The fixed 16rem + 14rem + 14rem minimums overflowed by
-     273px at 768px, which fell into an 8.02px gap above the 759.98px
-     collapse rule. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
-  align-items: start;
-  gap: var(--space-4) var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  grid-template-columns: minmax(0, 1fr) 9rem 6rem 13.5rem;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
   border: var(--rule-thin);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 0.3rem 0.8rem rgba(11, 42, 32, 0.07), 0 0.1rem 0.2rem rgba(11, 42, 32, 0.05);
 }
 
-.activity-row-heading {
+.activity-title {
   display: flex;
   min-width: 0;
-  grid-column: 1 / -1;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
 }
 
 .activity-row h2 {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: var(--type-lg);
+  font-size: var(--type-base);
   font-weight: 790;
-  letter-spacing: -0.025em;
-  line-height: 1.18;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
 }
 
-.activity-job-id {
-  display: block;
-  margin-top: var(--space-1);
+.activity-row .status-stamp {
+  justify-self: start;
+}
+
+.activity-time {
+  color: var(--ink-muted);
+  font-size: var(--type-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.activity-facts {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
   color: var(--ink-muted);
   font-size: var(--type-xs);
   font-weight: 700;
 }
 
-.activity-facts {
-  display: grid;
-  min-width: 0;
-  margin: 0;
-  grid-template-columns: repeat(2, minmax(8rem, 1fr));
-  gap: var(--space-3);
-}
-
 .activity-facts div,
 .settings-facts > div {
   min-width: 0;
+}
+
+.activity-facts div {
+  display: flex;
+  gap: var(--space-1);
 }
 
 .activity-facts dt,
@@ -2581,8 +2589,18 @@ img.collection-detail-cover {
   font-weight: 700;
 }
 
-.activity-messages p,
-.activity-action p {
+.activity-facts dd {
+  margin: 0;
+}
+
+.activity-messages {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  gap: var(--space-2);
+}
+
+.activity-messages p {
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -2599,15 +2617,19 @@ img.collection-detail-cover {
   color: var(--failure);
 }
 
-.activity-action {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-3);
-}
-
-.activity-action p {
+.activity-guidance {
   color: var(--ink-muted);
   font-size: var(--type-sm);
+}
+
+.activity-action {
+  justify-self: end;
+}
+
+.activity-action .button {
+  min-height: 2.25rem;
+  padding-block: var(--space-1);
+  white-space: nowrap;
 }
 
 .activity-empty {
@@ -3389,21 +3411,22 @@ img.collection-detail-cover {
   }
 
   .activity-row {
-    padding: var(--space-4);
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4);
+    padding: var(--space-3);
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-2) var(--space-3);
   }
 
-  .activity-row-heading {
-    align-items: flex-start;
-    flex-direction: column;
+  .activity-title,
+  .activity-action {
+    grid-column: 1 / -1;
   }
 
-  .activity-facts {
-    grid-template-columns: minmax(0, 1fr);
+  .activity-action {
+    justify-self: stretch;
   }
 
   .activity-action .button {
+    min-height: 44px;
     width: 100%;
   }
 
