@@ -232,8 +232,10 @@ class PushAssignment(RequestModel):
     tonie_id: str
     # The Tonie's name as the picker showed it. Display only: it names the job,
     # and it stays out of the idempotency digest and the stored payload, so a
-    # rename between a send and its retry is still the same operation.
-    tonie_name: str = Field(default="", max_length=100)
+    # rename between a send and its retry is still the same operation. Never
+    # length-checked: a long name from the cloud must not refuse a send, so the
+    # label clips it instead.
+    tonie_name: str = ""
     replace: bool
     remote_chapters: list[ChapterRef]
     # One assignment is one Creative Tonie, and a Tonie can hold chapters from
@@ -679,7 +681,7 @@ def _push_job_title(assignment: dict[str, Any], tonie_name: str) -> str:
     enqueue time. The target is the name the picker showed; a send made
     without one falls back to the generic phrase rather than a bare id.
     """
-    target = tonie_name.strip() or "a Creative Tonie"
+    target = tonie_name.strip()[:100].strip() or "a Creative Tonie"
     slugs: list[str] = []
     for source in assignment["sources"]:
         if source["slug"] not in slugs:

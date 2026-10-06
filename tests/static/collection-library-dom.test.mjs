@@ -1379,6 +1379,59 @@ test("Library neither takes focus on first paint nor on a refresh poll", async (
   }
 });
 
+test("a refresh poll keeps a collection title that is being typed, and saves nothing", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const collection = {
+    slug: "draft-story",
+    title: "Draft Story",
+    stage: "forged",
+    forge: { normalized: true },
+    track_count: 1,
+    total_duration: "10m",
+    tonies_needed: 1,
+    tracks: [{ name: "one.mp3", title: "One", seconds: 600, duration: "10m" }],
+    plan: [{ index: 1, seconds: 600, duration: "10m", tracks: [] }],
+  };
+  const patches = [];
+  let onRefresh = null;
+  const refresh = {
+    snapshot: { status: { usable_limit_seconds: 5370 }, collections: [collection], jobs: [], stale: [], errors: {} },
+    subscribe: (fn) => { onRefresh = fn; return () => {}; },
+    request: async () => refresh.snapshot,
+  };
+  const request = async (url, options = {}) => {
+    if (options.method === "PATCH") patches.push(JSON.parse(options.body).title);
+    return collection;
+  };
+  try {
+    createCollectionDetail({
+      workspace: dom.workspace,
+      slug: collection.slug,
+      request,
+      refresh,
+      player: { play() {} },
+      signal: controller.signal,
+    });
+    await flush();
+    const input = dom.workspace.querySelector("#collection-title-input");
+    input.focus();
+    input.value = "Draft Story, half-typ";
+
+    onRefresh(refresh.snapshot);
+    await flush();
+
+    const redrawn = dom.workspace.querySelector("#collection-title-input");
+    assert.notEqual(redrawn, input, "the poll redrew the field");
+    assert.equal(redrawn.value, "Draft Story, half-typ");
+    assert.equal(dom.document.activeElement, redrawn);
+    assert.deepEqual(patches, []);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
 test("the collection title is the h1 field: Enter saves, Escape reverts, a failed save keeps the typed value", async () => {
   const dom = installDom();
   const controller = new AbortController();

@@ -175,6 +175,12 @@ against the file order the browser submitted, and plans the capacity groups itse
 chapters. Job creation is atomic: either every assignment is queued or none is. The
 `operation_key` makes an uncertain response safe to retry without creating a second send batch.
 
+An assignment may also carry `tonie_name`, the target's name as the picker showed it. It is
+display only: it names the job ("Send Moon Story to Bedtime Bear", clipped to 100 characters, or
+"a Creative Tonie" when absent or blank), it is never length-checked, and it stays out of the
+idempotency digest and the stored job payload. A retry that carries a different name for the same
+target is still the same operation.
+
 A batch holds at most 100 assignments. Manifest fingerprints are exactly 64 characters.
 
 Push jobs are not retryable through `/api/jobs/{id}/retry`, because a Creative Tonie write has no

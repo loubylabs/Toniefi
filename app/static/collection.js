@@ -215,10 +215,19 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
     signal,
   });
 
+  let redrawing = false;
+
   function renderDetail({ focusKey = "", fallback = null } = {}) {
     if (!active || signal.aborted || !collection) return;
     const preparation = forgePreparationState(collection, jobs);
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
+    // A refresh poll redraws the page every few seconds while work runs. A
+    // title being typed survives it rather than snapping back to the saved one.
+    // A redraw that names its focus target (after a save) shows the saved title.
+    const previousTitle = root.querySelector("#collection-title-input");
+    const titleDraft = !focusKey && previousTitle && document.activeElement === previousTitle
+      ? previousTitle.value
+      : null;
     // A textarea, so a long title wraps instead of being cut off mid-word.
     const titleInput = element("textarea", {
       id: "collection-title-input",
@@ -231,7 +240,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
       required: true,
       "data-collection-mutation": "",
     });
-    titleInput.value = collection.title || "";
+    titleInput.value = titleDraft ?? (collection.title || "");
     // field-sizing grows the box with its text where supported; elsewhere fit it by hand.
     const fitTitle = () => {
       if (globalThis.CSS?.supports?.("field-sizing", "content")) return;
@@ -243,7 +252,9 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
     // title back. One save at a time, so Enter and the blur it causes are one.
     let savingTitle = false;
     async function saveTitle() {
-      if (savingTitle || titleInput.isConnected === false) return;
+      // Some engines fire blur on a focused node as a redraw removes it; that
+      // is not the operator leaving the field, so it saves nothing.
+      if (redrawing || savingTitle || titleInput.isConnected === false) return;
       const title = titleInput.value.trim();
       if (title && title === collection.title) {
         titleInput.value = title;
@@ -672,12 +683,17 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         }
       });
     }
-    replace(root, header, element("div", { className: "collection-detail-grid" }, [
-      element("div", { className: "collection-detail-main" }, [chapters]),
-      element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
-        ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel, adsPanel].filter(Boolean)
-        : [preparationPanel]),
-    ]));
+    redrawing = true;
+    try {
+      replace(root, header, element("div", { className: "collection-detail-grid" }, [
+        element("div", { className: "collection-detail-main" }, [chapters]),
+        element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
+          ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel, adsPanel].filter(Boolean)
+          : [preparationPanel]),
+      ]));
+    } finally {
+      redrawing = false;
+    }
     // A trim or an ad removal swaps the whole collection folder when it
     // finishes, so an edit made meanwhile would wait on the server and then
     // act on the old files.

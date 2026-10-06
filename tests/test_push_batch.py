@@ -998,6 +998,17 @@ def test_send_label_names_the_target_tonie(isolated):
     assert "tonie_name" not in stored["payload"]
 
 
+def test_a_long_tonie_name_never_refuses_a_send(isolated):
+    client = TestClient(main.app)
+    body = batch_body(isolated)
+    body["assignments"][0]["tonie_name"] = "B" * 150
+
+    response = client.post("/api/push/batch", json=body)
+
+    assert response.status_code == 200
+    assert db.get_job(response.json()["job_ids"][0])["label"] == f"Send Night Stories to {'B' * 100}"
+
+
 def test_send_label_falls_back_only_when_the_name_is_unknown(isolated):
     client = TestClient(main.app)
     other = second_collection("Moon Tales", [("m1.mp3", "M1", 100)])
