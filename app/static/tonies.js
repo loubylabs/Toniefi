@@ -374,7 +374,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
 
       const clearButton = element("button", {
         type: "button",
-        className: "button button-danger tonie-clear",
+        className: "button button-secondary tonie-destructive tonie-clear",
         "data-tonie-control": "",
       }, [iconNode("trash"), element("span", { text: "Clear all chapters" })]);
       clearButton.addEventListener("click", async () => {
@@ -413,7 +413,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       });
       const removeSelected = element("button", {
         type: "button",
-        className: "button button-danger tonie-remove-selected",
+        className: "button button-secondary tonie-destructive tonie-remove-selected",
         disabled: selectedCount === 0,
         "data-tonie-control": "",
         "data-tonie-disabled": selectedCount === 0 ? "" : null,
@@ -444,7 +444,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         );
       });
       const intro = element("div", { className: "tonie-detail-heading" }, [
-        element("p", { text: "Tick chapters to remove them together. Rename or reorder in place; pointer drag and the Move buttons save the same canonical chapter list." }),
+        element("p", { text: "Tick chapters to remove them together, or rename and reorder them in place." }),
         element("div", { className: "tonie-detail-bulk" }, [
           element("label", { className: "tonie-select-all-field" }, [selectAll, element("span", { text: "Select all" })]),
           removeSelected,
@@ -505,7 +505,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         ]);
       });
       return element("div", { className: "tonie-send-panel", role: "status", "aria-live": "polite" }, [
-        element("h3", {
+        element("h2", {
           text: entries.length === 1 ? "Sending to this Tonie" : `${entries.length} sends to this Tonie`,
         }),
         element("ol", {}, rows),

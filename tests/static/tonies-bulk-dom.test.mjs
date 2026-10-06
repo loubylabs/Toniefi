@@ -102,6 +102,13 @@ test("ticking rows updates the count, Select all reflects a full set, and the bu
 
     assert.equal(screen.node(".tonie-remove-selected").disabled, true);
     assert.equal(screen.node(".tonie-remove-selected").textContent.includes("Remove selected"), true);
+    // Initiators are failure-ink secondary buttons; red fill is the dialog's.
+    for (const selector of [".tonie-remove-selected", ".tonie-clear"]) {
+      const classes = screen.node(selector).className;
+      assert.match(classes, /\bbutton-secondary\b/);
+      assert.match(classes, /\btonie-destructive\b/);
+      assert.doesNotMatch(classes, /\bbutton-danger\b/);
+    }
 
     const ticks = screen.nodes(".tonie-chapter-select");
     await screen.tick(`#${ticks[0].id}`);

@@ -2350,11 +2350,9 @@ img.collection-detail-cover {
 }
 
 .tonie-detail-heading {
-  display: flex;
+  display: grid;
   margin-bottom: var(--space-4);
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-5);
+  gap: var(--space-3);
 }
 
 .tonie-detail-heading p {
@@ -2363,13 +2361,32 @@ img.collection-detail-cover {
   color: var(--ink-muted);
 }
 
+/* Both Tonie wipes are irreversible: secondary shape, failure ink. The red
+   fill belongs to the confirmation dialog's confirm button alone. */
+.tonie-destructive {
+  border-color: var(--failure);
+  color: var(--failure);
+}
+
+.tonie-destructive:hover:not(:disabled) {
+  background: rgba(199, 44, 38, 0.08);
+}
+
+.tonie-destructive:disabled {
+  border-color: var(--rule);
+  background: var(--paper-muted);
+  color: var(--ink-muted);
+  opacity: 1;
+}
+
 .tonie-clear {
+  margin-left: auto;
   flex: 0 0 auto;
 }
 
 .tonie-detail-bulk {
   display: flex;
-  gap: 0.75rem;
+  gap: var(--space-3);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -2378,6 +2395,7 @@ img.collection-detail-cover {
   display: inline-flex;
   gap: 0.4rem;
   align-items: center;
+  white-space: nowrap;
 }
 
 .tonie-chapter-select {
@@ -3338,12 +3356,8 @@ img.collection-detail-cover {
     padding: var(--space-3);
   }
 
-  .tonie-detail-heading {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .tonie-clear {
+    margin-left: 0;
     width: 100%;
   }
 
@@ -3806,7 +3820,7 @@ img.collection-detail-cover {
   background: var(--paper-muted);
 }
 
-.tonie-send-panel h3 {
+.tonie-send-panel h2 {
   margin: 0 0 var(--space-2);
   font-size: var(--type-xs);
   letter-spacing: 0.06em;

@@ -270,7 +270,7 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 - **Action:** Chartreuse fill, deep bookcloth text, and a deep bookcloth edge. Hover shifts to the shipped darker chartreuse.
 - **Prepare:** Periwinkle fill, white text, 1.25rem type, 3.75rem height, and a focused periwinkle shadow. This count-aware control closes the intake tray.
 - **Secondary:** Raised white paper, bottle-green text, and a bottle-green edge. Hover moves to muted paper.
-- **Danger:** Failure-red fill and border with white text. It is reserved for confirmed destructive action.
+- **Danger:** Failure-red fill and border with white text. It is reserved for the confirm button of an irreversible-action dialog. Initiators (Library Delete, Clear all chapters, Remove selected) are secondary or text buttons in failure ink; when disabled they fall to muted ink, never pink.
 - **Focus:** Every button uses the global 0.1875rem electric-blue outline with a 0.1875rem offset.
 - **Mobile:** Core buttons and icon buttons grow to at least 44px high. Primary actions usually expand to the available width.
 
@@ -335,7 +335,7 @@ Use real full-color cover art when available. If no cover exists, render a bottl
 
 ### Creative Tonies Chapter Selection
 
-Each chapter row on a Tonie carries a checkbox using the standard field styling. The list heading offers Select all beside a danger button labeled Remove N selected, disabled at zero selected. Bulk removal is one whole-list save behind the standard irreversible-action dialog. Clear all chapters remains as the separate one-step wipe.
+Each chapter row on a Tonie carries a checkbox using the standard field styling. The list heading offers Select all at the left of one toolbar row, beside a failure-ink secondary button labeled Remove N selected, disabled at zero selected; Clear all chapters sits apart at the right. Bulk removal is one whole-list save behind the standard irreversible-action dialog. Clear all chapters remains as the separate one-step wipe.
 
 ### Truthful State Surfaces
 
