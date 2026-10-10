@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
-from . import archive, audio, config, db, ingest, jobs, library, podcast, push, tonies, version
+from . import archive, audio, config, db, ingest, jobs, library, podcast, push, tonie_history, tonies, version
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -664,12 +664,17 @@ def download_collection(slug: str):
 
 @app.get("/api/tonies")
 def list_tonies() -> list[dict[str, Any]]:
+    read_started = time.monotonic()
     try:
         client = push.client_from_settings()
         result = client.all_creative_tonies()
         client.close()
     except tonies.TonieCloudError as exc:
         raise fail(400, str(exc)) from exc
+    for tonie in result:
+        push.remember_seen_if_quiet(
+            tonie.get("householdId") or "", tonie.get("id") or "", tonie, read_started
+        )
     return [push.describe_tonie(tonie) for tonie in result]
 
 
@@ -752,6 +757,12 @@ def patch_tonie_name(household_id: str, tonie_id: str, body: TonieNamePatch) -> 
         raise fail(400, str(exc)) from exc
     except tonies.TonieCloudError as exc:
         raise fail(400, str(exc)) from exc
+
+
+@app.get("/api/tonies/{household_id}/{tonie_id}/versions")
+def list_tonie_versions(household_id: str, tonie_id: str) -> list[dict[str, Any]]:
+    """Every distinct chapter list Toniefi has seen on this Tonie, newest first."""
+    return tonie_history.versions(household_id, tonie_id)
 
 
 # -------------------------------------------------------------------- jobs

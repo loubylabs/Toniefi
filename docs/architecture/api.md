@@ -35,6 +35,7 @@ access control, so treat network reachability as the only gate and do not expose
 | `POST` | `/api/push/batch` | Queue one confirmed send batch |
 | `PUT` | `/api/tonies/{household}/{tonie}/chapters` | Canonical whole-list chapter write |
 | `PATCH` | `/api/tonies/{household}/{tonie}` | Rename one Creative Tonie |
+| `GET` | `/api/tonies/{household}/{tonie}/versions` | Chapter lists TonieFi has seen on one Tonie, newest first |
 | `GET` | `/api/jobs` | Active and recent jobs (default 40) |
 | `GET` | `/api/jobs/history` | Job history (default 40) |
 | `GET` | `/api/jobs/{id}` | One job |
@@ -211,6 +212,27 @@ round trip; it cannot close it.
 
 The name is trimmed and capped at 100 characters, matching the upstream `maxLength`. That is a
 different limit from the 128 characters a chapter title allows.
+
+## Version history of a Creative Tonie
+
+```bash
+curl -s http://127.0.0.1:8080/api/tonies/HOUSEHOLD/TONIE/versions
+```
+
+Every distinct chapter list TonieFi has seen on one Tonie, newest first. TonieFi stores one
+whenever it reads a Tonie (`GET /api/tonies`, and the re-read before every chapter write, rename
+or send) and after each of its own writes, skipping a list identical to the newest one stored.
+Each entry carries `id`, `created_at`, `source`, `tonie_name`, `chapters` (`id`, `title`,
+`seconds`, `duration`) and `changes` against the version before it (`first`, `added`, `removed`,
+`renamed`, `reordered`). `source` is `toniefi` for a list TonieFi wrote and `seen` for one it read.
+
+Each chapter also carries `collection`: `{slug, title}` of the Library collection it was last sent
+from, or `null`. It is read from finished push jobs by uploaded title, and a chapter keeps its
+origin across renames by id. `title` is the collection's current title, or the slug when the
+collection is gone.
+
+The route is read only and never calls the Tonie Cloud. A Tonie TonieFi has never read returns
+`[]`. There is no restore.
 
 ## Finish a legacy extracted collection
 

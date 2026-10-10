@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
+CREATE TABLE IF NOT EXISTS tonie_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id  TEXT NOT NULL,
+    tonie_id      TEXT NOT NULL,
+    tonie_name    TEXT NOT NULL DEFAULT '',
+    chapters      TEXT NOT NULL,
+    source        TEXT NOT NULL,
+    created_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tonie_versions_tonie_idx ON tonie_versions(household_id, tonie_id, id);
 """
 
 FORGE_OPERATION_IDS_MIGRATION = "2026-08-28-forge-operation-ids"
@@ -379,6 +389,60 @@ def add_desk_dismissals(keys: list[str], now: float) -> dict[str, float]:
     return merged
 
 
+# ---------------------------------------------------------- tonie versions
+
+def _chapter_identity(chapters: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    # Seconds are left out on purpose: a chapter mid-transcode reports 0 and
+    # later a real figure, and that is not a new version.
+    return [(c.get("id") or "", c.get("title") or "") for c in chapters]
+
+
+def record_tonie_version(
+    household_id: str,
+    tonie_id: str,
+    tonie_name: str,
+    chapters: list[dict[str, Any]],
+    source: str,
+    now: float,
+) -> bool:
+    """Store this chapter list unless it matches the Tonie's newest version."""
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT chapters FROM tonie_versions WHERE household_id=? AND tonie_id=? "
+                "ORDER BY id DESC LIMIT 1",
+                (household_id, tonie_id),
+            ).fetchone()
+            if row is not None and _chapter_identity(json.loads(row["chapters"])) == _chapter_identity(chapters):
+                conn.rollback()
+                return False
+            conn.execute(
+                "INSERT INTO tonie_versions(household_id,tonie_id,tonie_name,chapters,source,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (household_id, tonie_id, tonie_name, json.dumps(chapters), source, float(now)),
+            )
+            conn.commit()
+            return True
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def tonie_versions(household_id: str, tonie_id: str) -> list[dict[str, Any]]:
+    rows = connect().execute(
+        "SELECT id, created_at, source, tonie_name, chapters FROM tonie_versions "
+        "WHERE household_id=? AND tonie_id=? ORDER BY id",
+        (household_id, tonie_id),
+    ).fetchall()
+    return [
+        {"id": r["id"], "created_at": r["created_at"], "source": r["source"],
+         "tonie_name": r["tonie_name"], "chapters": json.loads(r["chapters"])}
+        for r in rows
+    ]
+
+
 # -------------------------------------------------------------------- jobs
 
 def create_job(kind: str, label: str, payload: dict[str, Any]) -> int:
@@ -655,6 +719,32 @@ def sent_chapters() -> dict[tuple[str, str], dict[str, Any]]:
             for name in source.get("files") or []:
                 sent[(source.get("slug"), name)] = mark
     return sent
+
+
+def sent_titles() -> dict[str, str]:
+    """The Library collection each uploaded chapter title was last sent from.
+
+    Pairs a push job's source files with its uploaded titles in order. A job
+    whose counts differ cannot be paired safely and is left out.
+    """
+    rows = connect().execute(
+        "SELECT * FROM jobs WHERE kind='push' AND status='done' ORDER BY id"
+    ).fetchall()
+    titles: dict[str, str] = {}
+    for row in rows:
+        job = _hydrate(row)
+        slugs = [
+            source.get("slug")
+            for source in job["payload"].get("sources") or []
+            for _ in source.get("files") or []
+        ]
+        uploaded = job["result"].get("uploaded") or []
+        if len(slugs) != len(uploaded):
+            continue
+        for slug, item in zip(slugs, uploaded):
+            if slug and item.get("title"):
+                titles[item["title"]] = slug
+    return titles
 
 
 def active_upload_stages() -> set[str]:
