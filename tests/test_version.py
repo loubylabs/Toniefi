@@ -23,8 +23,28 @@ def test_build_uses_development_when_the_commit_environment_is_empty(monkeypatch
         importlib.reload(version)
 
 
-def test_fastapi_metadata_uses_the_canonical_application_version():
-    assert main.app.version == version.APP_VERSION
+def test_build_url_links_the_full_commit():
+    sha = "bd9d91b4f5bed02dd5111d3e41dacbe27849760d"
+    assert version.build_url(sha) == f"https://github.com/loubylabs/Toniefi/commit/{sha}"
+
+
+def test_build_url_is_absent_for_a_source_checkout():
+    assert version.build_url("") is None
+    assert version.build_url("  ") is None
+
+
+def test_build_url_is_none_when_the_commit_environment_is_empty(monkeypatch):
+    try:
+        with monkeypatch.context() as environment:
+            environment.setenv("TONIEFI_BUILD_COMMIT", "")
+            importlib.reload(version)
+            assert version.BUILD_URL is None
+    finally:
+        importlib.reload(version)
+
+
+def test_fastapi_metadata_uses_the_build_label():
+    assert main.app.version == version.BUILD
 
 
 def test_publish_workflow_only_creates_sha_image_tags():

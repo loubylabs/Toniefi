@@ -1,9 +1,9 @@
-"""Application release and build identity."""
+"""Build identity: the Git commit the running image was built from."""
 from __future__ import annotations
 
 import os
 
-APP_VERSION = "1.0.0"
+REPOSITORY_URL = "https://github.com/loubylabs/Toniefi"
 
 
 def build_label(commit: str) -> str:
@@ -11,4 +11,11 @@ def build_label(commit: str) -> str:
     return normalized[:7] if normalized else "development"
 
 
-BUILD = build_label(os.getenv("TONIEFI_BUILD_COMMIT", ""))
+def build_url(commit: str) -> str | None:
+    normalized = commit.strip()
+    return f"{REPOSITORY_URL}/commit/{normalized}" if normalized else None
+
+
+_COMMIT = os.getenv("TONIEFI_BUILD_COMMIT", "")
+BUILD = build_label(_COMMIT)
+BUILD_URL = build_url(_COMMIT)

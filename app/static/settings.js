@@ -58,8 +58,8 @@ export function settingsFacts(status = {}) {
   const limit = Number(status.tonie_limit_seconds || 0);
   const usable = Number(status.usable_limit_seconds || 0);
   return {
-    version: status.version || "Unavailable",
     build: status.build || "Unavailable",
+    buildUrl: status.build_url || null,
     limit: status.tonie_limit_human || exactDuration(limit),
     usable: exactDuration(usable),
     headroom: exactDuration(Math.max(0, limit - usable)),
@@ -328,8 +328,12 @@ export function createSettingsScreen({ request = api, refresh } = {}) {
           ]),
         ]),
         element("dl", { className: "settings-facts system-facts" }, [
-          element("div", {}, [element("dt", { text: "Version" }), element("dd", { text: facts.version })]),
-          element("div", { className: "settings-code-fact" }, [element("dt", { text: "Build" }), element("dd", { text: facts.build })]),
+          element("div", { className: "settings-code-fact" }, [
+            element("dt", { text: "Build" }),
+            facts.buildUrl
+              ? element("dd", {}, [element("a", { href: facts.buildUrl, target: "_blank", rel: "noopener noreferrer", text: facts.build })])
+              : element("dd", { text: facts.build }),
+          ]),
           element("div", {}, [element("dt", { text: "Creative Tonie limit" }), element("dd", { text: facts.limit })]),
           element("div", {}, [element("dt", { text: "Usable audio" }), element("dd", { text: facts.usable })]),
           element("div", {}, [element("dt", { text: "Safety headroom" }), element("dd", { text: facts.headroom })]),

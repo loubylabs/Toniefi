@@ -69,6 +69,10 @@ class TestElement {
     return this.attributes.get(name) ?? null;
   }
 
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
   addEventListener() {}
 
   contains() {
@@ -239,6 +243,27 @@ test("route request and refresh scopes carry one mounted signal and silence subs
   listener({ jobs: [{ id: 1 }] });
   assert.equal(unsubscribed, 1);
   assert.deepEqual(notifications, []);
+});
+
+test("the sidebar footer names the build and links it only when a commit is known", () => {
+  const originalDocument = globalThis.document;
+  const document = new TestDocument();
+  const footer = document.createElement("a");
+  footer.id = "buildInfo";
+  document.body.append(footer);
+  globalThis.document = document;
+  try {
+    const url = "https://github.com/loubylabs/Toniefi/commit/bd9d91b4f5";
+    updateShell({ status: { build: "bd9d91b", build_url: url }, jobs: [], stale: [], errors: {} });
+    assert.equal(footer.textContent, "Build bd9d91b");
+    assert.equal(footer.getAttribute("href"), url);
+
+    updateShell({ status: { build: "development", build_url: null }, jobs: [], stale: [], errors: {} });
+    assert.equal(footer.textContent, "Build development");
+    assert.equal(footer.getAttribute("href"), null);
+  } finally {
+    globalThis.document = originalDocument;
+  }
 });
 
 test("the phone navigation shows the active job count too", () => {

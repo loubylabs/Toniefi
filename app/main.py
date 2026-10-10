@@ -28,7 +28,7 @@ async def lifespan(_: FastAPI):
     jobs.stop()
 
 
-app = FastAPI(title="Toniefi", version=version.APP_VERSION, lifespan=lifespan)
+app = FastAPI(title="Toniefi", version=version.BUILD, lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -280,8 +280,8 @@ class DeskDismissals(RequestModel):
 @app.get("/api/status")
 def status() -> dict[str, Any]:
     return {
-        "version": version.APP_VERSION,
         "build": version.BUILD,
+        "build_url": version.BUILD_URL,
         "library_dir": str(config.LIBRARY_DIR),
         "tonie_limit_seconds": config.TONIE_LIMIT_SECONDS,
         "usable_limit_seconds": config.usable_limit(),

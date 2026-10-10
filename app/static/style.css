@@ -282,6 +282,19 @@ svg {
   stroke-width: 2.2;
 }
 
+.build-info {
+  margin-top: var(--space-3);
+  padding-inline: var(--space-4);
+  color: var(--bookcloth-muted);
+  font-size: var(--type-sm);
+  text-decoration: none;
+}
+
+.build-info[href]:hover {
+  color: var(--bookcloth-ink);
+  text-decoration: underline;
+}
+
 .account-summary {
   display: grid;
   min-width: 0;

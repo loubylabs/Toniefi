@@ -43,9 +43,9 @@ access control, so treat network reachability as the only gate and do not expose
 
 ## Application status
 
-`GET /api/status` includes `version`, the semantic application release, and `build`, the
-seven-character label for the deployed Git commit. Source checkouts with no injected commit report
-`development` for `build`.
+`GET /api/status` includes `build`, the seven-character label for the deployed Git commit, and
+`build_url`, the GitHub commit page for it. Source checkouts with no injected commit report
+`development` for `build` and `null` for `build_url`. The app has no separate version number.
 
 ## Saved Forge defaults
 

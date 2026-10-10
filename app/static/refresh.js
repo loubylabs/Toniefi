@@ -198,6 +198,18 @@ export function updateShell(snapshot) {
     replace(summary, symbol, copy);
   }
 
+  const buildInfo = document.getElementById("buildInfo");
+  if (buildInfo && snapshot.status?.build) {
+    buildInfo.textContent = `Build ${snapshot.status.build}`;
+    if (snapshot.status.build_url) {
+      buildInfo.setAttribute("href", snapshot.status.build_url);
+      buildInfo.setAttribute("target", "_blank");
+      buildInfo.setAttribute("rel", "noopener noreferrer");
+    } else {
+      buildInfo.removeAttribute("href");
+    }
+  }
+
   const active = snapshot.jobs.filter((job) => job.status === "queued" || job.status === "running").length;
   // Both navigations, because only one of them is on screen at a time and the
   // phone was the one showing nothing.
