@@ -33,15 +33,16 @@ def client(isolated_settings) -> TestClient:
     return TestClient(main.app)
 
 
-def test_status_reports_the_application_version_and_build(client, monkeypatch):
-    monkeypatch.setattr(version, "APP_VERSION", "2.3.4")
+def test_status_reports_the_build_and_its_commit_url(client, monkeypatch):
     monkeypatch.setattr(version, "BUILD", "abc1234")
+    monkeypatch.setattr(version, "BUILD_URL", "https://github.com/loubylabs/Toniefi/commit/abc1234ff")
 
     response = client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.json()["version"] == "2.3.4"
+    assert "version" not in response.json()
     assert response.json()["build"] == "abc1234"
+    assert response.json()["build_url"] == "https://github.com/loubylabs/Toniefi/commit/abc1234ff"
 
 
 def test_forge_defaults_persist_as_one_complete_validated_profile(client):

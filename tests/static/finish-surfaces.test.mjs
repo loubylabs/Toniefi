@@ -323,16 +323,16 @@ test("Settings credential view makes environment precedence explicit", () => {
 
 test("Settings facts derive usable headroom and tool status from server truth", () => {
   assert.deepEqual(settingsFacts({
-    version: "1.0.0",
     build: "bd9d91b",
+    build_url: "https://github.com/loubylabs/Toniefi/commit/bd9d91b4f5",
     library_dir: "/library",
     tonie_limit_seconds: 5400,
     usable_limit_seconds: 5370,
     tonie_limit_human: "1h 30m",
     tools: { ffmpeg: true, ffprobe: false },
   }), {
-    version: "1.0.0",
     build: "bd9d91b",
+    buildUrl: "https://github.com/loubylabs/Toniefi/commit/bd9d91b4f5",
     limit: "1h 30m",
     usable: "1h 29m 30s",
     headroom: "30s",
@@ -355,7 +355,7 @@ test("Settings facts derive usable headroom and tool status from server truth", 
 });
 
 
-test("Settings shows application version and build from status", () => {
+test("Settings shows the build from status and no version", () => {
   const originalDocument = globalThis.document;
   globalThis.document = {
     activeElement: null,
@@ -364,7 +364,6 @@ test("Settings shows application version and build from status", () => {
   };
   const workspace = new TinyElement("main");
   const status = {
-    version: "1.0.0",
     build: "bd9d91b",
     credentials: { configured: false, source: "none", username: "" },
     tonie_limit_seconds: 5400,
@@ -383,7 +382,7 @@ test("Settings shows application version and build from status", () => {
       signal: new AbortController().signal,
     });
     const system = descendants(workspace).find((node) => node.className === "settings-section system-settings");
-    assert.match(textOf(system), /Version1\.0\.0/);
+    assert.doesNotMatch(textOf(system), /Version/);
     assert.match(textOf(system), /Buildbd9d91b/);
   } finally {
     globalThis.document = originalDocument;
