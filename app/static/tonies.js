@@ -120,6 +120,28 @@ function tonieKey(tonie) {
 }
 
 
+export function versionSourceLabel(source) {
+  return source === "toniefi" ? "Toniefi" : "Changed outside Toniefi";
+}
+
+
+export function versionSummary(version) {
+  const changes = version.changes || {};
+  if (changes.first) {
+    const count = (version.chapters || []).length;
+    return `First seen, ${count} ${count === 1 ? "chapter" : "chapters"}`;
+  }
+  const parts = [];
+  if (changes.added) parts.push(`${changes.added} added`);
+  if (changes.removed) parts.push(`${changes.removed} removed`);
+  if (changes.renamed) parts.push(`${changes.renamed} renamed`);
+  if (changes.reordered) parts.push("reordered");
+  if (!parts.length) return "No chapter changes";
+  const text = parts.join(", ");
+  return text[0].toUpperCase() + text.slice(1);
+}
+
+
 export function chapterDrafts(list) {
   return Array.from(list.querySelectorAll("[data-tonie-chapter]")).map((row) => ({
     id: row.dataset.tonieChapter,
@@ -142,6 +164,10 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     // Keyed by chapter id and cleared on every reload, so a tick that predates
     // a remote change can never reach a write.
     const selectedChapters = new Set();
+    // Keyed by tonieKey. Open panels survive the periodic re-render, and a
+    // loaded history is reused until the panel is reopened or a save lands.
+    const historyOpen = new Set();
+    const historyCache = new Map();
     // The jobs the refresh coordinator last published. A send names its target
     // in its own payload, so this is everything needed to put a running
     // transfer on the row it is transferring to.
@@ -213,6 +239,8 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       try {
         const updated = await mutation.save(tonie, chapters);
         if (!updated || !active || signal?.aborted) return;
+        historyCache.delete(tonieKey(tonie));
+        if (historyOpen.has(tonieKey(tonie))) loadHistory(tonie);
         notify(successMessage, { kind: "success" });
         announce(successMessage);
       } catch (error) {
@@ -247,6 +275,77 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         notify(`${error.message} The name on screen was put back.`, { kind: "failure", timeout: 0 });
         await load().catch(() => {});
       }
+    }
+
+    async function loadHistory(tonie) {
+      const key = tonieKey(tonie);
+      const pending = { loading: true };
+      historyCache.set(key, pending);
+      render({ passive: true });
+      const path = `/api/tonies/${encodeURIComponent(tonie.householdId)}/${encodeURIComponent(tonie.id)}/versions`;
+      let result;
+      try {
+        result = await request(path, signal ? { signal } : {});
+      } catch {
+        result = { error: true };
+      }
+      if (!active || signal?.aborted) return;
+      // Closed, reopened, or invalidated by a save while this was in flight.
+      if (historyCache.get(key) !== pending) return;
+      historyCache.set(key, result);
+      render({ passive: true });
+    }
+
+    function historyBody(cached) {
+      if (!cached || cached.loading) {
+        return element("p", { className: "tonie-history-note", text: "Loading version history…" });
+      }
+      if (cached.error) {
+        return element("p", { className: "tonie-history-note", text: "Version history could not be loaded." });
+      }
+      if (!cached.length) {
+        return element("p", { className: "tonie-history-note", text: "No versions recorded yet." });
+      }
+      return element("ol", { className: "tonie-history-list" }, cached.map((version) => {
+        const chapters = (version.chapters || []).map((chapter) => element("li", {
+          text: chapter.duration ? `${chapter.title} (${chapter.duration})` : chapter.title,
+        }));
+        return element("li", {}, [
+          element("details", {}, [
+            element("summary", {}, [
+              element("time", { text: new Date(version.created_at * 1000).toLocaleString() }),
+              element("span", { className: "tonie-history-source", text: versionSourceLabel(version.source) }),
+              element("span", { className: "tonie-history-summary", text: versionSummary(version) }),
+            ]),
+            element("ol", { className: "tonie-history-chapters" }, chapters),
+          ]),
+        ]);
+      }));
+    }
+
+    function historyPanel(tonie) {
+      const key = tonieKey(tonie);
+      const open = historyOpen.has(key);
+      const toggle = element("button", {
+        type: "button",
+        className: "button button-secondary",
+        "aria-expanded": String(open),
+        "data-focus-key": `tonie-${tonie.id}-history`,
+        text: "Version history",
+      });
+      toggle.addEventListener("click", () => {
+        if (historyOpen.has(key)) {
+          historyOpen.delete(key);
+          historyCache.delete(key);
+          render({ focusKey: `tonie-${tonie.id}-history` });
+          return;
+        }
+        historyOpen.add(key);
+        loadHistory(tonie);
+      });
+      const children = [toggle];
+      if (open) children.push(historyBody(historyCache.get(key)));
+      return element("section", { className: "tonie-history" }, children);
     }
 
     function renameField(tonie) {
@@ -367,6 +466,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       // Built before the empty-state return, so a Tonie with nothing on it can
       // still be named. That is the Tonie most in need of one.
       detail.append(renameField(tonie));
+      detail.append(historyPanel(tonie));
       if (!tonie.chapters?.length) {
         detail.append(element("div", { className: "empty-state tonie-empty" }, [
           iconNode("tonie"),

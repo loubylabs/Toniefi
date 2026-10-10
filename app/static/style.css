@@ -4181,3 +4181,51 @@ img.collection-detail-cover {
   color: var(--ink);
   font-weight: 700;
 }
+
+/* Version history: secondary to the chapter list, so it stays small and muted. */
+.tonie-history {
+  display: grid;
+  margin-bottom: var(--space-4);
+  gap: var(--space-3);
+}
+
+.tonie-history > .button {
+  justify-self: start;
+}
+
+.tonie-history-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--type-sm);
+}
+
+.tonie-history-list,
+.tonie-history-chapters {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--type-sm);
+}
+
+.tonie-history-list > li {
+  border-top: var(--rule-thin);
+}
+
+.tonie-history summary {
+  display: flex;
+  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  gap: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.tonie-history-source,
+.tonie-history-summary {
+  color: var(--ink-muted);
+}
+
+.tonie-history-chapters {
+  padding: 0 0 var(--space-3) var(--space-4);
+  color: var(--ink-muted);
+  list-style: decimal;
+}
