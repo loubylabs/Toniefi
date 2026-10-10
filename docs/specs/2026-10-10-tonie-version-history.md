@@ -75,7 +75,7 @@ where the existing rule is that nothing that can raise may run.
 
 | Place | When | Source |
 |---|---|---|
-| `GET /api/tonies` (`main.list_tonies`) | for every Tonie returned | `seen` |
+| `GET /api/tonies` (`main.list_tonies`) | for every Tonie returned, except one being written or written since the read started | `seen` |
 | `push._set_tonie_chapters_locked` | right after `get_tonie`, before the merge | `seen` |
 | `push._set_tonie_chapters_locked` | right after `set_chapters` returns, with the list just written | `toniefi` |
 | `push.set_tonie_name` | right after `get_tonie` | `seen` |
@@ -87,6 +87,11 @@ Notes:
 
 - The `seen` record before a write captures a myTonies change made since Toniefi last looked, even
   when the write then refuses as stale. That is exactly the case worth keeping.
+- `GET /api/tonies` takes no write lease, so `push.remember_seen_if_quiet` guards it. It skips a
+  Tonie whose lease another request holds (a read mid-send holds a partial list), and one whose
+  lease was released after the read started (the read may hold the list from before that write).
+  Either stored as `seen` would label Toniefi's own change as made outside it. The skipped state is
+  already recorded as `toniefi` by the write, or gets recorded by the next read.
 - A rename of the Tonie itself changes no chapters, so it records no `toniefi` version.
 - A replace send clears and then uploads. Only the final list is stored, not the empty middle state.
 - The `PartialSend` capture must not mask the `PartialSend` itself. If its `get_tonie` fails, the

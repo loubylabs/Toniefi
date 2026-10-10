@@ -4,6 +4,8 @@ No network, no real account: the Tonie Cloud has no sandbox and no undo.
 """
 from __future__ import annotations
 
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -78,6 +80,51 @@ def test_listing_records_one_seen_version_and_a_repeat_records_nothing(client, c
 
     assert client.get("/api/tonies").status_code == 200
     assert len(db.tonie_versions("h1", "t1")) == 1
+
+
+def test_a_listing_skips_a_tonie_whose_write_lease_is_held(client, cloud):
+    held = threading.Event()
+    done = threading.Event()
+
+    def writer():
+        with push.target_lease("h1", "t1"):
+            held.set()
+            done.wait(5)
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        assert held.wait(5)
+        assert client.get("/api/tonies").status_code == 200
+    finally:
+        done.set()
+        thread.join(5)
+    assert db.tonie_versions("h1", "t1") == []
+
+
+def test_a_listing_skips_a_tonie_written_while_the_read_was_in_flight(client, cloud, monkeypatch):
+    read = cloud.all_creative_tonies
+
+    def read_then_a_write_lands():
+        result = read()
+
+        def writer():
+            with push.target_lease("h1", "t1"):
+                pass
+
+        thread = threading.Thread(target=writer)
+        thread.start()
+        thread.join(5)
+        return result
+
+    monkeypatch.setattr(cloud, "all_creative_tonies", read_then_a_write_lands)
+    assert client.get("/api/tonies").status_code == 200
+    assert db.tonie_versions("h1", "t1") == []
+
+    # The next read starts after that write, so it records again.
+    monkeypatch.setattr(cloud, "all_creative_tonies", read)
+    assert client.get("/api/tonies").status_code == 200
+    assert [v["source"] for v in db.tonie_versions("h1", "t1")] == ["seen"]
 
 
 def test_a_chapter_write_records_the_old_list_then_the_new(client, cloud):
@@ -176,6 +223,19 @@ def test_a_send_records_the_list_before_and_after(monkeypatch):
     assert [(v["source"], _titles(v)) for v in stored] == [
         ("seen", ["Old"]),
         ("toniefi", ["Old", "One", "Two"]),
+    ]
+
+
+def test_a_stale_send_still_records_what_the_cloud_holds(monkeypatch):
+    cloud = SendCloud()
+    cloud.chapters.append({"id": "elsewhere", "title": "Added in myTonies", "seconds": 5.0})
+    payload, resolved = _send_fixture(monkeypatch, cloud)
+    with pytest.raises(push.StalePush):
+        push._push_confirmed_tracks(payload, resolved, lambda *_, **__: None)
+    assert cloud.uploads == 0
+    stored = db.tonie_versions("h1", "t1")
+    assert [(v["source"], _titles(v)) for v in stored] == [
+        ("seen", ["Old", "Added in myTonies"]),
     ]
 
 

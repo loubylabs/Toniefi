@@ -82,16 +82,49 @@ TITLE_LIMIT = 128
 NAME_LIMIT = 100
 _target_locks_guard = threading.Lock()
 _target_locks: dict[tuple[str, str], threading.RLock] = {}
+# When each Tonie's write lease was last released, on the monotonic clock.
+_target_released: dict[tuple[str, str], float] = {}
+
+
+def _target_lock(key: tuple[str, str]) -> threading.RLock:
+    with _target_locks_guard:
+        return _target_locks.setdefault(key, threading.RLock())
 
 
 @contextmanager
 def target_lease(household_id: str, tonie_id: str):
     """Serialize every write to one Creative Tonie in this process."""
     key = (str(household_id), str(tonie_id))
-    with _target_locks_guard:
-        lock = _target_locks.setdefault(key, threading.RLock())
-    with lock:
-        yield
+    with _target_lock(key):
+        try:
+            yield
+        finally:
+            # Stamped before the lock drops, so a reader that gets the lock
+            # next always sees this release.
+            with _target_locks_guard:
+                _target_released[key] = time.monotonic()
+
+
+def remember_seen_if_quiet(
+    household_id: str, tonie_id: str, tonie: dict[str, Any], read_started: float
+) -> None:
+    """Record a list read as `seen` unless a write could have raced it. Never raises.
+
+    A read taken while a send is mid-upload holds a partial list, and a read
+    that began before a write finished may hold the list from before it. Either
+    stored as `seen` would claim Toniefi's own change came from outside.
+    """
+    key = (str(household_id), str(tonie_id))
+    lock = _target_lock(key)
+    if not lock.acquire(blocking=False):
+        return
+    try:
+        with _target_locks_guard:
+            released = _target_released.get(key)
+        if released is None or released < read_started:
+            tonie_history.remember(household_id, tonie_id, tonie, "seen")
+    finally:
+        lock.release()
 
 
 class StaleChapters(RuntimeError):

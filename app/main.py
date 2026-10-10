@@ -664,6 +664,7 @@ def download_collection(slug: str):
 
 @app.get("/api/tonies")
 def list_tonies() -> list[dict[str, Any]]:
+    read_started = time.monotonic()
     try:
         client = push.client_from_settings()
         result = client.all_creative_tonies()
@@ -671,7 +672,9 @@ def list_tonies() -> list[dict[str, Any]]:
     except tonies.TonieCloudError as exc:
         raise fail(400, str(exc)) from exc
     for tonie in result:
-        tonie_history.remember(tonie.get("householdId") or "", tonie.get("id") or "", tonie, "seen")
+        push.remember_seen_if_quiet(
+            tonie.get("householdId") or "", tonie.get("id") or "", tonie, read_started
+        )
     return [push.describe_tonie(tonie) for tonie in result]
 
 
