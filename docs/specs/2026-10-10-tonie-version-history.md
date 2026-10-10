@@ -66,7 +66,7 @@ One database function, `db.record_tonie_version(household_id, tonie_id, tonie_na
 Under the module `_lock` and one `BEGIN IMMEDIATE` transaction, it reads the newest row for that
 Tonie, applies the rule above, and inserts only when different. It returns whether it inserted.
 
-One push-side wrapper, `push.remember_tonie(household_id, tonie, source)`, takes a raw or described
+One wrapper in a new module, `tonie_history.remember(household_id, tonie_id, tonie, source)`, takes a raw or described
 Tonie dict, normalises its chapters to `{id, title, seconds}`, and calls the database function.
 **It never raises.** Any exception is logged and swallowed, because it runs after landed writes,
 where the existing rule is that nothing that can raise may run.
