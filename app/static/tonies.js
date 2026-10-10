@@ -168,6 +168,8 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     // loaded history is reused until the panel is reopened or a save lands.
     const historyOpen = new Set();
     const historyCache = new Map();
+    // `${tonieKey}:${version.id}` of every version row the operator expanded.
+    const versionsExpanded = new Set();
     // The jobs the refresh coordinator last published. A send names its target
     // in its own payload, so this is everything needed to put a running
     // transfer on the row it is transferring to.
@@ -296,7 +298,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       render({ passive: true });
     }
 
-    function historyBody(cached) {
+    function historyBody(key, cached) {
       if (!cached || cached.loading) {
         return element("p", { className: "tonie-history-note", text: "Loading version history…" });
       }
@@ -310,16 +312,20 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         const chapters = (version.chapters || []).map((chapter) => element("li", {
           text: chapter.duration ? `${chapter.title} (${chapter.duration})` : chapter.title,
         }));
-        return element("li", {}, [
-          element("details", {}, [
-            element("summary", {}, [
-              element("time", { text: new Date(version.created_at * 1000).toLocaleString() }),
-              element("span", { className: "tonie-history-source", text: versionSourceLabel(version.source) }),
-              element("span", { className: "tonie-history-summary", text: versionSummary(version) }),
-            ]),
-            element("ol", { className: "tonie-history-chapters" }, chapters),
+        const rowKey = `${key}:${version.id}`;
+        const details = element("details", { open: versionsExpanded.has(rowKey) }, [
+          element("summary", {}, [
+            element("time", { text: new Date(version.created_at * 1000).toLocaleString() }),
+            element("span", { className: "tonie-history-source", text: versionSourceLabel(version.source) }),
+            element("span", { className: "tonie-history-summary", text: versionSummary(version) }),
           ]),
+          element("ol", { className: "tonie-history-chapters" }, chapters),
         ]);
+        details.addEventListener("toggle", () => {
+          if (details.hasAttribute("open")) versionsExpanded.add(rowKey);
+          else versionsExpanded.delete(rowKey);
+        });
+        return element("li", {}, [details]);
       }));
     }
 
@@ -344,7 +350,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         loadHistory(tonie);
       });
       const children = [toggle];
-      if (open) children.push(historyBody(historyCache.get(key)));
+      if (open) children.push(historyBody(key, historyCache.get(key)));
       return element("section", { className: "tonie-history" }, children);
     }
 
@@ -727,7 +733,15 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       const finished = [...sendingKeys].some((key) => !nextKeys.has(key));
       sendingKeys = nextKeys;
       render({ passive: true });
-      if (finished) load().catch(() => {});
+      if (finished) {
+        // The send wrote a new version; drop the cached histories and re-read
+        // the open ones once the Tonie itself is fresh.
+        historyCache.clear();
+        load().catch(() => {}).then(() => {
+          if (!active || signal?.aborted) return;
+          for (const tonie of tonies) if (historyOpen.has(tonieKey(tonie))) loadHistory(tonie);
+        });
+      }
     }
 
     refreshButton.addEventListener("click", async () => {

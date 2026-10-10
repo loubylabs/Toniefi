@@ -44,8 +44,14 @@ function mount({ chapters = [], versions = VERSIONS, failVersions = false } = {}
     }
     throw new Error(`unexpected request ${url}`);
   };
-  const teardown = createToniesScreen({ request })({ workspace: dom.workspace, signal: controller.signal });
-  return { dom, state, teardown };
+  let listener = null;
+  const refresh = {
+    subscribe(fn) { listener = fn; return () => { listener = null; }; },
+    request() {},
+  };
+  const push = (snapshot) => listener(snapshot);
+  const teardown = createToniesScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
+  return { dom, state, teardown, push };
 }
 
 const historyButton = (dom) => dom.workspace.querySelectorAll("button")
@@ -87,19 +93,49 @@ test("a Tonie with no chapters still offers its history", async () => {
   harness.dom.restore();
 });
 
-test("a re-render keeps the open history and does not fetch again", async () => {
+test("a refresh re-render keeps the open history and does not fetch again", async () => {
   const harness = mount({ chapters: [chapter] });
   await openTonie(harness);
   await historyButton(harness.dom).dispatchEvent({ type: "click" });
   await flush();
-  // Collapsing and expanding the Tonie row re-renders the whole list.
-  const summary = () => harness.dom.workspace.querySelectorAll("button")
-    .find((b) => b.className.includes("tonie-summary"));
-  await summary().dispatchEvent({ type: "click" });
-  await summary().dispatchEvent({ type: "click" });
+  harness.push({ jobs: [], stale: [], errors: {} });
   await flush();
   assert.equal(harness.dom.workspace.querySelectorAll("details").length, 2);
   assert.equal(harness.state.versionCalls.length, 1);
+  harness.teardown();
+  harness.dom.restore();
+});
+
+test("an expanded version row stays expanded across a refresh", async () => {
+  const harness = mount({ chapters: [chapter] });
+  await openTonie(harness);
+  await historyButton(harness.dom).dispatchEvent({ type: "click" });
+  await flush();
+  const first = harness.dom.workspace.querySelectorAll("details")[0];
+  first.setAttribute("open", "");
+  await first.dispatchEvent({ type: "toggle" });
+  harness.push({ jobs: [], stale: [], errors: {} });
+  await flush();
+  const rows = harness.dom.workspace.querySelectorAll("details");
+  assert.ok(rows[0].hasAttribute("open"));
+  assert.ok(!rows[1].hasAttribute("open"));
+  harness.teardown();
+  harness.dom.restore();
+});
+
+test("a finished send refetches the open history", async () => {
+  const harness = mount({ chapters: [chapter] });
+  await openTonie(harness);
+  await historyButton(harness.dom).dispatchEvent({ type: "click" });
+  await flush();
+  const running = { id: 9, kind: "push", status: "running", payload: { household_id: "h1", tonie_id: "t1" } };
+  harness.push({ jobs: [running], stale: [], errors: {} });
+  await flush();
+  assert.equal(harness.state.versionCalls.length, 1);
+  harness.push({ jobs: [], stale: [], errors: {} });
+  await flush();
+  await flush();
+  assert.equal(harness.state.versionCalls.length, 2);
   harness.teardown();
   harness.dom.restore();
 });
