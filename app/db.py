@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
+CREATE TABLE IF NOT EXISTS tonie_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id  TEXT NOT NULL,
+    tonie_id      TEXT NOT NULL,
+    tonie_name    TEXT NOT NULL DEFAULT '',
+    chapters      TEXT NOT NULL,
+    source        TEXT NOT NULL,
+    created_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tonie_versions_tonie_idx ON tonie_versions(household_id, tonie_id, id);
 """
 
 FORGE_OPERATION_IDS_MIGRATION = "2026-08-28-forge-operation-ids"
@@ -377,6 +387,60 @@ def add_desk_dismissals(keys: list[str], now: float) -> dict[str, float]:
             conn.rollback()
             raise
     return merged
+
+
+# ---------------------------------------------------------- tonie versions
+
+def _chapter_identity(chapters: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    # Seconds are left out on purpose: a chapter mid-transcode reports 0 and
+    # later a real figure, and that is not a new version.
+    return [(c.get("id") or "", c.get("title") or "") for c in chapters]
+
+
+def record_tonie_version(
+    household_id: str,
+    tonie_id: str,
+    tonie_name: str,
+    chapters: list[dict[str, Any]],
+    source: str,
+    now: float,
+) -> bool:
+    """Store this chapter list unless it matches the Tonie's newest version."""
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT chapters FROM tonie_versions WHERE household_id=? AND tonie_id=? "
+                "ORDER BY id DESC LIMIT 1",
+                (household_id, tonie_id),
+            ).fetchone()
+            if row is not None and _chapter_identity(json.loads(row["chapters"])) == _chapter_identity(chapters):
+                conn.rollback()
+                return False
+            conn.execute(
+                "INSERT INTO tonie_versions(household_id,tonie_id,tonie_name,chapters,source,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (household_id, tonie_id, tonie_name, json.dumps(chapters), source, float(now)),
+            )
+            conn.commit()
+            return True
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def tonie_versions(household_id: str, tonie_id: str) -> list[dict[str, Any]]:
+    rows = connect().execute(
+        "SELECT id, created_at, source, tonie_name, chapters FROM tonie_versions "
+        "WHERE household_id=? AND tonie_id=? ORDER BY id",
+        (household_id, tonie_id),
+    ).fetchall()
+    return [
+        {"id": r["id"], "created_at": r["created_at"], "source": r["source"],
+         "tonie_name": r["tonie_name"], "chapters": json.loads(r["chapters"])}
+        for r in rows
+    ]
 
 
 # -------------------------------------------------------------------- jobs
