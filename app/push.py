@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
-from . import audio, config, library, tonies
+from . import audio, config, library, tonie_history, tonies
 
 
 class SelectedCredentials(TypedDict):
@@ -254,6 +254,7 @@ def _set_tonie_chapters_locked(
     client = client_from_settings()
     try:
         tonie = client.get_tonie(household_id, tonie_id)
+        tonie_history.remember(household_id, tonie_id, tonie, "seen")
         current = tonie.get("chapters") or []
         merged = merge_chapters(current, base, requested)
 
@@ -326,6 +327,8 @@ def _set_tonie_chapters_locked(
         # the user retries into a 409.
         answer = describe_tonie(tonie)
         client.set_chapters(household_id, tonie_id, merged)
+        # remember() never raises, so it is safe after the landed write.
+        tonie_history.remember(household_id, tonie_id, answer, "toniefi")
         return answer
     finally:
         client.close()
@@ -358,6 +361,7 @@ def set_tonie_name(
         client = client_from_settings()
         try:
             tonie = client.get_tonie(household_id, tonie_id)
+            tonie_history.remember(household_id, tonie_id, tonie, "seen")
             if (tonie.get("name") or "") != (base_name or ""):
                 raise StaleTonieName("This Tonie was renamed somewhere else. Reloading.")
 
@@ -618,6 +622,7 @@ def _push_confirmed_tracks(
             client.check_login()
 
             state = client.get_tonie(payload["household_id"], payload["tonie_id"])
+            tonie_history.remember(payload["household_id"], payload["tonie_id"], state, "seen")
             current_chapters = state.get("chapters") or []
             if _remote_identity(current_chapters) != _remote_identity(payload.get("remote_chapters") or []):
                 raise StalePush(
@@ -660,6 +665,14 @@ def _push_confirmed_tracks(
                 # Every add_chapter above already landed. Reporting a bare
                 # transport error here is what let the recovery guidance say
                 # "send it again", which would duplicate whatever survived.
+                # Whatever landed is now on the Tonie. A failed read here must
+                # not replace the PartialSend; the next list read records it.
+                try:
+                    landed = client.get_tonie(payload["household_id"], payload["tonie_id"])
+                except Exception:
+                    landed = None
+                if landed is not None:
+                    tonie_history.remember(payload["household_id"], payload["tonie_id"], landed, "toniefi")
                 raise PartialSend(
                     underlying=str(exc) or exc.__class__.__name__,
                     uploaded=len(uploaded),
@@ -673,6 +686,7 @@ def _push_confirmed_tracks(
             # exists to avoid.
             progress("Confirming", upload_percent(tracks, len(tracks), 0))
             state = client.get_tonie(payload["household_id"], payload["tonie_id"])
+            tonie_history.remember(payload["household_id"], payload["tonie_id"], state, "toniefi")
             return {
                 "tonie": state.get("name", payload["tonie_id"]),
                 "chapters": len(state.get("chapters", [])),
