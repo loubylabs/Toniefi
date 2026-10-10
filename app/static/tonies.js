@@ -316,7 +316,9 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         const details = element("details", { open: versionsExpanded.has(rowKey) }, [
           element("summary", {}, [
             element("time", { text: new Date(version.created_at * 1000).toLocaleString() }),
-            element("span", { className: "tonie-history-source", text: versionSourceLabel(version.source) }),
+            ...(version.changes.first ? [] : [
+              element("span", { className: "tonie-history-source", text: versionSourceLabel(version.source) }),
+            ]),
             element("span", { className: "tonie-history-summary", text: versionSummary(version) }),
           ]),
           element("ol", { className: "tonie-history-chapters" }, chapters),

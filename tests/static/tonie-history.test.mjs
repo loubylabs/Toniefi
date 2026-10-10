@@ -77,10 +77,23 @@ test("opening history fetches once and lists each version with its chapters", as
   assert.equal(rows.length, 2);
   assert.ok(rows[0].textContent.includes("Toniefi"));
   assert.ok(rows[0].textContent.includes("1 added"));
-  assert.ok(rows[1].textContent.includes("Changed outside Toniefi"));
+  assert.ok(!rows[1].textContent.includes("Changed outside Toniefi"));
   assert.ok(rows[1].textContent.includes("First seen, 1 chapter"));
   const titles = rows[0].querySelectorAll("ol")[0].querySelectorAll("li").map((li) => li.textContent);
   assert.deepEqual(titles, ["One (3m)", "Two"]);
+  harness.teardown();
+  harness.dom.restore();
+});
+
+test("only a later seen version is labelled as changed outside Toniefi", async () => {
+  const later = { ...VERSIONS[0], id: 3, source: "seen" };
+  const harness = mount({ chapters: [chapter], versions: [later, VERSIONS[1]] });
+  await openTonie(harness);
+  await historyButton(harness.dom).dispatchEvent({ type: "click" });
+  await flush();
+  const rows = harness.dom.workspace.querySelectorAll("details");
+  assert.ok(rows[0].textContent.includes("Changed outside Toniefi"));
+  assert.ok(!rows[1].textContent.includes("Changed outside Toniefi"));
   harness.teardown();
   harness.dom.restore();
 });
