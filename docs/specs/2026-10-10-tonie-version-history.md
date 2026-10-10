@@ -124,6 +124,29 @@ Notes:
 
 An unknown Tonie returns `[]`, not 404. The route reads only the database and never calls the Tonie Cloud.
 
+### Where each chapter came from
+
+Each chapter in the response also carries `collection`: `{"slug": ..., "title": ...}` for the
+Library story it was sent from, or `null` when Toniefi cannot tell.
+
+The Tonie Cloud gives a chapter a fresh id unrelated to the uploaded file, so the origin is
+derived, at read time, from two things Toniefi already has. No new table.
+
+1. **Send history.** Every finished push job (`kind='push'`, `status='done'`) holds its sources in
+   `payload["sources"]` (each `{slug, files}`, in send order) and its `result["uploaded"]` (each
+   `{title, file}`, in the same order). Flattening the sources' files and zipping them with
+   `uploaded` gives `uploaded title → slug`. When the same title was sent from more than one
+   collection, the latest send wins. Failed and partial sends are skipped, as for sent marks.
+2. **The history itself.** Walking versions oldest to newest, once a chapter id has an origin it
+   keeps it, so a chapter renamed after it was sent keeps its story.
+
+A chapter's origin is: its id's origin from an earlier version if it has one, else an exact title
+match in the send history, else `null`. The collection title is the Library manifest's `title`; a
+collection since deleted falls back to its slug.
+
+Known limits: a chapter added by the myTonies app with the exact title of a Toniefi send is
+attributed to that send; a chapter renamed before Toniefi first recorded it has no origin.
+
 ## Screen
 
 In each open Tonie's detail panel on the Tonies screen, a **Version history** disclosure. It is
@@ -136,6 +159,10 @@ added before the empty-state return, so an empty Tonie shows it too.
   change is order reads "Reordered".
 - Each row is a native `<details>`; opening it shows that version's numbered chapter list with titles
   and durations.
+- Inside a version, consecutive chapters from the same collection sit under one heading with the
+  collection's title; a run with no origin sits under "Not from the Library". Numbering runs
+  through the whole version, unbroken by headings. A version where no chapter has an origin shows
+  no headings at all.
 - No version reads as "now". The newest version is the last one Toniefi saw, not a live read.
 - Text only via `textContent` (the existing `element` helper). No `innerHTML`.
 
