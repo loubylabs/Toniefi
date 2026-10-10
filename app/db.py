@@ -721,6 +721,32 @@ def sent_chapters() -> dict[tuple[str, str], dict[str, Any]]:
     return sent
 
 
+def sent_titles() -> dict[str, str]:
+    """The Library collection each uploaded chapter title was last sent from.
+
+    Pairs a push job's source files with its uploaded titles in order. A job
+    whose counts differ cannot be paired safely and is left out.
+    """
+    rows = connect().execute(
+        "SELECT * FROM jobs WHERE kind='push' AND status='done' ORDER BY id"
+    ).fetchall()
+    titles: dict[str, str] = {}
+    for row in rows:
+        job = _hydrate(row)
+        slugs = [
+            source.get("slug")
+            for source in job["payload"].get("sources") or []
+            for _ in source.get("files") or []
+        ]
+        uploaded = job["result"].get("uploaded") or []
+        if len(slugs) != len(uploaded):
+            continue
+        for slug, item in zip(slugs, uploaded):
+            if slug and item.get("title"):
+                titles[item["title"]] = slug
+    return titles
+
+
 def active_upload_stages() -> set[str]:
     rows = connect().execute(
         "SELECT payload FROM jobs WHERE kind='upload_prepare' "

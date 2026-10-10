@@ -226,6 +226,11 @@ Each entry carries `id`, `created_at`, `source`, `tonie_name`, `chapters` (`id`,
 `seconds`, `duration`) and `changes` against the version before it (`first`, `added`, `removed`,
 `renamed`, `reordered`). `source` is `toniefi` for a list TonieFi wrote and `seen` for one it read.
 
+Each chapter also carries `collection`: `{slug, title}` of the Library collection it was last sent
+from, or `null`. It is read from finished push jobs by uploaded title, and a chapter keeps its
+origin across renames by id. `title` is the collection's current title, or the slug when the
+collection is gone.
+
 The route is read only and never calls the Tonie Cloud. A Tonie TonieFi has never read returns
 `[]`. There is no restore.
 

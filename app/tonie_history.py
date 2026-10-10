@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Any
 
-from . import audio, db
+from . import audio, db, library
 
 log = logging.getLogger(__name__)
 
@@ -52,15 +52,38 @@ def changes(previous: list[dict[str, Any]] | None, current: list[dict[str, Any]]
     }
 
 
+def _collection_title(slug: str) -> str:
+    try:
+        manifest = library.get(slug)
+    except Exception:
+        log.exception("Could not read collection %s for Tonie history", slug)
+        manifest = None
+    return (manifest or {}).get("title") or slug
+
+
 def versions(household_id: str, tonie_id: str) -> list[dict[str, Any]]:
     out = []
     previous = None
+    sent = db.sent_titles()
+    origin_by_id: dict[str, str] = {}
+    titles: dict[str, str] = {}
     for version in db.tonie_versions(household_id, tonie_id):
         version["changes"] = changes(previous, version["chapters"])
         previous = version["chapters"]
-        version["chapters"] = [
-            {**c, "duration": audio.human_duration(c["seconds"]) if c["seconds"] else ""}
-            for c in version["chapters"]
-        ]
+        annotated = []
+        for c in version["chapters"]:
+            slug = origin_by_id.get(c["id"]) or sent.get(c["title"])
+            collection = None
+            if slug:
+                origin_by_id[c["id"]] = slug
+                if slug not in titles:
+                    titles[slug] = _collection_title(slug)
+                collection = {"slug": slug, "title": titles[slug]}
+            annotated.append({
+                **c,
+                "duration": audio.human_duration(c["seconds"]) if c["seconds"] else "",
+                "collection": collection,
+            })
+        version["chapters"] = annotated
         out.append(version)
     return out[::-1]

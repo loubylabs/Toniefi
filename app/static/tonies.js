@@ -120,6 +120,27 @@ function tonieKey(tonie) {
 }
 
 
+// Consecutive runs of one collection, numbered by position in the whole
+// version. A version with no known collection is one untitled run, so the
+// caller draws no heading.
+export function groupChaptersByCollection(chapters) {
+  const groups = [];
+  let slug;
+  chapters.forEach((chapter, index) => {
+    const next = chapter.collection?.slug ?? null;
+    if (!groups.length || next !== slug) {
+      groups.push({ title: chapter.collection?.title ?? null, chapters: [] });
+      slug = next;
+    }
+    groups[groups.length - 1].chapters.push({ chapter, number: index + 1 });
+  });
+  if (groups.some((g) => g.title !== null)) {
+    for (const g of groups) g.title ??= "Not from the Library";
+  }
+  return groups;
+}
+
+
 export function versionSourceLabel(source) {
   return source === "toniefi" ? "Toniefi" : "Changed outside Toniefi";
 }
@@ -309,9 +330,15 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         return element("p", { className: "tonie-history-note", text: "No versions recorded yet." });
       }
       return element("ol", { className: "tonie-history-list" }, cached.map((version) => {
-        const chapters = (version.chapters || []).map((chapter) => element("li", {
-          text: chapter.duration ? `${chapter.title} (${chapter.duration})` : chapter.title,
-        }));
+        const groups = groupChaptersByCollection(version.chapters || []).flatMap((group) => [
+          ...(group.title === null ? [] : [
+            element("p", { className: "tonie-history-group", text: group.title }),
+          ]),
+          element("ol", { className: "tonie-history-chapters", start: group.chapters[0].number },
+            group.chapters.map(({ chapter }) => element("li", {
+              text: chapter.duration ? `${chapter.title} (${chapter.duration})` : chapter.title,
+            }))),
+        ]);
         const rowKey = `${key}:${version.id}`;
         const details = element("details", { open: versionsExpanded.has(rowKey) }, [
           element("summary", {}, [
@@ -321,7 +348,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
             ]),
             element("span", { className: "tonie-history-summary", text: versionSummary(version) }),
           ]),
-          element("ol", { className: "tonie-history-chapters" }, chapters),
+          ...groups,
         ]);
         details.addEventListener("toggle", () => {
           if (details.hasAttribute("open")) versionsExpanded.add(rowKey);

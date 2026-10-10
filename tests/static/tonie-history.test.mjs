@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createToniesScreen, versionSourceLabel, versionSummary } from "../../app/static/tonies.js";
+import { createToniesScreen, groupChaptersByCollection, versionSourceLabel, versionSummary } from "../../app/static/tonies.js";
 import { flush, installDom } from "./mini-dom.mjs";
 
 test("summaries read plainly", () => {
@@ -161,6 +161,53 @@ test("a failed history read is reported in the panel and the detail still render
   assert.ok(harness.dom.workspace.textContent.includes("Version history could not be loaded."));
   assert.ok(harness.dom.workspace.querySelectorAll("input").some((i) => i.className.includes("tonie-name-input")));
   assert.ok(harness.dom.workspace.querySelectorAll("[data-tonie-chapter]").length === 1);
+  harness.teardown();
+  harness.dom.restore();
+});
+
+const from = (slug, title) => ({ slug, title });
+const withCollection = (id, collection) => ({ id, title: id, duration: "", collection });
+
+test("chapters group into consecutive runs by collection", () => {
+  const groups = groupChaptersByCollection([
+    withCollection("a", from("v", "VeggieTales")),
+    withCollection("b", from("v", "VeggieTales")),
+    withCollection("c", null),
+    withCollection("d", from("n", "Night")),
+  ]);
+  assert.deepEqual(groups.map((g) => [g.title, g.chapters.map((c) => c.number)]), [
+    ["VeggieTales", [1, 2]],
+    ["Not from the Library", [3]],
+    ["Night", [4]],
+  ]);
+  assert.equal(groups[0].chapters[0].chapter.id, "a");
+});
+
+test("a version with no known collection is one untitled group", () => {
+  const groups = groupChaptersByCollection([withCollection("a", null), withCollection("b", null)]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].title, null);
+  assert.deepEqual(groups[0].chapters.map((c) => c.number), [1, 2]);
+});
+
+test("an expanded version heads each run with its collection and keeps numbering", async () => {
+  const versions = [{
+    ...VERSIONS[0],
+    chapters: [
+      withCollection("a", from("v", "VeggieTales")),
+      withCollection("b", null),
+    ],
+  }];
+  const harness = mount({ chapters: [chapter], versions });
+  await openTonie(harness);
+  await historyButton(harness.dom).dispatchEvent({ type: "click" });
+  await flush();
+  const row = harness.dom.workspace.querySelectorAll("details")[0];
+  const headings = row.querySelectorAll("p").filter((p) => p.className.includes("tonie-history-group"));
+  assert.deepEqual(headings.map((p) => p.textContent), ["VeggieTales", "Not from the Library"]);
+  const lists = row.querySelectorAll("ol");
+  assert.equal(lists.length, 2);
+  assert.equal(lists[1].getAttribute("start"), "2");
   harness.teardown();
   harness.dom.restore();
 });
