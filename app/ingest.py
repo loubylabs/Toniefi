@@ -249,7 +249,9 @@ def playlist_preview(url: str) -> dict[str, Any]:
         *_player_client_args(),
         url,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, errors="replace", timeout=180
+    )
     try:
         info = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
@@ -344,7 +346,9 @@ def import_url(
                           "%(section_number)03d-%(section_title).60s.%(ext)s"]
         cmd.append(url)
 
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10800)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, errors="replace", timeout=10800
+        )
 
         info = _read_info_json(tmp)
         produced = _order_produced_audio(tmp, chapters_dir)
