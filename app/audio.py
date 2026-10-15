@@ -26,7 +26,8 @@ class AudioError(RuntimeError):
 def _run(cmd: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=True
+            cmd, capture_output=True, text=True, errors="replace",
+            timeout=timeout, check=True,
         )
     except FileNotFoundError as exc:
         raise AudioError(f"{cmd[0]} is not installed in this container.") from exc
