@@ -17,8 +17,8 @@ port.
 You can prepare and organise collections with no myTonies account at all. Only reading and writing
 Creative Tonies needs one.
 
-`run-local.sh` is idempotent, so it is safe to re-run. It creates `.venv/`, installs or upgrades the dependencies, creates
-`library/`, `data/` and `work/`, and starts uvicorn on <http://127.0.0.1:8080>.
+`run-local.sh` is idempotent, so it is safe to re-run. It creates `.venv/`, installs or upgrades
+the dependencies, creates `library/`, `data/` and `work/`, and starts uvicorn.
 
 `yt-dlp` is deliberately unpinned and refreshed on every start, because a stale copy is the most
 common cause of "that YouTube link does not work".

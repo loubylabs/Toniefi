@@ -11,8 +11,11 @@ installation is only that compose file, so fetch the commented starting point ra
 looking for it in a checkout:
 
 ```bash
-curl -o .env https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.example
+curl -O https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.example
 ```
+
+Copy the lines you want into `.env`. Saving the example over `.env` would drop the
+`TONIEFI_UID`/`TONIEFI_GID` lines a Linux install already put there.
 
 | Variable | Default | Purpose |
 |---|---|---|

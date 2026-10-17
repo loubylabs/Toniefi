@@ -159,10 +159,11 @@ You can sign in through Settings, or put your myTonies login in the `.env` file 
 `docker-compose.yml`. Every setting in that file is optional. To see the full commented list:
 
 ```bash
-curl -o .env https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.example
+curl -O https://raw.githubusercontent.com/loubylabs/Toniefi/main/.env.example
 ```
 
-Uncomment only the lines you actually want. In particular, leave `TONIES_USERNAME` and
+Copy only the lines you actually want into `.env`, without the leading `#`. Do not save the example
+over `.env`: on Linux, that file already holds the `TONIEFI_UID` and `TONIEFI_GID` lines. In particular, leave `TONIES_USERNAME` and
 `TONIES_PASSWORD` commented out unless you are setting real ones. Filling them in makes the
 environment the credential source, and that disables the Settings form. A placeholder there locks
 you out of the other way to sign in.

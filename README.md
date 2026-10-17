@@ -54,6 +54,9 @@ docker compose up -d
 
 Then open <http://127.0.0.1:8080> in your browser.
 
+Your stories are saved in the `library` folder inside `toniefi`. Settings and job history are in
+`data`.
+
 ## First use
 
 1. Open **Settings**. Enter your myTonies email and password. Press **Save local credentials**,
@@ -61,7 +64,8 @@ Then open <http://127.0.0.1:8080> in your browser.
 2. Open the **Desk**. Paste one or more links, one per line. Press **Add to tray**, then
    **Prepare stories**. TonieFi downloads and cleans up each one.
 3. Open the **Library**. Tick a story and choose a Creative Tonie. Press the **Send** button. It
-   reads "Send 3 chapters", or however many you picked.
+   reads "Send 3 chapters", or however many you picked. Nothing goes to a Tonie until you press
+   it.
 4. Put the Tonie on your Toniebox. It downloads the new audio when it syncs.
 
 ![The Library with two stories ticked and a Creative Tonie chosen, ready to send](docs/screenshots/02-library.png)
@@ -107,9 +111,6 @@ If a link stops working, take an update. An old copy is the most common cause.
 | [Development](docs/operations/development.md#run-without-docker) | Run without Docker, run the tests |
 | [Architecture](docs/architecture/overview.md) | How the pieces fit together |
 | [HTTP API](docs/architecture/api.md) | Endpoints and `curl` examples |
-
-Every setting is optional. You change them in a `.env` file, described in
-[Configuration](docs/operations/configuration.md).
 
 ## License
 
