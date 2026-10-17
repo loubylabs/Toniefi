@@ -58,7 +58,7 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 
 - The current implementation and workflow live in `app/static/`, with API behavior in `app/main.py`.
 - Real local collections provide covers, chapter lists, durations, and packing plans for verification.
-- `README.md` documents the current workflow and its safety limits. The detail behind it lives in `docs/architecture/` (runtime behaviour, storage guarantees, Forge processing, packing rules, HTTP API) and `docs/operations/` (configuration, credential limitations, troubleshooting, development).
+- `README.md` documents the install, first use and safety limits. `docs/operations/user-guide.md` is the full how-to. The detail behind it lives in `docs/architecture/` (runtime behaviour, storage guarantees, Forge processing, packing rules, HTTP API) and `docs/operations/` (configuration, credential limitations, troubleshooting, development).
 - TonieFi has no official affiliation with tonies or Boxine and must not imply one.
 
 ## Product Principles

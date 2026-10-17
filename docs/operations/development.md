@@ -1,14 +1,24 @@
 # Development
 
-## Running from source
+## Run without Docker
+
+This path needs the source. It wants `ffmpeg` and Python 3.10 or newer.
 
 ```bash
-brew install ffmpeg
+git clone https://github.com/loubylabs/Toniefi.git
+cd Toniefi
+brew install ffmpeg          # Debian: sudo apt install ffmpeg
 ./run-local.sh
 ```
 
-`run-local.sh` is idempotent. It creates `.venv/`, installs or upgrades the dependencies, creates
-`library/`, `data/` and `work/`, and starts uvicorn on <http://127.0.0.1:8080>.
+Open <http://127.0.0.1:8080>. `Ctrl-C` stops it. `PORT=9000 ./run-local.sh` moves it to another
+port.
+
+You can prepare and organise collections with no myTonies account at all. Only reading and writing
+Creative Tonies needs one.
+
+`run-local.sh` is idempotent, so it is safe to re-run. It creates `.venv/`, installs or upgrades
+the dependencies, creates `library/`, `data/` and `work/`, and starts uvicorn.
 
 `yt-dlp` is deliberately unpinned and refreshed on every start, because a stale copy is the most
 common cause of "that YouTube link does not work".

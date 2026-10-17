@@ -30,8 +30,9 @@ services:
       WORKER_THREADS: "${WORKER_THREADS:-2}"
       # Retained upload inputs live separately from disposable /work scratch.
       UPLOAD_STAGE_DIR: "${UPLOAD_STAGE_DIR:-/data/upload-staging}"
-      # Which YouTube clients yt-dlp may ask as. See the README when a link
-      # reports itself unavailable despite playing in a browser.
+      # Which YouTube clients yt-dlp may ask as. See
+      # docs/operations/troubleshooting.md when a link reports itself
+      # unavailable despite playing in a browser.
       YTDLP_PLAYER_CLIENTS: "${YTDLP_PLAYER_CLIENTS:-default,android}"
     volumes:
       # Your audiobooks. Relative paths resolve against this file's directory.
