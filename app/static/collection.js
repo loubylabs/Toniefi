@@ -100,17 +100,48 @@ function loadingState(title, message) {
   ]);
 }
 
+function sourceFact(collection) {
+  const label = sourceLabel(collection);
+  if (!/^https?:\/\//i.test(collection.url || "")) return element("dd", { text: label });
+  const copy = element("button", {
+    type: "button",
+    className: "button button-secondary collection-source-copy",
+    text: "Copy source URL",
+  });
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(collection.url);
+      notify("Source URL copied.", { kind: "success" });
+    } catch {
+      notify("Could not copy the source URL.", { kind: "failure" });
+    }
+  });
+  return element("dd", { className: "collection-source" }, [
+    element("a", {
+      className: "collection-source-link",
+      href: collection.url,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      title: collection.url,
+      text: label,
+    }),
+    copy,
+  ]);
+}
+
 function detailFacts(collection) {
   const facts = [
-    ["Source", sourceLabel(collection)],
     ["Uploader", collection.uploader || "Not provided"],
     ["Duration", collection.total_duration || "No duration yet"],
     ["Chapters", String(collection.track_count || 0)],
     ["Forge", forgeSummary(collection)],
   ];
-  return element("dl", { className: "collection-detail-facts" }, facts.map(([term, description]) => (
-    element("div", {}, [element("dt", { text: term }), element("dd", { text: description })])
-  )));
+  return element("dl", { className: "collection-detail-facts" }, [
+    element("div", {}, [element("dt", { text: "Source" }), sourceFact(collection)]),
+    ...facts.map(([term, description]) => (
+      element("div", {}, [element("dt", { text: term }), element("dd", { text: description })])
+    )),
+  ]);
 }
 
 function capacityPlan(collection, usableLimit) {
