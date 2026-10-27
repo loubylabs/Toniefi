@@ -1523,3 +1523,62 @@ test("the collection title is the h1 field: Enter saves, Escape reverts, a faile
     dom.restore();
   }
 });
+
+test("the collection screen links the source URL and copies it", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const url = "https://www.youtube.com/playlist?list=PL123";
+  const collection = {
+    slug: "sourced-story",
+    title: "Sourced Story",
+    stage: "forged",
+    source: "url",
+    url,
+    forge: { normalized: true },
+    track_count: 1,
+    total_duration: "10m",
+    tonies_needed: 1,
+    tracks: [{ name: "one.mp3", title: "One", seconds: 600, duration: "10m" }],
+    plan: [{ index: 1, seconds: 600, duration: "10m", tracks: [] }],
+  };
+  const refresh = {
+    snapshot: {
+      status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 },
+      collections: [collection],
+      jobs: [],
+      stale: [],
+      errors: {},
+    },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const copied = [];
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { clipboard: { writeText: async (text) => { copied.push(text); } } },
+  });
+
+  try {
+    createCollectionDetail({
+      workspace: dom.workspace,
+      slug: collection.slug,
+      request: async () => collection,
+      refresh,
+      player: { play() {} },
+      signal: controller.signal,
+    });
+    await flush();
+    const link = dom.workspace.querySelector(".collection-source-link");
+    assert.equal(link.getAttribute("href"), url);
+    assert.equal(link.textContent, "YouTube playlist");
+    await buttonWithText(dom.workspace, "Copy source URL").click();
+    await flush();
+    assert.deepEqual(copied, [url]);
+  } finally {
+    controller.abort();
+    dom.restore();
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
+    else delete globalThis.navigator;
+  }
+});
