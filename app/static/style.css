@@ -1341,6 +1341,36 @@ img.collection-detail-cover {
   white-space: nowrap;
 }
 
+/* A star fills in once pressed. Part-starred keeps the outline in the same
+   colour, so it reads as "some" rather than as off. */
+.star-toggle[aria-pressed="true"],
+.star-toggle[aria-pressed="mixed"] {
+  color: var(--warning);
+}
+
+.star-toggle[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+
+/* WCAG 2.2 AA 2.5.8, the same 2.75rem line the chapter label holds. */
+.library-chapter-star {
+  display: inline-grid;
+  flex: none;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.library-chapter-star svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
 .library-row-heading .status-stamp {
   flex: none;
   white-space: nowrap;
@@ -3692,8 +3722,15 @@ img.collection-detail-cover {
   list-style: none;
 }
 
+.library-chapter-row {
+  display: flex;
+  align-items: center;
+}
+
 .library-chapter-label {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   /* WCAG 2.2 AA 2.5.8: the whole line is the hit target, not the box. */
   min-height: 2.75rem;

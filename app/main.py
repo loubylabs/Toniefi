@@ -144,6 +144,11 @@ class ReorderRequest(RequestModel):
     names: list[str]
 
 
+class StarRequest(RequestModel):
+    names: list[str]
+    starred: bool
+
+
 class PrepareSource(RequestModel):
     url: str
     # Which playlist entries to download, as the numbers the preview showed.
@@ -507,26 +512,31 @@ def run_forge(body: ForgeRequest) -> dict[str, Any]:
 
 # --------------------------------------------------------- 4. collections
 
-def _mark_sent(manifests: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Give each chapter its latest finished send, as `sent: {tonie, at}`.
+def _mark_chapters(manifests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Give each chapter its latest finished send, as `sent: {tonie, at}`, and
+    `starred: true` when it is starred.
 
-    Added after the fingerprint is taken, so a send never changes what the
-    next send must confirm. A send older than the collection belongs to an
-    earlier collection that had the same slug, and is ignored.
+    Added after the fingerprint is taken, so neither a send nor a star changes
+    what the next send must confirm. A send or star older than the collection
+    belongs to an earlier collection that had the same slug, and is ignored.
     """
     sent = db.sent_chapters()
+    stars = db.starred_chapters()
     for manifest in manifests:
         created = manifest.get("created_at") or 0
         for track in manifest.get("tracks", []):
-            mark = sent.get((manifest["slug"], track.get("name")))
+            key = (manifest["slug"], track.get("name"))
+            mark = sent.get(key)
             if mark and mark["at"] >= created:
                 track["sent"] = mark
+            if stars.get(key, -1) >= created:
+                track["starred"] = True
     return manifests
 
 
 @app.get("/api/collections")
 def list_collections() -> list[dict[str, Any]]:
-    return _mark_sent(library.list_all())
+    return _mark_chapters(library.list_all())
 
 
 @app.get("/api/collections/{slug}")
@@ -535,7 +545,7 @@ def get_collection(slug: str, refresh: bool = False) -> dict[str, Any]:
     if not manifest:
         raise fail(404, f"No collection named {slug}.")
     manifest["plan"] = library.plan(slug)
-    return _mark_sent([manifest])[0]
+    return _mark_chapters([manifest])[0]
 
 
 @app.post("/api/collections/{slug}/trim")
@@ -591,9 +601,28 @@ def rename_track(slug: str, name: str, body: TitlePatch) -> dict[str, Any]:
 @app.delete("/api/collections/{slug}/tracks/{name}")
 def delete_track(slug: str, name: str) -> dict[str, Any]:
     try:
-        return library.delete_track(slug, name)
+        manifest = library.delete_track(slug, name)
     except ValueError as exc:
         raise fail(400, str(exc)) from exc
+    db.forget_stars(slug, name)
+    return manifest
+
+
+@app.post("/api/collections/{slug}/stars")
+def star_chapters(slug: str, body: StarRequest) -> dict[str, Any]:
+    """Star or unstar chapters of a finished collection; returns its starred names."""
+    collection = library.get(slug)
+    if not collection:
+        raise fail(404, f"No collection named {slug}.")
+    if collection.get("stage") != "forged":
+        raise fail(409, "Finish preparation before starring chapters.")
+    names = [track["name"] for track in collection.get("tracks", [])]
+    unknown = [name for name in body.names if name not in names]
+    if unknown:
+        raise fail(400, f"No chapter named {unknown[0]} in this collection.")
+    db.set_stars(slug, body.names, body.starred)
+    marked = _mark_chapters([collection])[0]
+    return {"starred": [track["name"] for track in marked["tracks"] if track.get("starred")]}
 
 
 @app.delete("/api/collections/{slug}")
@@ -602,6 +631,7 @@ def delete_collection(slug: str) -> dict[str, Any]:
         library.delete(slug)
     except (ValueError, FileNotFoundError) as exc:
         raise fail(404, str(exc)) from exc
+    db.forget_stars(slug)
     return {"ok": True}
 
 

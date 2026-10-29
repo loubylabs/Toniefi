@@ -26,6 +26,7 @@ access control, so treat network reachability as the only gate and do not expose
 | `POST` | `/api/collections/{slug}/reorder` | Reorder tracks |
 | `POST` | `/api/collections/{slug}/trim` | Cut seconds off every track of a finished collection |
 | `POST` | `/api/collections/{slug}/remove-ads` | Cut ads from a finished podcast collection |
+| `POST` | `/api/collections/{slug}/stars` | Star or unstar chapters of a finished collection (`{names, starred}`) |
 | `PATCH` | `/api/collections/{slug}/tracks/{name}` | Rename one track |
 | `DELETE` | `/api/collections/{slug}/tracks/{name}` | Delete one track |
 | `GET` | `/api/collections/{slug}/cover` | Cover image |

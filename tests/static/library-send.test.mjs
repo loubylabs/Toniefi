@@ -268,6 +268,7 @@ function mountLibrary({
   const dom = installDom();
   const controller = new AbortController();
   const pushes = [];
+  const starWrites = [];
   let tonieCalls = 0;
   // The real coordinator publishes to its subscribers on every request. The
   // stub used to swallow that, which meant a test could not drive the screen's
@@ -298,6 +299,16 @@ function mountLibrary({
       if (outcome instanceof Error) throw outcome;
       return { operation_key: "op", job_ids: [7] };
     }
+    const starUrl = url.match(/^\/api\/collections\/([^/]+)\/stars$/);
+    if (starUrl) {
+      const body = JSON.parse(options.body);
+      starWrites.push({ slug: decodeURIComponent(starUrl[1]), ...body });
+      const collection = collections.find((item) => item.slug === decodeURIComponent(starUrl[1]));
+      for (const track of collection.tracks) {
+        if (body.names.includes(track.name)) track.starred = body.starred;
+      }
+      return { starred: collection.tracks.filter((track) => track.starred).map((track) => track.name) };
+    }
     throw new Error(`Unexpected request ${url}`);
   };
   const cleanup = createLibraryScreen({ request, refresh })({
@@ -308,6 +319,7 @@ function mountLibrary({
   return {
     dom,
     pushes,
+    starWrites,
     refresh,
     node: (selector) => dom.workspace.querySelector(selector),
     byFocusKey: (key) => dom.workspace.querySelectorAll("[data-focus-key]").find((item) => item.getAttribute("data-focus-key") === key),
@@ -1641,6 +1653,101 @@ test("every chapter control freezes while a send is in flight", async () => {
     release();
     await sent;
     await flush();
+  } finally {
+    screen.stop();
+  }
+});
+
+test("starring a chapter fills its star and the row counts it", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    const rowStar = screen.node(".library-row-star");
+    assert.equal(rowStar.getAttribute("aria-pressed"), "false");
+    assert.match(rowStar.textContent, /^Star$/);
+
+    await screen.node(".library-choose-chapters").dispatchEvent({ type: "click" });
+    await flush();
+    const stars = () => screen.dom.workspace.querySelectorAll(".library-chapter-star");
+    assert.deepEqual(stars().map((star) => star.getAttribute("aria-label")), ["Star One", "Star Two"]);
+
+    await stars()[1].click();
+    await flush();
+    assert.deepEqual(screen.starWrites, [{ slug: "night-story", names: ["02.mp3"], starred: true }]);
+    assert.deepEqual(stars().map((star) => star.getAttribute("aria-pressed")), ["false", "true"]);
+    assert.equal(stars()[1].getAttribute("aria-label"), "Unstar Two");
+    assert.equal(screen.node(".library-row-star").getAttribute("aria-pressed"), "mixed");
+    assert.match(screen.node(".library-row-star").textContent, /1 starred/);
+    assert.equal(screen.focusKey(), "library-night-story-chapter-1-star");
+    // Starring is not choosing: the chapter is not ticked for sending.
+    assert.equal(screen.node(".library-send-bar").hidden, true);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("the row star stars every chapter, then unstars them all", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    await screen.node(".library-row-star").click();
+    await flush();
+    assert.deepEqual(screen.starWrites.at(-1), { slug: "night-story", names: ["01.mp3", "02.mp3"], starred: true });
+    assert.equal(screen.node(".library-row-star").getAttribute("aria-pressed"), "true");
+    assert.match(screen.node(".library-row-star").textContent, /Starred/);
+
+    await screen.node(".library-row-star").click();
+    await flush();
+    assert.deepEqual(screen.starWrites.at(-1), { slug: "night-story", names: ["01.mp3", "02.mp3"], starred: false });
+    assert.equal(screen.node(".library-row-star").getAttribute("aria-pressed"), "false");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("Starred shows only stories with a star, and Select starred sends only starred chapters", async () => {
+  const night = nightStory();
+  night.tracks[1].starred = true;
+  const dawn = dawnStory();
+  dawn.tracks[0].starred = true;
+  const plain = { ...nightStory(), slug: "plain-story", title: "Plain Story", manifest_fingerprint: "f-plain" };
+  globalThis.sessionStorage = { getItem: () => null, setItem() {} };
+  const screen = mountLibrary({ collections: [night, plain, dawn] });
+  try {
+    await flush();
+    const starred = screen.dom.workspace.querySelector(".library-filter").querySelectorAll("input")
+      .find((input) => input.value === "starred");
+    starred.checked = true;
+    await starred.dispatchEvent({ type: "change" });
+    assert.deepEqual(
+      screen.dom.workspace.querySelectorAll(".library-row").map((row) => row.querySelector("h2").textContent),
+      ["Night Story", "Dawn Story"],
+    );
+
+    const select = screen.node(".library-select-starred");
+    assert.equal(select.hidden, false);
+    await select.click();
+    await flush();
+    assert.match(screen.node(".library-send-bar").textContent, /2 chapters from 2 stories/);
+    await chooseTarget(screen, "h1/t1");
+    await flush();
+    await screen.node(".library-send-submit").click();
+    await flush();
+    assert.deepEqual(screen.pushes[0].assignments[0].sources, [
+      { slug: "night-story", manifest_fingerprint: "f-night", files: ["02.mp3"] },
+      { slug: "dawn-story", manifest_fingerprint: "f-dawn", files: ["dawn.mp3"] },
+    ]);
+  } finally {
+    screen.stop();
+    delete globalThis.sessionStorage;
+  }
+});
+
+test("Select starred stays hidden while nothing is starred", async () => {
+  const screen = mountLibrary({ collections: [nightStory()] });
+  try {
+    await flush();
+    assert.equal(screen.node(".library-select-starred").hidden, true);
   } finally {
     screen.stop();
   }
