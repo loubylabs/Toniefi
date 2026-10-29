@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS tonie_versions (
     created_at    REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tonie_versions_tonie_idx ON tonie_versions(household_id, tonie_id, id);
+CREATE TABLE IF NOT EXISTS stars (
+    slug        TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    created_at  REAL NOT NULL,
+    PRIMARY KEY (slug, name)
+);
 """
 
 FORGE_OPERATION_IDS_MIGRATION = "2026-08-28-forge-operation-ids"
@@ -719,6 +725,55 @@ def sent_chapters() -> dict[tuple[str, str], dict[str, Any]]:
             for name in source.get("files") or []:
                 sent[(source.get("slug"), name)] = mark
     return sent
+
+
+def starred_chapters() -> dict[tuple[str, str], float]:
+    """When each starred chapter was starred, keyed by (slug, file name).
+
+    A star lives here rather than in the manifest because Trim and Remove ads
+    publish a fresh manifest, and a favourite should outlive both.
+    """
+    rows = connect().execute("SELECT slug,name,created_at FROM stars").fetchall()
+    return {(row["slug"], row["name"]): row["created_at"] for row in rows}
+
+
+def set_stars(slug: str, names: list[str], starred: bool) -> None:
+    """Star or unstar the named chapters. Starring twice keeps the first time."""
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if starred:
+                now = time.time()
+                conn.executemany(
+                    "INSERT OR IGNORE INTO stars(slug,name,created_at) VALUES(?,?,?)",
+                    [(slug, name, now) for name in names],
+                )
+            else:
+                conn.executemany(
+                    "DELETE FROM stars WHERE slug=? AND name=?",
+                    [(slug, name) for name in names],
+                )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def forget_stars(slug: str, name: str | None = None) -> None:
+    """Drop the stars of a deleted collection, or of one deleted chapter."""
+    conn = connect()
+    with _lock:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if name is None:
+                conn.execute("DELETE FROM stars WHERE slug=?", (slug,))
+            else:
+                conn.execute("DELETE FROM stars WHERE slug=? AND name=?", (slug, name))
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
 
 def sent_titles() -> dict[str, str]:

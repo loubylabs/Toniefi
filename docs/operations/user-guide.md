@@ -99,6 +99,20 @@ now and the rest another day.
 The story's own tick box still means every chapter. It shows a dash while only some chapters are
 chosen.
 
+### Star favourites
+
+Star the stories your family loves, so you can find them and load them again later.
+
+- **Star** on a story stars every chapter. Press it again to unstar them all.
+- The star beside each chapter in **Choose chapters** stars just that one.
+- The **Starred** filter shows only stories with a star.
+- **Select starred** chooses every starred chapter across the Library, and nothing else. Pick a
+  Tonie and send, and that Tonie holds only favourites. Use **Replace everything** if it should
+  hold nothing else.
+
+A star only marks a chapter. It never sends anything by itself. Stars stay through Trim and Remove
+ads, and go away when you delete the chapter or the story.
+
 ### Append or replace
 
 **Append to the back** is the default. It sends straight away, because you can remove the added

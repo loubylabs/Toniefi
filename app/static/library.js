@@ -192,10 +192,16 @@ export const LIBRARY_FILTERS = [
   { value: "all", label: "All" },
   { value: "ready", label: "Ready to send" },
   { value: "needs-forge", label: "Needs Forge" },
+  { value: "starred", label: "Starred" },
 ];
 const FILTER_STORAGE_KEY = "toniefi.library.filter";
 
-export function filterCollectionsByReadiness(collections, filter, jobs = []) {
+export function starredNames(collection) {
+  return (collection.tracks || []).filter((track) => track.starred).map((track) => track.name);
+}
+
+export function applyLibraryFilter(collections, filter, jobs = []) {
+  if (filter === "starred") return collections.filter((collection) => starredNames(collection).length);
   if (filter !== "ready" && filter !== "needs-forge") return collections.slice();
   const wantReady = filter === "ready";
   return collections.filter((collection) => (forgePreparationState(collection, jobs).state === "ready") === wantReady);
@@ -317,7 +323,24 @@ export function createLibraryScreen({
       element("legend", { className: "visually-hidden", text: "Show collections" }),
       ...filterInputs.map((entry) => entry.label),
     ]);
-    const toolbar = element("div", { className: "library-toolbar" }, [searchField, filterGroup]);
+    // Replaces the selection with every starred chapter that can be sent, so
+    // a Tonie of favourites is one press and a Tonie pick away.
+    const selectStarred = element("button", {
+      type: "button",
+      className: "button button-secondary library-select-starred",
+      "data-focus-key": "library-select-starred",
+      hidden: true,
+    }, [iconNode("star"), element("span", { text: "Select starred" })]);
+    selectStarred.addEventListener("click", () => {
+      if (sending) return;
+      selection.clear();
+      for (const collection of selectableCollections(collections, jobs)) {
+        selection.setTracks(collection, starredNames(collection));
+      }
+      if (selection.size() && tonies === null) loadTargets("library-select-starred");
+      render({ focusKey: "library-select-starred" });
+    });
+    const toolbar = element("div", { className: "library-toolbar" }, [searchField, filterGroup, selectStarred]);
     const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
     const summary = element("p", { className: "library-summary", role: "status", "aria-live": "polite" });
     const list = element("ul", { className: "library-list" });
@@ -346,6 +369,47 @@ export function createLibraryScreen({
     // tick (see above), which would otherwise snap a long chapter list back
     // to its top on every single chapter the operator ticks.
     const chapterScroll = new Map();
+    // One star write at a time, so two quick presses never race each other.
+    let starring = false;
+
+    async function setStars(collection, names, starred, focusKey) {
+      if (starring || !names.length) return;
+      starring = true;
+      render({ focusKey });
+      try {
+        const answer = await request(`/api/collections/${encodeURIComponent(collection.slug)}/stars`, {
+          method: "POST",
+          body: JSON.stringify({ names, starred }),
+          signal,
+        });
+        if (!active || signal?.aborted) return;
+        const now = new Set(answer?.starred || []);
+        collections = collections.map((item) => (item.slug !== collection.slug ? item : {
+          ...item,
+          tracks: (item.tracks || []).map((track) => ({ ...track, starred: now.has(track.name) })),
+        }));
+      } catch (error) {
+        if (!active || signal?.aborted) return;
+        notify(error.message, { kind: "failure", timeout: 0 });
+      } finally {
+        starring = false;
+      }
+      render({ focusKey });
+    }
+
+    function starButton({ pressed, label, focusKey, className, text, act }) {
+      return element("button", {
+        type: "button",
+        className: `star-toggle ${className}`,
+        // A string, because element() drops a false attribute entirely.
+        "aria-pressed": String(pressed),
+        "aria-label": text ? null : label,
+        title: label,
+        disabled: starring,
+        "data-focus-key": focusKey,
+        onclick: act,
+      }, [iconNode("star"), text ? element("span", { text }) : null]);
+    }
 
     function showStale(message) {
       if (!active || signal?.aborted) return;
@@ -434,7 +498,18 @@ export function createLibraryScreen({
         // A label bound to the box and holding it, the same shape the row tick
         // already uses, so the whole line is the hit target rather than a
         // 20px square.
+        // Beside the label, not inside it: a button inside the label would
+        // also tick the chapter on every press.
+        const starFocus = `library-${collection.slug}-chapter-${index}-star`;
+        const title = track.title || track.name;
         return element("li", { className: "library-chapter-row" }, [
+          starButton({
+            pressed: Boolean(track.starred),
+            label: track.starred ? `Unstar ${title}` : `Star ${title}`,
+            focusKey: starFocus,
+            className: "library-chapter-star",
+            act: () => setStars(collection, [track.name], !track.starred, starFocus),
+          }),
           element("label", { className: "library-chapter-label", for: boxId }, [
             box,
             element("span", { className: "library-chapter-index", text: String(index + 1) }),
@@ -646,6 +721,28 @@ export function createLibraryScreen({
           text: `${selection.chosenCount(collection)} of ${(collection.tracks || []).length} chapters selected`,
         })
         : null;
+      // The story-level star stars every chapter, or unstars them all once
+      // every one is starred. Part-starred reads as mixed.
+      const starredCount = starredNames(collection).length;
+      const trackTotal = (collection.tracks || []).length;
+      const allStarred = Boolean(trackTotal) && starredCount === trackTotal;
+      const rowStar = selectable && trackTotal
+        ? starButton({
+          pressed: allStarred ? true : starredCount ? "mixed" : false,
+          label: allStarred
+            ? `Unstar ${collection.title || collection.slug}`
+            : `Star every chapter of ${collection.title || collection.slug}`,
+          focusKey: `library-${collection.slug}-star`,
+          className: "button button-secondary library-row-star",
+          text: allStarred ? "Starred" : starredCount ? `${starredCount} starred` : "Star",
+          act: () => setStars(
+            collection,
+            allStarred ? starredNames(collection) : (collection.tracks || []).map((track) => track.name),
+            !allStarred,
+            `library-${collection.slug}-star`,
+          ),
+        })
+        : null;
       const body = element("div", { className: "library-row-body" }, [
         element("div", { className: "library-row-heading" }, [
           element("h2", { id: titleId, text: collection.title || "Untitled collection" }),
@@ -661,7 +758,7 @@ export function createLibraryScreen({
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
           : null,
-        element("div", { className: "library-row-actions" }, [primary, chooseChapters, download, removeButton]),
+        element("div", { className: "library-row-actions" }, [primary, rowStar, chooseChapters, download, removeButton]),
         open ? chapterPanel(collection, panelId) : null,
       ]);
       return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
@@ -679,7 +776,7 @@ export function createLibraryScreen({
         const slug = node.dataset.collectionSlug;
         if (slug) chapterScroll.set(slug, node.scrollTop || 0);
       }
-      const shown = filterCollectionsByReadiness(filterCollectionsByTitle(collections, query), filter, jobs);
+      const shown = applyLibraryFilter(filterCollectionsByTitle(collections, query), filter, jobs);
       for (const entry of filterInputs) entry.input.checked = entry.value === filter;
       const searching = Boolean(query.trim());
       clearSearch.hidden = !query;
@@ -724,6 +821,8 @@ export function createLibraryScreen({
           if (slug && chapterScroll.has(slug)) node.scrollTop = chapterScroll.get(slug);
         }
       }
+      selectStarred.hidden = !selectableCollections(collections, jobs).some((collection) => starredNames(collection).length);
+      selectStarred.disabled = sending;
       renderSendBar();
       // The send bar is the region the operator is watching while the POST is
       // in flight, so it is the region that reports being busy.

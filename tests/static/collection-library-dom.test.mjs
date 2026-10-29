@@ -1262,7 +1262,7 @@ test("Library row names readiness, source and date, and filters by readiness", a
     assert.equal(dom.workspace.querySelectorAll(".library-source").length, 0);
 
     const radios = dom.workspace.querySelector(".library-filter").querySelectorAll("input");
-    assert.deepEqual(radios.map((node) => node.value), ["all", "ready", "needs-forge"]);
+    assert.deepEqual(radios.map((node) => node.value), ["all", "ready", "needs-forge", "starred"]);
     assert.equal(radios[0].checked, true);
 
     const choose = async (value) => {
