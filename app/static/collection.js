@@ -144,7 +144,10 @@ function detailFacts(collection) {
   ]);
 }
 
-function capacityPlan(collection, usableLimit) {
+// On a phone a Tonie's group is a closed details, so 223 chapters are not 223
+// repeated lines; on a desktop the group stays open as a plain record. `view`
+// carries the phone flag and the JS-held set of open groups.
+function capacityPlan(collection, usableLimit, view = { phone: false, openGroups: new Set() }) {
   const section = element("section", { className: "capacity-plan", "aria-labelledby": "capacity-plan-title" });
   section.append(
     element("div", { className: "section-heading" }, [
@@ -168,20 +171,40 @@ function capacityPlan(collection, usableLimit) {
     const trackList = element("ol", { className: "capacity-track-list" }, group.tracks.map((track) => (
       element("li", {}, [element("span", { text: track.title }), element("span", { text: track.duration })])
     )));
+    const meter = element("div", {
+      className: "capacity-meter",
+      role: "meter",
+      "aria-label": `Capacity group ${group.index}`,
+      "aria-valuemin": "0",
+      "aria-valuemax": String(usableLimit),
+      "aria-valuenow": String(group.seconds),
+      "aria-valuetext": `${group.duration} of ${humanDuration(usableLimit)}`,
+    }, [element("span", { style: `--capacity:${percent}%` })]);
+    if (view.phone) {
+      const count = group.tracks.length;
+      const details = element("details", {
+        className: "capacity-group-details",
+        open: view.openGroups.has(group.index),
+      }, [
+        element("summary", {
+          text: `Tonie ${group.index} · ${group.duration} · ${count} ${count === 1 ? "chapter" : "chapters"}`,
+        }),
+        meter,
+        trackList,
+      ]);
+      details.addEventListener("toggle", () => {
+        if (details.open) view.openGroups.add(group.index);
+        else view.openGroups.delete(group.index);
+      });
+      groups.append(element("li", { className: "capacity-group" }, [details]));
+      continue;
+    }
     groups.append(element("li", { className: "capacity-group" }, [
       element("div", { className: "capacity-group-heading" }, [
         element("h3", { text: `Creative Tonie ${group.index}` }),
         element("span", { className: "status-stamp", "data-status": "success", text: group.duration }),
       ]),
-      element("div", {
-        className: "capacity-meter",
-        role: "meter",
-        "aria-label": `Capacity group ${group.index}`,
-        "aria-valuemin": "0",
-        "aria-valuemax": String(usableLimit),
-        "aria-valuenow": String(group.seconds),
-        "aria-valuetext": `${group.duration} of ${humanDuration(usableLimit)}`,
-      }, [element("span", { style: `--capacity:${percent}%` })]),
+      meter,
       trackList,
     ]));
   }
@@ -247,6 +270,19 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
   });
 
   let redrawing = false;
+
+  // The page is rebuilt on every refresh poll, so what a phone has opened (one
+  // chapter's More, the chapter being renamed, the capacity groups) lives here
+  // and is drawn back in, never kept only in the DOM.
+  const phoneQuery = globalThis.window?.matchMedia?.("(max-width: 759.98px)") || null;
+  const isPhone = () => Boolean(phoneQuery?.matches);
+  let moreOpen = "";
+  let renaming = "";
+  const openGroups = new Set();
+  const onViewport = () => {
+    if (collection) renderDetail();
+  };
+  phoneQuery?.addEventListener?.("change", onViewport);
 
   function renderDetail({ focusKey = "", fallback = null } = {}) {
     if (!active || signal.aborted || !collection) return;
@@ -402,6 +438,8 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         className: "collection-chapter-row",
         draggable: "true",
         "data-track-name": track.name,
+        "data-more-open": moreOpen === track.name ? "" : null,
+        "data-renaming": renaming === track.name ? "" : null,
       });
       const titleId = `chapter-title-${index}`;
       const titleKey = `chapter-${track.name}-title`;
@@ -437,7 +475,9 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
               signal,
             });
             await loadCollection();
-            renderDetail({ focusKey: `chapter-${track.name}-title` });
+            // On a phone the field is hidden again once saved, so focus goes
+            // back to the row's More button.
+            renderDetail({ focusKey: isPhone() ? `chapter-${track.name}-more` : titleKey });
             return true;
           });
           if (!saved || !active || signal.aborted) return;
@@ -446,13 +486,69 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           if (!active || signal.aborted) return;
           titleInput.disabled = false;
           notify(error.message, { kind: "failure", timeout: 0 });
+          // A failed rename keeps its field open, with what was typed in it.
+          if (isPhone()) startRename(false);
           titleInput.focus({ preventScroll: true });
         } finally {
           savingChapterTitle = false;
         }
       }
+      // A phone shows the title as text; Rename opens the field.
+      function startRename(redraw = true) {
+        renaming = track.name;
+        moreOpen = "";
+        if (redraw) renderDetail({ focusKey: titleKey });
+        else row.setAttribute("data-renaming", "");
+      }
+      function leaveRename() {
+        if (renaming !== track.name) return;
+        renaming = "";
+        row.removeAttribute("data-renaming");
+      }
+      // Enter and leaving the field save, like the collection title. An empty
+      // title keeps the field open so its message has somewhere to show.
+      function commitTitle() {
+        if (titleInput.value.trim()) leaveRename();
+        saveChapterTitle();
+      }
       titleInput.addEventListener("change", saveChapterTitle);
-      titleInput.addEventListener("blur", saveChapterTitle);
+      titleInput.addEventListener("blur", () => {
+        if (redrawing || titleInput.isConnected === false) return;
+        commitTitle();
+      });
+      titleInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commitTitle();
+        } else if (event.key === "Escape") {
+          titleInput.setCustomValidity("");
+          titleInput.value = track.title || "";
+          leaveRename();
+          if (isPhone()) row.querySelector(".chapter-more")?.focus({ preventScroll: true });
+        }
+      });
+      const titleText = element("div", { className: "chapter-title-text", text: track.title || "" });
+      const moreId = `chapter-actions-${index}`;
+      const more = element("button", {
+        type: "button",
+        className: "icon-button chapter-more",
+        "aria-label": `More actions for ${track.title}`,
+        "aria-expanded": String(moreOpen === track.name),
+        "aria-controls": moreId,
+        "data-focus-key": `chapter-${track.name}-more`,
+        onclick: () => {
+          moreOpen = moreOpen === track.name ? "" : track.name;
+          renderDetail({ focusKey: `chapter-${track.name}-more` });
+        },
+      }, [iconNode("more")]);
+      const rename = element("button", {
+        type: "button",
+        className: "button button-secondary chapter-rename",
+        "data-focus-key": `chapter-${track.name}-rename`,
+        "aria-label": `Rename ${track.title}`,
+        "data-collection-mutation": "",
+        onclick: () => startRename(),
+      }, [element("span", { text: "Rename" })]);
       const play = element("button", {
         type: "button",
         className: "button button-secondary chapter-play",
@@ -473,6 +569,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         "data-collection-mutation": "",
       });
       moveUp.innerHTML = icon("arrowUp");
+      moveUp.append(element("span", { className: "chapter-action-label", text: "Move up" }));
       moveUp.addEventListener("click", () => persistOrder(
         moveItem(collection.tracks, index, -1),
         moveControlFocusKey(track.name, index - 1, collection.tracks.length, -1),
@@ -486,6 +583,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         "data-collection-mutation": "",
       });
       moveDown.innerHTML = icon("arrowDown");
+      moveDown.append(element("span", { className: "chapter-action-label", text: "Move down" }));
       moveDown.addEventListener("click", () => persistOrder(
         moveItem(collection.tracks, index, 1),
         moveControlFocusKey(track.name, index + 1, collection.tracks.length, 1),
@@ -498,6 +596,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         "data-collection-mutation": "",
       });
       removeButton.innerHTML = icon("trash");
+      removeButton.append(element("span", { className: "chapter-action-label", text: "Remove" }));
       removeButton.addEventListener("click", async () => {
         const confirmed = await showConfirmDialog({
           title: `Remove ${track.title}?`,
@@ -513,8 +612,12 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           const removed = await mutation.run(async () => {
             await request(`/api/collections/${encodeURIComponent(slug)}/tracks/${encodeURIComponent(track.name)}`, { method: "DELETE", signal });
             await loadCollection();
+            // The neighbour's Remove waits behind More on a phone.
+            moreOpen = "";
             renderDetail({
-              focusKey: fallbackTrack ? `chapter-${fallbackTrack.name}-remove` : "collection-title",
+              focusKey: fallbackTrack
+                ? `chapter-${fallbackTrack.name}-${isPhone() ? "more" : "remove"}`
+                : "collection-title",
             });
             return true;
           });
@@ -528,13 +631,14 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           removeButton.focus({ preventScroll: true });
         }
       });
-      const controls = element("div", { className: "chapter-row-controls" }, [play, moveUp, moveDown, removeButton]);
+      const actions = element("div", { className: "chapter-more-actions", id: moreId }, [rename, moveUp, moveDown, removeButton]);
+      const controls = element("div", { className: "chapter-row-controls" }, [play, more, actions]);
       const markList = chapterMarks(track);
       const marks = markList.length ? element("span", { className: "chapter-marks" }, markList) : null;
       row.append(
         iconNode("grip", "chapter-grip"),
         element("span", { className: "chapter-index", text: String(index + 1) }),
-        element("div", { className: "chapter-title-field" }, [titleInput, element("span", { text: track.duration }), marks]),
+        element("div", { className: "chapter-title-field" }, [titleText, titleInput, element("span", { text: track.duration }), marks]),
         controls,
       );
       row.addEventListener("dragstart", (event) => {
@@ -734,7 +838,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
       replace(root, header, element("div", { className: "collection-detail-grid" }, [
         element("div", { className: "collection-detail-main" }, [chapters]),
         element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
-          ? [capacityPlan(collection, status.usable_limit_seconds), trimPanel, adsPanel].filter(Boolean)
+          ? [capacityPlan(collection, status.usable_limit_seconds, { phone: isPhone(), openGroups }), trimPanel, adsPanel].filter(Boolean)
           : [preparationPanel]),
       ]));
     } finally {
@@ -785,6 +889,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
   return () => {
     active = false;
     unsubscribe();
+    phoneQuery?.removeEventListener?.("change", onViewport);
   };
 }
 
