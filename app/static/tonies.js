@@ -196,6 +196,18 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     // transfer on the row it is transferring to.
     let jobs = [];
     let sendingKeys = new Set();
+    // The list is rebuilt on every tick and refresh poll, so what a phone has
+    // opened (one chapter's More, the chapter being renamed, the folded rename
+    // line) lives here and is drawn back in, never kept only in the DOM.
+    const phoneQuery = globalThis.window?.matchMedia?.("(max-width: 759.98px)") || null;
+    const isPhone = () => Boolean(phoneQuery?.matches);
+    let moreOpen = "";
+    let renaming = "";
+    const renameOpen = new Set();
+    let redrawing = false;
+    // Set by the open Tonie's detail on each render: the one confirmed removal
+    // of the ticked chapters, shared by the toolbar button and the phone bar.
+    let removeTicked = null;
 
     const root = element("section", { className: "tonies-screen", "aria-labelledby": "tonies-title" });
     const refreshButton = element("button", {
@@ -213,6 +225,14 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     ]);
     const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
     const list = element("ul", { className: "tonie-list", "aria-live": "polite" });
+    // Outside the list on purpose: a row clips its overflow, which would stop
+    // a sticky bar inside it from ever sticking.
+    const selectionBar = element("div", {
+      className: "tonie-selection-bar",
+      role: "region",
+      "aria-label": "Selected chapters",
+      hidden: true,
+    });
 
     async function load({ announceSuccess = false } = {}) {
       const token = ++loadToken;
@@ -224,6 +244,8 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         loadError = "";
         if (openKey && !tonies.some((tonie) => tonieKey(tonie) === openKey)) openKey = "";
         selectedChapters.clear();
+        moreOpen = "";
+        renaming = "";
         render({ passive: true });
         if (announceSuccess) {
           notify("Creative Tonies refreshed from myTonies.", { kind: "success" });
@@ -361,6 +383,25 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     function historyPanel(tonie) {
       const key = tonieKey(tonie);
       const open = historyOpen.has(key);
+      if (isPhone()) {
+        // A closed line on a phone; the same open set and the same lazy load.
+        const fold = element("details", { className: "tonie-fold tonie-history", open }, [
+          element("summary", { "data-focus-key": `tonie-${tonie.id}-history`, text: "Version history" }),
+          ...(open ? [historyBody(key, historyCache.get(key))] : []),
+        ]);
+        fold.addEventListener("toggle", () => {
+          const nowOpen = fold.hasAttribute("open");
+          if (nowOpen === historyOpen.has(key)) return;
+          if (nowOpen) {
+            historyOpen.add(key);
+            loadHistory(tonie);
+          } else {
+            historyOpen.delete(key);
+            historyCache.delete(key);
+          }
+        });
+        return fold;
+      }
       const toggle = element("button", {
         type: "button",
         className: "button button-secondary",
@@ -408,7 +449,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         if (wanted === (tonie.name || "")) return;
         await saveName(tonie, nameInput.value);
       });
-      return element("div", { className: "tonie-rename-field" }, [
+      const field = element("div", { className: "tonie-rename-field" }, [
         element("label", { for: nameId, text: "Name on myTonies" }),
         nameInput,
         element("p", {
@@ -416,6 +457,17 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
           text: "Renaming changes this Tonie in the myTonies app too. It does not touch its chapters.",
         }),
       ]);
+      if (!isPhone()) return field;
+      const key = tonieKey(tonie);
+      const fold = element("details", { className: "tonie-fold", open: renameOpen.has(key) }, [
+        element("summary", { text: "Rename this Tonie" }),
+        field,
+      ]);
+      fold.addEventListener("toggle", () => {
+        if (fold.hasAttribute("open")) renameOpen.add(key);
+        else renameOpen.delete(key);
+      });
+      return fold;
     }
 
     function chapterRow(tonie, chapter, index) {
@@ -473,11 +525,45 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
           text: `Select ${chapter.title || `chapter ${index + 1}`} for removal`,
         }),
       ]);
+      // Phone-only parts, hidden by CSS on a desktop: the title as wrapped
+      // text, the Rename button, and the More button that reveals the actions.
+      // The title field stays in every row, because a save reads all of them.
+      const moreId = `tonie-${chapter.id}-actions`;
+      const more = element("button", {
+        type: "button",
+        className: "icon-button tonie-chapter-more",
+        "aria-label": `More actions for ${chapter.title || `chapter ${index + 1}`}`,
+        "aria-expanded": String(moreOpen === chapter.id),
+        "aria-controls": moreId,
+        "data-tonie-control": "",
+        "data-focus-key": `tonie-${chapter.id}-more`,
+      }, [iconNode("more")]);
+      more.addEventListener("click", () => {
+        moreOpen = moreOpen === chapter.id ? "" : chapter.id;
+        render({ focusKey: `tonie-${chapter.id}-more` });
+      });
+      const rename = element("button", {
+        type: "button",
+        className: "button button-secondary tonie-chapter-rename",
+        "aria-label": `Rename ${chapter.title || `chapter ${index + 1}`}`,
+        "data-tonie-control": "",
+        "data-focus-key": `tonie-${chapter.id}-rename`,
+      }, [element("span", { text: "Rename" })]);
+      rename.addEventListener("click", () => {
+        renaming = chapter.id;
+        moreOpen = "";
+        render({ focusKey: `tonie-${chapter.id}-title` });
+      });
+      for (const [button, label] of [[up, "Up"], [down, "Down"]]) {
+        button.append(element("span", { className: "tonie-action-label", text: label }));
+      }
       const row = element("li", {
         className: "tonie-chapter-row",
         draggable: true,
         "data-tonie-chapter": chapter.id,
         "data-tonie-control": "",
+        "data-more-open": moreOpen === chapter.id ? "" : null,
+        "data-renaming": renaming === chapter.id ? "" : null,
       }, [
         tickLabel,
         iconNode("grip", "tonie-grip"),
@@ -485,12 +571,39 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         element("div", { className: "tonie-chapter-title" }, [
           element("label", { for: titleId, className: "visually-hidden", text: `Chapter ${index + 1} title` }),
           title,
+          element("span", { className: "tonie-chapter-title-text", text: chapter.title || "" }),
           element("span", { className: "tonie-chapter-meta", text: chapter.transcoding ? "Processing" : chapter.duration || "Duration pending" }),
         ]),
-        element("div", { className: "tonie-chapter-actions", role: "group", "aria-label": `Reorder ${chapter.title || `chapter ${index + 1}`}` }, [up, down]),
+        element("div", {
+          id: moreId,
+          className: "tonie-chapter-actions",
+          role: "group",
+          "aria-label": `Actions for ${chapter.title || `chapter ${index + 1}`}`,
+        }, [rename, up, down]),
+        more,
       ]);
 
-      title.addEventListener("change", () => saveChapters(tonie, chapterDrafts(row.parentNode), "Chapter title saved to the Tonie."));
+      function leaveRename() {
+        if (renaming !== chapter.id) return;
+        renaming = "";
+        row.removeAttribute("data-renaming");
+      }
+      title.addEventListener("change", () => {
+        leaveRename();
+        saveChapters(tonie, chapterDrafts(row.parentNode), "Chapter title saved to the Tonie.");
+      });
+      // Leaving the field closes it again on a phone. A blur caused by a
+      // redraw removing the field must not, or a poll would shut it mid-edit.
+      title.addEventListener("blur", () => {
+        if (redrawing || title.isConnected === false) return;
+        leaveRename();
+      });
+      title.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || renaming !== chapter.id) return;
+        title.value = chapter.title || "";
+        leaveRename();
+        more.focus({ preventScroll: true });
+      });
       up.addEventListener("click", () => saveChapters(tonie, moveItem(chapterDrafts(row.parentNode), index, -1), "Chapter moved up on the Tonie."));
       down.addEventListener("click", () => saveChapters(tonie, moveItem(chapterDrafts(row.parentNode), index, 1), "Chapter moved down on the Tonie."));
       return row;
@@ -561,7 +674,9 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         iconNode("trash"),
         element("span", { text: selectedCount ? `Remove ${selectedCount} selected` : "Remove selected" }),
       ]);
-      removeSelected.addEventListener("click", async () => {
+      // One removal for the toolbar button and the phone bar: the same
+      // confirmation, the same survivors, one whole-list save.
+      removeTicked = async (returnFocus) => {
         const removing = new Set(tonie.chapters.filter((chapter) => selectedChapters.has(chapter.id)).map((chapter) => chapter.id));
         // disabled is the visible guard, but a control's disabled state is
         // one render-cycle bug away from being wrong (it just was). A write
@@ -574,14 +689,15 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
           confirmLabel: removing.size === 1 ? "Remove chapter" : `Remove ${removing.size} chapters`,
           destructive: true,
         });
-        removeSelected.focus({ preventScroll: true });
+        returnFocus.focus({ preventScroll: true });
         if (!confirmed) return;
         await saveChapters(
           tonie,
           survivingChapters(chapterDrafts(chapters), removing),
           `${removing.size} ${removing.size === 1 ? "chapter was" : "chapters were"} removed from the Tonie. Your local library was not changed.`,
         );
-      });
+      };
+      removeSelected.addEventListener("click", () => removeTicked(removeSelected));
       const intro = element("div", { className: "tonie-detail-heading" }, [
         element("p", { text: "Tick chapters to remove them together, or rename and reorder them in place." }),
         element("div", { className: "tonie-detail-bulk" }, [
@@ -687,11 +803,40 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       return element("li", { className: "tonie-row", "data-open": String(open) }, children);
     }
 
+    // The phone's sticky bar: shown while the open Tonie has ticked chapters,
+    // so Remove N is in reach from any row. Hidden on a desktop by CSS, where
+    // the toolbar button does the same job.
+    function selectionBarChildren() {
+      const open = tonies.find((tonie) => tonieKey(tonie) === openKey);
+      const count = open ? open.chapters.filter((chapter) => selectedChapters.has(chapter.id)).length : 0;
+      if (!count || !removeTicked) return [];
+      const remove = element("button", {
+        type: "button",
+        className: "button button-secondary tonie-destructive tonie-bar-remove",
+        "data-tonie-control": "",
+        "data-focus-key": `tonie-${open.id}-bar-remove`,
+      }, [iconNode("trash"), element("span", { text: `Remove ${count}` })]);
+      remove.addEventListener("click", () => removeTicked(remove));
+      const clearTicks = element("button", {
+        type: "button",
+        className: "button button-secondary tonie-clear-ticks",
+        "data-tonie-control": "",
+        "data-focus-key": `tonie-${open.id}-clear-ticks`,
+        text: "Clear ticks",
+      });
+      clearTicks.addEventListener("click", () => {
+        selectedChapters.clear();
+        render({ focusKey: `tonie-${open.id}-select-all` });
+      });
+      return [clearTicks, remove];
+    }
+
     // A passive render (first paint, a poll, a load) never rescues focus into
     // Refresh: with no focused control to keep, focus stays where it is.
     function render({ focusKey = "", passive = false } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
+      removeTicked = null;
       const loadView = tonieLoadView({ state: loadState, tonies, error: loadError });
       stale.hidden = !loadView.stale;
       if (loadView.stale) {
@@ -733,8 +878,12 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
           ]),
         ]));
       } else {
+        redrawing = true;
         replace(list, ...tonies.map(tonieRow));
+        redrawing = false;
       }
+      replace(selectionBar, ...selectionBarChildren());
+      selectionBar.hidden = !selectionBar.childNodes.length;
       root.querySelectorAll("[data-tonie-control]").forEach((control) => {
         // A pending save disables everything. Otherwise a control's disabled
         // state comes only from data-tonie-disabled, set at build time by
@@ -784,7 +933,9 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       }
     });
 
-    root.append(header, stale, list);
+    const onViewport = () => render({ passive: true });
+    phoneQuery?.addEventListener?.("change", onViewport);
+    root.append(header, stale, list, selectionBar);
     replace(workspace, root);
     render({ passive: true });
     load().catch((error) => {
@@ -796,6 +947,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       active = false;
       loadToken += 1;
       unsubscribe();
+      phoneQuery?.removeEventListener?.("change", onViewport);
     };
   };
 }
