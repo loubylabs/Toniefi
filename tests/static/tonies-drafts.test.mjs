@@ -171,6 +171,104 @@ for (const phone of [true, false]) {
   });
 }
 
+test("phone: Enter saves and focus goes to that row's More, not to Refresh", async () => {
+  const s = await mount();
+  try {
+    const input = await s.rename();
+    input.focus();
+    input.value = "Renamed";
+    await input.dispatchEvent({ type: "keydown", key: "Enter" });
+    await flush();
+    assert.equal(s.writes.length, 1);
+    assert.equal(s.focusKey(), "tonie-c2-more");
+    assert.equal(s.rows()[1].hasAttribute("data-renaming"), false);
+  } finally { s.stop(); }
+});
+
+test("phone: Enter on an unchanged title closes the field onto More and writes nothing", async () => {
+  const s = await mount();
+  try {
+    const input = await s.rename();
+    input.focus();
+    await input.dispatchEvent({ type: "keydown", key: "Enter" });
+    await flush();
+    assert.deepEqual(s.writes, []);
+    assert.equal(s.focusKey(), "tonie-c2-more");
+    assert.equal(s.rows()[1].hasAttribute("data-renaming"), false);
+  } finally { s.stop(); }
+});
+
+test("desktop: Enter saves and focus stays in the title", async () => {
+  const s = await mount({ phone: false });
+  try {
+    const input = s.field();
+    input.focus();
+    input.value = "Renamed";
+    await input.dispatchEvent({ type: "keydown", key: "Enter" });
+    await flush();
+    assert.equal(s.writes.length, 1);
+    assert.equal(s.focusKey(), "tonie-c2-title");
+  } finally { s.stop(); }
+});
+
+test("desktop: tabbing out saves and focus lands where the Tab went", async () => {
+  const s = await mount({ phone: false });
+  try {
+    const input = s.field();
+    input.focus();
+    input.value = "Renamed";
+    const next = s.field(2);
+    await s.leave(input, next);
+    assert.equal(s.writes.length, 1);
+    assert.equal(s.focusKey(), "tonie-c3-title");
+  } finally { s.stop(); }
+});
+
+test("phone: a More tap mid-rename saves and still opens that More, with focus on it", async () => {
+  const s = await mount();
+  try {
+    const input = await s.rename();
+    input.focus();
+    input.value = "Renamed";
+    s.held.hold = true;
+    const tapped = s.rows()[2].querySelector(".tonie-chapter-more");
+    // The tap: mousedown blurs the field, then the click lands on the same node.
+    await s.leave(input);
+    assert.equal(s.writes.length, 1);
+    assert.equal(s.rows()[2].querySelector(".tonie-chapter-more"), tapped, "a save in flight rebuilds nothing under the finger");
+    assert.equal(tapped.disabled, false);
+    await tapped.click();
+    await flush();
+    assert.equal(s.rows()[2].hasAttribute("data-more-open"), true);
+
+    s.held.hold = false;
+    s.held.release();
+    await flush();
+    assert.equal(s.rows()[2].hasAttribute("data-more-open"), true);
+    assert.equal(s.focusKey(), "tonie-c3-more");
+  } finally { s.stop(); }
+});
+
+test("a save in flight disables every write and keeps focus for when it lands", async () => {
+  const s = await mount({ phone: false });
+  try {
+    const down = s.rows()[0].querySelectorAll(".tonie-move")[1];
+    down.focus();
+    s.held.hold = true;
+    down.click();
+    await flush();
+    assert.equal(s.writes.length, 1);
+    assert.equal(s.field(1).disabled, true);
+    assert.equal(s.one(".tonie-summary").disabled, true);
+    assert.equal(s.one(".tonie-list").querySelectorAll(".tonie-move")[1], down, "nothing rebuilt yet");
+    s.held.hold = false;
+    s.held.release();
+    await flush();
+    assert.equal(s.field(1).disabled, false);
+    assert.equal(s.focusKey(), "tonie-c1-down");
+  } finally { s.stop(); }
+});
+
 test("leaving a title unchanged writes nothing", async () => {
   const s = await mount();
   try {

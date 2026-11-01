@@ -272,17 +272,30 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       }
     }
 
+    // Where focus belongs once a save lands. Starting a save rebuilds nothing:
+    // the blur that starts it arrives between a finger's down and its click, and
+    // redrawing there would take the tapped button away. Controls disable in
+    // place and the row is redrawn when the save is over, with focus back here.
+    let saveFocusKey = "";
     const mutation = createTonieMutation({
       request,
       reload: () => load(),
       signal,
-      setPending: () => render(),
+      setPending(pending) {
+        if (pending) {
+          saveFocusKey ||= rememberFocus(root)?.key || "";
+          syncControls();
+          return;
+        }
+        const focusKey = saveFocusKey;
+        saveFocusKey = "";
+        render({ focusKey });
+      },
       onUpdated(updated, previous) {
         loadToken += 1;
         tonies = tonies.map((tonie) => tonieKey(tonie) === tonieKey(previous) ? updated : tonie);
         loadState = "loaded";
         loadError = "";
-        render();
       },
       onReloadFailure(error) {
         loadState = "failed";
@@ -562,20 +575,23 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       // text, the Rename button, and the More button that reveals the actions.
       // The title field stays in every row, because a save reads all of them.
       const moreId = `tonie-${chapter.id}-actions`;
+      const moreKey = `tonie-${chapter.id}-more`;
       const more = element("button", {
         type: "button",
         className: "icon-button tonie-chapter-more",
         "aria-label": `More actions for ${chapter.title || `chapter ${index + 1}`}`,
         "aria-expanded": String(moreOpen === chapter.id),
         "aria-controls": moreId,
-        "data-tonie-control": "",
-        "data-focus-key": `tonie-${chapter.id}-more`,
+        "data-focus-key": moreKey,
       }, [iconNode("more")]);
+      // Writes nothing, so a save in flight leaves it live: the tap that ended
+      // a rename still opens the More it landed on, and focus stays with it.
       more.addEventListener("click", () => {
         moreOpen = moreOpen === chapter.id ? "" : chapter.id;
         // Only this render's row eases in; a refresh poll rebuilds it settled.
         moreFresh = moreOpen;
-        render({ focusKey: `tonie-${chapter.id}-more` });
+        if (mutation.pending) saveFocusKey = moreKey;
+        render({ focusKey: moreKey });
         moreFresh = "";
       });
       const rename = element("button", {
@@ -628,22 +644,27 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       // Enter and leaving the field save, and close it again on a phone. Not
       // change: a field redrawn with a carried draft has no change baseline left
       // to fire against. A save in flight has this field disabled, so nothing
-      // here can be dropped by the one-save-at-a-time guard.
-      function commitTitle() {
+      // here can be dropped by the one-save-at-a-time guard. Focus ends up where
+      // the operator went, else on the field, which on a phone is hidden again
+      // once saved, so there it goes back to the row's More.
+      function commitTitle(wentTo = "") {
         if (redrawing || mutation.pending || title.isConnected === false) return;
         leaveRename();
         if (title.value === (chapter.title || "")) return;
+        saveFocusKey = wentTo || (isPhone() ? moreKey : titleKey);
         saveChapters(tonie, chapterDrafts(row.parentNode), "Chapter title saved to the Tonie.");
       }
-      title.addEventListener("blur", () => {
+      title.addEventListener("blur", (event) => {
         // A window or app switch blurs a field that stays active. That is not
         // the operator leaving it, and half a title must not reach the Tonie.
-        if (document.activeElement !== title) commitTitle();
+        if (document.activeElement === title) return;
+        commitTitle(event.relatedTarget?.getAttribute("data-focus-key") || "");
       });
       title.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
           commitTitle();
+          if (isPhone() && !mutation.pending) more.focus({ preventScroll: true });
         } else if (event.key === "Escape" && renaming === chapter.id) {
           title.value = chapter.title || "";
           leaveRename();
@@ -933,6 +954,11 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       redrawing = false;
       replace(selectionBar, ...selectionBarChildren());
       selectionBar.hidden = !selectionBar.childNodes.length;
+      syncControls();
+      restoreFocus(token, { root, fallback: passive ? null : refreshButton });
+    }
+
+    function syncControls() {
       root.querySelectorAll("[data-tonie-control]").forEach((control) => {
         // A pending save disables everything. Otherwise a control's disabled
         // state comes only from data-tonie-disabled, set at build time by
@@ -946,7 +972,6 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       });
       root.querySelectorAll("[data-tonie-summary]").forEach((control) => { control.disabled = mutation.pending; });
       setBusy(root, mutation.pending, "Saving Creative Tonie changes");
-      restoreFocus(token, { root, fallback: passive ? null : refreshButton });
     }
 
     function onRefresh(snapshot) {
