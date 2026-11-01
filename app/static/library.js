@@ -387,6 +387,8 @@ export function createLibraryScreen({
     // Which rows have their chapter list open. The render rebuilds the whole
     // list on every tick, so this cannot live in the DOM.
     const expanded = new Set();
+    // The one row whose actions are open on a phone, for the same reason.
+    let moreOpen = "";
     // Each open panel's own scroll position, keyed by slug so two open panels
     // never share one. The render rebuilds the whole library list on every
     // tick (see above), which would otherwise snap a long chapter list back
@@ -708,9 +710,45 @@ export function createLibraryScreen({
         // Same-titled imports are common (a re-import, two uploads), and the
         // source kind and date are what tell them apart. The full address is
         // on hover rather than printed across the row.
-        element("li", { title: collection.url || collection.path || "", text: sourceLabel(collection) }),
-        added ? element("li", { text: `Added ${added}` }) : null,
+        element("li", { className: "library-fact-origin", title: collection.url || collection.path || "", text: sourceLabel(collection) }),
+        added ? element("li", { className: "library-fact-origin", text: `Added ${added}` }) : null,
       ].filter(Boolean));
+      // A phone's one line. The list above is what it shows once More is open,
+      // reduced there to the two facts this line leaves out.
+      const brief = element("p", {
+        className: "library-row-brief",
+        text: `${collection.track_count || 0} ch · ${collection.total_duration || "No duration yet"} · ${collection.tonies_needed || 0} ${collection.tonies_needed === 1 ? "Tonie" : "Tonies"}`,
+      });
+      const title = collection.title || "Untitled collection";
+      const actionsId = `library-actions-${collection.slug}`;
+      const rowOpen = moreOpen === collection.slug;
+      const more = element("button", {
+        type: "button",
+        className: "icon-button library-row-more",
+        "aria-label": `More actions for ${title}`,
+        "aria-expanded": String(rowOpen),
+        "aria-controls": actionsId,
+        "data-focus-key": `library-${collection.slug}-more`,
+        onclick: () => {
+          moreOpen = rowOpen ? "" : collection.slug;
+          render({ focusKey: `library-${collection.slug}-more` });
+        },
+      }, [iconNode("more")]);
+      // A real link on every width, so the title is the short way to a story
+      // on a phone, where Open waits behind More.
+      const titleLink = preparation.state === "ready"
+        ? element("a", {
+          className: "library-row-title-link",
+          href: `/collection/${encodeURIComponent(collection.slug)}`,
+          "data-route": "collection",
+          "data-focus-key": `library-${collection.slug}-title`,
+          "data-collection-mutation": "",
+          text: title,
+          onclick: (event) => {
+            if (mutation.pending) event.preventDefault();
+          },
+        })
+        : null;
       const panelId = `library-chapters-${collection.slug}`;
       const open = selectable && expanded.has(collection.slug);
       const chooseChapters = selectable
@@ -768,23 +806,31 @@ export function createLibraryScreen({
         : null;
       const body = element("div", { className: "library-row-body" }, [
         element("div", { className: "library-row-heading" }, [
-          element("h2", { id: titleId, text: collection.title || "Untitled collection" }),
+          titleLink
+            ? element("h2", { id: titleId }, [titleLink])
+            : element("h2", { id: titleId, text: title }),
           element("span", {
             className: "status-stamp",
             "data-status": collection.stage === "forged" ? "success" : "warning",
             text: stageLabel(collection.stage),
           }),
         ]),
+        brief,
         facts,
         chapterCount,
         skippedNote(collection),
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
           : null,
-        element("div", { className: "library-row-actions" }, [primary, rowStar, chooseChapters, download, removeButton]),
+        more,
+        element("div", { className: "library-row-actions", id: actionsId }, [primary, rowStar, chooseChapters, download, removeButton]),
         open ? chapterPanel(collection, panelId) : null,
       ]);
-      return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
+      return element("li", {
+        className: "library-row",
+        "aria-labelledby": titleId,
+        "data-more-open": rowOpen ? "" : null,
+      }, [tickCell, collectionCover(collection), body]);
     }
 
     // A passive render (first paint, a refresh poll) never rescues focus into

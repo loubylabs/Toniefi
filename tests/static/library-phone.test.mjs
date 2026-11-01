@@ -373,3 +373,63 @@ test("problemSummary counts what selectionProblems returned", () => {
   assert.equal(problemSummary(groups, [picked, picked, picked], ["only this"]), "only this");
   assert.equal(problemSummary(groups, [picked, picked, picked], []), "");
 });
+
+test("More opens one row at a time, and survives a re-render", async () => {
+  const screen = mount({ collections: [story("a"), story("b")] });
+  try {
+    await flush();
+    const row = (index) => screen.all(".library-row")[index];
+    const more = (index) => row(index).querySelector(".library-row-more");
+    assert.equal(more(0).getAttribute("aria-label"), "More actions for Story a");
+    assert.equal(more(0).getAttribute("aria-expanded"), "false");
+    assert.equal(more(0).getAttribute("aria-controls"), row(0).querySelector(".library-row-actions").id);
+    assert.equal(row(0).hasAttribute("data-more-open"), false);
+
+    await more(0).click();
+    assert.equal(row(0).hasAttribute("data-more-open"), true);
+    assert.equal(more(0).getAttribute("aria-expanded"), "true");
+    assert.equal(screen.focusKey(), "library-a-more");
+
+    await screen.poll();
+    await flush();
+    assert.equal(row(0).hasAttribute("data-more-open"), true, "a poll rebuilds the list, not the state");
+    assert.equal(screen.focusKey(), "library-a-more");
+
+    await more(1).click();
+    assert.equal(row(0).hasAttribute("data-more-open"), false, "one open at a time");
+    assert.equal(row(1).hasAttribute("data-more-open"), true);
+
+    await more(1).click();
+    assert.equal(row(1).hasAttribute("data-more-open"), false);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a ready title links to its story and a story that is not ready keeps plain text", async () => {
+  const raw = { slug: "raw", stage: "extracted", title: "Raw Story", track_count: 1 };
+  const screen = mount({ collections: [story("a"), raw] });
+  try {
+    await flush();
+    const [ready, notReady] = screen.all(".library-row");
+    const link = ready.querySelector("h2").querySelector("a");
+    assert.equal(link.getAttribute("href"), "/collection/a");
+    assert.equal(link.getAttribute("data-route"), "collection");
+    assert.equal(link.textContent, "Story a");
+    assert.equal(notReady.querySelector("h2").querySelector("a"), null);
+    assert.equal(notReady.querySelector("h2").textContent, "Raw Story");
+    assert.ok(notReady.querySelector(".library-finish"));
+  } finally {
+    screen.stop();
+  }
+});
+
+test("the row's brief is the one line a phone shows", async () => {
+  const screen = mount({ collections: [{ ...story("a"), track_count: 223, total_duration: "28h 50m", tonies_needed: 23 }] });
+  try {
+    await flush();
+    assert.equal(screen.node(".library-row-brief").textContent, "223 ch · 28h 50m · 23 Tonies");
+  } finally {
+    screen.stop();
+  }
+});
