@@ -141,3 +141,23 @@ test("Rename opens the field, Enter saves, Escape restores, and nothing else ope
     dom.restore();
   }
 });
+
+test("Trim is a closed details on a phone whose open state survives a re-render; a desktop gets the section", async () => {
+  const { dom, media, controller, poll } = await mount();
+  try {
+    let trim = dom.workspace.querySelector(".trim-panel");
+    assert.equal(trim.tagName, "DETAILS");
+    assert.equal(trim.hasAttribute("open"), false);
+    trim.open = true;
+    await trim.dispatchEvent({ type: "toggle" });
+    await poll();
+    assert.equal(dom.workspace.querySelector(".trim-panel").hasAttribute("open"), true);
+    media.resize(false);
+    trim = dom.workspace.querySelector(".trim-panel");
+    assert.equal(trim.tagName, "SECTION");
+    assert.ok(trim.querySelector("#trim-title"));
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});

@@ -271,6 +271,26 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
 
   let redrawing = false;
 
+  // Trim and Ads are a titled section on a desktop. On a phone each is a closed
+  // details line, so neither sits under 200 chapters; what is open is kept here.
+  function assignmentPanel(key, className, titleId, title, children) {
+    if (!isPhone()) {
+      return element("section", { className: `assignment-panel ${className}`, "aria-labelledby": titleId }, [
+        element("h2", { id: titleId, text: title }),
+        ...children,
+      ]);
+    }
+    const details = element("details", {
+      className: `assignment-panel assignment-details ${className}`,
+      open: openPanels.has(key),
+    }, [element("summary", {}, [element("h2", { id: titleId, text: title })]), ...children]);
+    details.addEventListener("toggle", () => {
+      if (details.open) openPanels.add(key);
+      else openPanels.delete(key);
+    });
+    return details;
+  }
+
   // The page is rebuilt on every refresh poll, so what a phone has opened (one
   // chapter's More, the chapter being renamed, the capacity groups) lives here
   // and is drawn back in, never kept only in the DOM.
@@ -279,6 +299,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
   let moreOpen = "";
   let renaming = "";
   const openGroups = new Set();
+  const openPanels = new Set();
   const onViewport = () => {
     if (collection) renderDetail();
   };
@@ -739,11 +760,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
       "data-focus-key": "trim-submit",
       "data-collection-mutation": "",
     });
-    const trimPanel = element("section", {
-      className: "assignment-panel trim-panel",
-      "aria-labelledby": "trim-title",
-    }, [
-      element("h2", { id: "trim-title", text: "Trim" }),
+    const trimPanel = assignmentPanel("trim", "trim-panel", "trim-title", "Trim", [
       element("p", {
         text: trimming
           ? "Trimming every chapter. Editing stays locked until it finishes."
@@ -801,11 +818,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           lastLines.push(element("p", { text: `Not checked: ${last.unchecked.join(", ")}.` }));
         }
       }
-      adsPanel = element("section", {
-        className: "assignment-panel remove-ads-panel",
-        "aria-labelledby": "remove-ads-title",
-      }, [
-        element("h2", { id: "remove-ads-title", text: "Ads" }),
+      adsPanel = assignmentPanel("ads", "remove-ads-panel", "remove-ads-title", "Ads", [
         element("p", {
           text: removing
             ? "Removing ads from every chapter. Editing stays locked until it finishes."
