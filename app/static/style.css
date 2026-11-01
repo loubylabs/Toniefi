@@ -3167,7 +3167,7 @@ img.collection-detail-cover {
 
   #workspace {
     min-height: 100vh;
-    padding: var(--space-5) var(--space-4) calc(6.25rem + env(safe-area-inset-bottom));
+    padding: var(--space-3) var(--space-4) calc(6.25rem + env(safe-area-inset-bottom));
   }
 
   body.audio-player-visible #workspace {
@@ -3291,11 +3291,12 @@ img.collection-detail-cover {
   }
 
   .desk-intake > h1 {
-    font-size: clamp(2.1rem, 11vw, 3.25rem);
+    font-size: 2rem;
   }
 
   .desk-lead {
-    margin-bottom: var(--space-5);
+    margin: var(--space-2) 0 var(--space-4);
+    font-size: var(--type-sm);
   }
 
   .source-list-heading {
@@ -3626,6 +3627,44 @@ img.collection-detail-cover {
   .screen-heading > .button {
     width: 100%;
   }
+
+  /* A screen opens on its work: the h1 with its one action as a 44px icon on
+     the same line, no lede. The action's text stays in the DOM, visually
+     hidden, so it keeps its accessible name. */
+  :is(.library-screen, .activity-screen, .tonies-screen, .settings-screen) > .screen-heading {
+    margin-bottom: var(--space-3);
+    align-items: center;
+    flex-direction: row;
+    gap: var(--space-3);
+  }
+
+  :is(.library-screen, .activity-screen, .tonies-screen, .settings-screen) > .screen-heading h1 {
+    font-size: 2rem;
+  }
+
+  :is(.library-screen, .activity-screen, .tonies-screen, .settings-screen) > .screen-heading p {
+    display: none;
+  }
+
+  :is(.library-screen, .activity-screen, .tonies-screen) > .screen-heading > .button {
+    width: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .heading-action-label,
+  .library-search-field label {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
 
   .collection-facts {
     display: grid;
@@ -4895,6 +4934,15 @@ img.collection-detail-cover {
     display: grid;
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .library-toolbar {
+    margin-bottom: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .library-summary {
+    margin-bottom: var(--space-2);
   }
 
   .library-filter label {

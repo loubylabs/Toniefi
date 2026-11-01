@@ -175,7 +175,7 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       type: "button",
       className: "button button-secondary",
       "data-focus-key": "activity-refresh",
-    }, [iconNode("refresh"), element("span", { text: "Refresh history" })]);
+    }, [iconNode("refresh"), element("span", { className: "heading-action-label", text: "Refresh history" })]);
     const header = element("div", { className: "screen-heading" }, [
       element("div", {}, [
         element("h1", { id: "activity-title", text: "Activity" }),

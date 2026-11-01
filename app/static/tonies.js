@@ -215,7 +215,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       className: "button button-secondary",
       "data-tonie-control": "",
       "data-focus-key": "tonie-refresh",
-    }, [iconNode("refresh"), element("span", { text: "Refresh Tonies" })]);
+    }, [iconNode("refresh"), element("span", { className: "heading-action-label", text: "Refresh Tonies" })]);
     const header = element("div", { className: "screen-heading" }, [
       element("div", {}, [
         element("h1", { id: "tonies-title", text: "Creative Tonies" }),

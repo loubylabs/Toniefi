@@ -315,7 +315,7 @@ export function createLibraryScreen({
       className: "button button-secondary library-rescan",
       "data-focus-key": "library-rescan",
       "data-collection-mutation": "",
-    }, [iconNode("refresh"), element("span", { text: "Rescan" })]);
+    }, [iconNode("refresh"), element("span", { className: "heading-action-label", text: "Rescan" })]);
     const header = element("div", { className: "screen-heading" }, [titleGroup, rescan]);
     const searchLabel = element("label", { for: "library-search", text: "Search collection titles" });
     const search = element("input", {
