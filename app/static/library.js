@@ -431,6 +431,7 @@ export function createLibraryScreen({
     const expanded = new Set();
     // The one row whose actions are open on a phone, for the same reason.
     let moreOpen = "";
+    let moreFresh = "";
     // Each open panel's own scroll position, keyed by slug so two open panels
     // never share one. The render rebuilds the whole library list on every
     // tick (see above), which would otherwise snap a long chapter list back
@@ -773,7 +774,10 @@ export function createLibraryScreen({
         "data-focus-key": `library-${collection.slug}-more`,
         onclick: () => {
           moreOpen = rowOpen ? "" : collection.slug;
+          // Only this render's row eases in; a refresh poll rebuilds it settled.
+          moreFresh = moreOpen;
           render({ focusKey: `library-${collection.slug}-more` });
+          moreFresh = "";
         },
       }, [iconNode("more")]);
       // A real link on every width, so the title is the short way to a story
@@ -872,6 +876,7 @@ export function createLibraryScreen({
         className: "library-row",
         "aria-labelledby": titleId,
         "data-more-open": rowOpen ? "" : null,
+        "data-more-fresh": rowOpen && moreFresh === collection.slug ? "" : null,
       }, [tickCell, collectionCover(collection), body]);
     }
 

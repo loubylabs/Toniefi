@@ -388,11 +388,13 @@ test("More opens one row at a time, and survives a re-render", async () => {
     await more(0).click();
     assert.equal(row(0).hasAttribute("data-more-open"), true);
     assert.equal(more(0).getAttribute("aria-expanded"), "true");
+    assert.equal(row(0).hasAttribute("data-more-fresh"), true, "the tap's own render eases in");
     assert.equal(screen.focusKey(), "library-a-more");
 
     await screen.poll();
     await flush();
     assert.equal(row(0).hasAttribute("data-more-open"), true, "a poll rebuilds the list, not the state");
+    assert.equal(row(0).hasAttribute("data-more-fresh"), false, "a poll never replays the reveal");
     assert.equal(screen.focusKey(), "library-a-more");
 
     await more(1).click();

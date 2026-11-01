@@ -202,6 +202,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     const phoneQuery = globalThis.window?.matchMedia?.("(max-width: 759.98px)") || null;
     const isPhone = () => Boolean(phoneQuery?.matches);
     let moreOpen = "";
+    let moreFresh = "";
     let renaming = "";
     const renameOpen = new Set();
     let redrawing = false;
@@ -540,7 +541,10 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
       }, [iconNode("more")]);
       more.addEventListener("click", () => {
         moreOpen = moreOpen === chapter.id ? "" : chapter.id;
+        // Only this render's row eases in; a refresh poll rebuilds it settled.
+        moreFresh = moreOpen;
         render({ focusKey: `tonie-${chapter.id}-more` });
+        moreFresh = "";
       });
       const rename = element("button", {
         type: "button",
@@ -563,6 +567,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         "data-tonie-chapter": chapter.id,
         "data-tonie-control": "",
         "data-more-open": moreOpen === chapter.id ? "" : null,
+        "data-more-fresh": moreOpen === chapter.id && moreFresh === chapter.id ? "" : null,
         "data-renaming": renaming === chapter.id ? "" : null,
       }, [
         tickLabel,

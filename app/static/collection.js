@@ -317,6 +317,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
   const phoneQuery = globalThis.window?.matchMedia?.("(max-width: 759.98px)") || null;
   const isPhone = () => Boolean(phoneQuery?.matches);
   let moreOpen = "";
+  let moreFresh = "";
   let renaming = "";
   const openGroups = new Set();
   const openPanels = new Set();
@@ -492,6 +493,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         draggable: "true",
         "data-track-name": track.name,
         "data-more-open": moreOpen === track.name ? "" : null,
+        "data-more-fresh": moreOpen === track.name && moreFresh === track.name ? "" : null,
         "data-renaming": renaming === track.name ? "" : null,
       });
       const titleId = `chapter-title-${index}`;
@@ -591,7 +593,10 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         "data-focus-key": `chapter-${track.name}-more`,
         onclick: () => {
           moreOpen = moreOpen === track.name ? "" : track.name;
+          // Only this render's row eases in; a refresh poll rebuilds it settled.
+          moreFresh = moreOpen;
           renderDetail({ focusKey: `chapter-${track.name}-more` });
+          moreFresh = "";
         },
       }, [iconNode("more")]);
       const rename = element("button", {
