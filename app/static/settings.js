@@ -280,7 +280,12 @@ export function createSettingsScreen({ request = api, refresh } = {}) {
           element("p", { text: statusCopy }),
         ]),
       ]);
-      const sourceFacts = element("dl", { className: "settings-facts account-facts" }, [
+      // "None" and "None" say nothing the status above has not; a phone hides
+      // the rows until there is a source and a username to show.
+      const sourceFacts = element("dl", {
+        className: "settings-facts account-facts",
+        "data-configured": status?.credentials?.configured ? "true" : "false",
+      }, [
         element("div", {}, [element("dt", { text: "Credential source" }), element("dd", { text: view.sourceLabel })]),
         element("div", {}, [element("dt", { text: "Configured username" }), element("dd", { text: view.username || "None" })]),
       ]);

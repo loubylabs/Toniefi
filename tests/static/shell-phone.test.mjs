@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createActivityScreen } from "../../app/static/activity.js";
+import { createSettingsScreen } from "../../app/static/settings.js";
 import { createPersistentAudioPlayer } from "../../app/static/shared.js";
 
 import { flush, installDom } from "./mini-dom.mjs";
@@ -73,6 +74,36 @@ test("a long error opens and closes, and a refresh re-render keeps it open", asy
     s.stop();
   }
 });
+
+for (const [name, credentials, expected] of [
+  ["unconfigured", { configured: false, source: "none", username: "" }, "false"],
+  ["configured", { configured: true, source: "saved", username: "me@example.com" }, "true"],
+]) {
+  test(`Settings marks its source and username rows ${name}, so a phone hides them only while unconfigured`, async () => {
+    const dom = installDom();
+    const controller = new AbortController();
+    const status = { credentials, tonie_limit_seconds: 5400, usable_limit_seconds: 5370, tools: {} };
+    const refresh = {
+      snapshot: { status },
+      subscribe: () => () => {},
+      request: async () => ({ status, stale: [], errors: {} }),
+    };
+    try {
+      const cleanup = createSettingsScreen({ request: async () => ({}), refresh })({
+        workspace: dom.workspace,
+        signal: controller.signal,
+      });
+      await flush();
+      const facts = dom.workspace.querySelector(".account-facts");
+      assert.equal(facts.getAttribute("data-configured"), expected);
+      assert.equal(facts.querySelectorAll("dt").length, 2, "the rows are always in the DOM");
+      cleanup();
+    } finally {
+      controller.abort();
+      dom.restore();
+    }
+  });
+}
 
 test("the player's Dismiss keeps its name and its words for a phone's icon-only button", () => {
   const dom = installDom();

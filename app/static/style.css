@@ -4276,6 +4276,10 @@ img.collection-detail-cover {
     grid-column: auto;
   }
 
+  .account-facts[data-configured="false"] {
+    display: none;
+  }
+
   .settings-form-actions {
     align-items: stretch;
     flex-direction: column;
