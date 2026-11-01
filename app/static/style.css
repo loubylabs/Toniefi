@@ -2353,6 +2353,19 @@ img.collection-detail-cover {
   gap: var(--space-2);
 }
 
+/* Where the cart is a grid of rows (below 1200px) the link and the row buttons
+   stay on one line and wrap only when they must; at 760px beside the sidebar
+   they spilled 12px past the edge. The mark-only Dismiss keeps its square. */
+@media (max-width: 1199.98px) {
+  .work-cart-actions {
+    flex-wrap: wrap;
+  }
+
+  .work-cart-row-buttons {
+    margin-left: auto;
+  }
+}
+
 .work-cart-dismiss {
   width: 2.5rem;
   min-height: 2.5rem;
@@ -2711,6 +2724,29 @@ img.collection-detail-cover {
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 0.3rem 0.8rem rgba(11, 42, 32, 0.07), 0 0.1rem 0.2rem rgba(11, 42, 32, 0.05);
+}
+
+/* Beside the sidebar, below about 1100px, the three fixed columns leave the
+   title none (0px at 760, 9px past the edge). The log line wraps instead: the
+   title takes a line, the stamp and time follow, the action stays right. */
+@media (min-width: 760px) and (max-width: 1099.98px) {
+  .activity-row {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+
+  .activity-title {
+    flex: 1 0 100%;
+  }
+
+  .activity-action {
+    margin-left: auto;
+  }
+
+  .activity-messages {
+    flex: 1 0 100%;
+  }
 }
 
 .activity-title {
@@ -3187,6 +3223,24 @@ img.collection-detail-cover {
     padding-bottom: calc(13rem + env(safe-area-inset-bottom));
   }
 
+  /* A focused control scrolls to clear whatever floats at the bottom: the nav,
+     the player above it, and the dock, work strip or remove bar above those. */
+  html {
+    scroll-padding-bottom: calc(5.25rem + env(safe-area-inset-bottom));
+  }
+
+  html:has(.library-send-dock:not([hidden]), .work-strip:not([hidden]), .tonie-selection-bar:not([hidden])) {
+    scroll-padding-bottom: calc(10rem + env(safe-area-inset-bottom));
+  }
+
+  html:has(body.audio-player-visible) {
+    scroll-padding-bottom: calc(12.25rem + env(safe-area-inset-bottom));
+  }
+
+  html:has(body.audio-player-visible):has(.library-send-dock:not([hidden]), .work-strip:not([hidden]), .tonie-selection-bar:not([hidden])) {
+    scroll-padding-bottom: calc(17rem + env(safe-area-inset-bottom));
+  }
+
   .route-pending {
     min-height: 20rem;
     padding: var(--space-6) var(--space-5);
@@ -3609,16 +3663,6 @@ img.collection-detail-cover {
 
   .work-cart-progress-track {
     margin-top: 0;
-  }
-
-  /* The link and the row buttons stay on one line and wrap only when they must;
-     the mark-only Dismiss keeps its square, it never stretches into a bar. */
-  .work-cart-actions {
-    flex-wrap: wrap;
-  }
-
-  .work-cart-row-buttons {
-    margin-left: auto;
   }
 
   .work-cart-link,
