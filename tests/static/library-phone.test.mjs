@@ -615,6 +615,131 @@ test("nothing is stored while a send is in flight, and a failed send writes the 
   }
 }));
 
+const OPERATION_KEY = "toniefi.library.operation";
+
+// A send the server may have accepted, whose answer never arrived.
+async function failedSend() {
+  const dropped = Promise.reject(new Error("The connection dropped."));
+  dropped.catch(() => {});
+  const first = mount({
+    collections: [story("a")],
+    tonies: [tonie("a"), tonie("b")],
+    pushAnswer: dropped,
+  });
+  await flush();
+  await tickFirst(first);
+  await aimAndSend(first);
+  await flush();
+  assert.equal(first.pushes.length, 1);
+  assert.equal(ticked(first), 1, "the ticks are kept for a retry");
+  first.stop();
+  return first.pushes[0].operation_key;
+}
+
+// A reload: the ticks come back and the target is chosen again by hand.
+function reloaded(tonies = [tonie("a"), tonie("b")]) {
+  return mount({ collections: [story("a")], tonies });
+}
+
+test("after a failed send a reload re-sends the same selection under the same key", withSession(async () => {
+  const key = await failedSend();
+  const second = reloaded();
+  try {
+    await flush();
+    assert.equal(ticked(second), 1);
+    await aimAndSend(second);
+    await flush();
+    assert.equal(second.pushes[0].operation_key, key);
+  } finally {
+    second.stop();
+  }
+}));
+
+test("a reload keeps the key when the Tonie moved, so the server can answer 409 rather than append twice", withSession(async () => {
+  const key = await failedSend();
+  const landed = { ...tonie("a"), chapters: [{ id: "c1", title: "a 1" }], chapter_count: 1 };
+  const second = reloaded([landed, tonie("b")]);
+  try {
+    await flush();
+    await aimAndSend(second);
+    await flush();
+    assert.equal(second.pushes[0].operation_key, key);
+    assert.deepEqual(second.pushes[0].assignments[0].remote_chapters, [{ id: "c1", title: "a 1" }]);
+  } finally {
+    second.stop();
+  }
+}));
+
+test("a reload with a different target or effect gets a new key", withSession(async () => {
+  const key = await failedSend();
+  const second = reloaded();
+  try {
+    await flush();
+    const other = second.all(".library-send-target")[1];
+    other.checked = true;
+    await other.dispatchEvent({ type: "change" });
+    await second.node(".library-send-submit").click();
+    await flush();
+    assert.notEqual(second.pushes[0].operation_key, key);
+  } finally {
+    second.stop();
+  }
+}));
+
+test("a poll never removes the stored key", withSession(async (values) => {
+  const key = await failedSend();
+  const second = reloaded();
+  try {
+    await flush();
+    await second.poll();
+    await flush();
+    assert.equal(JSON.parse(values.get(OPERATION_KEY)).key, key);
+  } finally {
+    second.stop();
+  }
+}));
+
+test("clearing the selection removes the stored key", withSession(async (values) => {
+  const key = await failedSend();
+  const second = reloaded();
+  try {
+    await flush();
+    await second.node(".library-send-clear").click();
+    assert.equal(values.has(OPERATION_KEY), false);
+    await tickFirst(second);
+    await aimAndSend(second);
+    await flush();
+    assert.notEqual(second.pushes[0].operation_key, key);
+  } finally {
+    second.stop();
+  }
+}));
+
+test("a first render with nothing restored yet leaves the stored key alone", withSession(async (values) => {
+  const key = await failedSend();
+  const second = mount({ collections: [] });
+  try {
+    await second.poll();
+    assert.equal(JSON.parse(values.get(OPERATION_KEY)).key, key);
+  } finally {
+    second.stop();
+  }
+}));
+
+test("a finished send removes the stored key", withSession(async (values) => {
+  const key = await failedSend();
+  const second = reloaded();
+  try {
+    await flush();
+    await aimAndSend(second);
+    await flush();
+    assert.equal(second.pushes[0].operation_key, key);
+    assert.equal(values.has(OPERATION_KEY), false);
+  } finally {
+    second.stop();
+  }
+}));
+
 test("the scroll position comes back on Back to Library and on back or forward, not on a fresh visit", withSession(async (values) => {
   for (const [context, expected] of [
     [{ from: "collection" }, [11000]],

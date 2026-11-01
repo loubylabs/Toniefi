@@ -7,6 +7,7 @@ import {
   createSendAttempt,
   membershipSignature,
   newOperationKey,
+  operationIntent,
   packSelection,
   problemSummary,
   rebindTargets,
@@ -219,6 +220,7 @@ export const LIBRARY_FILTERS = [
 ];
 const FILTER_STORAGE_KEY = "toniefi.library.filter";
 const SELECTION_STORAGE_KEY = "toniefi.library.selection";
+const OPERATION_STORAGE_KEY = "toniefi.library.operation";
 const SCROLL_STORAGE_KEY = "toniefi.library.scroll";
 
 export function starredNames(collection) {
@@ -1169,6 +1171,9 @@ export function createLibraryScreen({
       }
       sendBar.hidden = picked.length === 0;
       if (!picked.length) {
+        // Only a selection that was on screen and is now gone. A first render
+        // has restored nothing yet, and an empty list is not a cleared selection.
+        if (barMode === "selection" && collections.length) storeValue(OPERATION_STORAGE_KEY, null);
         barMode = "none";
         sheetOpen = false;
         replace(dock);
@@ -1425,7 +1430,16 @@ export function createLibraryScreen({
 
     async function submitSend(groups) {
       if (sending) return;
-      if (!operationKey) operationKey = newOperationKey();
+      // The key outlives a reload, or a reload could turn the retry of a send
+      // the server already accepted into a second operation it cannot catch.
+      // Choosing the target again clears operationKey, so the stored one is
+      // matched against what this send intends, not just taken.
+      const intent = operationIntent(groups, selections);
+      if (!operationKey) {
+        const kept = storedJson(OPERATION_STORAGE_KEY);
+        operationKey = kept?.intent === intent ? kept.key : newOperationKey();
+      }
+      storeValue(OPERATION_STORAGE_KEY, { key: operationKey, intent });
       const payload = buildPushBatchPayload(groups, selections, operationKey);
       const replacing = selections.filter((choice) => choice.replaceExisting);
       const attempt = createSendAttempt({
@@ -1468,6 +1482,7 @@ export function createLibraryScreen({
           };
           selection.clear();
           operationKey = "";
+          storeValue(OPERATION_STORAGE_KEY, null);
           const sent = groups.reduce((sum, group) => sum + group.entries.length, 0);
           notify(`${sent} ${sent === 1 ? "chapter is" : "chapters are"} queued to send.`, { kind: "success" });
           announce("Creative Tonie send queued.");

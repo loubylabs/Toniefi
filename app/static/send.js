@@ -228,6 +228,17 @@ export function membershipSignature(groups) {
   )));
 }
 
+export function operationIntent(groups, selections) {
+  // What the operator decided: this membership, on these Tonies, with these
+  // effects. Not remote_chapters: that is what the world did, and a first send
+  // that landed moves it. Keeping the key then is what earns the server's 409
+  // in place of a second append.
+  return JSON.stringify([
+    membershipSignature(groups),
+    selections.map(({ tonie, replaceExisting }) => [tonie?.householdId, tonie?.id, replaceExisting]),
+  ]);
+}
+
 export function rebindTargets(selections, tonies) {
   // Point every chosen target at the freshly fetched object, or drop it if the
   // Tonie is gone. A retained pre-refresh object validates capacity against
