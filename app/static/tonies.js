@@ -205,7 +205,17 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     let moreFresh = "";
     let renaming = "";
     const renameOpen = new Set();
+    // A refresh poll rebuilds the list every few seconds while work runs, and a
+    // Tonie has no undo. The field being typed in is carried through a redraw,
+    // and only the operator's own Enter or leaving the field writes it. A blur
+    // or change a browser fires as a redraw removes the field writes nothing.
     let redrawing = false;
+    let drafts = new Map();
+    function editedField() {
+      const field = document.activeElement;
+      if (!field || !root.contains(field)) return null;
+      return /^tonie-.+-(title|name)$/.test(field.getAttribute("data-focus-key") || "") ? field : null;
+    }
     // Set by the open Tonie's detail on each render: the one confirmed removal
     // of the ticked chapters, shared by the toolbar button and the phone bar.
     let removeTicked = null;
@@ -246,7 +256,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         if (openKey && !tonies.some((tonie) => tonieKey(tonie) === openKey)) openKey = "";
         selectedChapters.clear();
         moreOpen = "";
-        renaming = "";
+        if (!editedField()) renaming = "";
         render({ passive: true });
         if (announceSuccess) {
           notify("Creative Tonies refreshed from myTonies.", { kind: "success" });
@@ -427,16 +437,22 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
 
     function renameField(tonie) {
       const nameId = `tonie-${tonie.id}-name`;
+      const nameKey = `tonie-${tonie.id}-name`;
       const nameInput = element("input", {
         id: nameId,
         type: "text",
         className: "tonie-name-input",
-        value: tonie.name || "",
+        value: drafts.get(nameKey) ?? (tonie.name || ""),
         maxlength: "100",
         "data-tonie-control": "",
-        "data-focus-key": `tonie-${tonie.id}-name`,
+        "data-focus-key": nameKey,
       });
-      nameInput.addEventListener("change", async () => {
+      // Enter and leaving the field save. Not change: a field redrawn with a
+      // carried draft has no change baseline left to fire against. One save at
+      // a time, so Enter and the blur it can cause are one.
+      let savingName = false;
+      async function commitName() {
+        if (redrawing || savingName || nameInput.isConnected === false) return;
         const wanted = nameInput.value.trim();
         if (!wanted) {
           // Blanking a chapter title keeps the old one, because a slipped
@@ -448,7 +464,22 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
           return;
         }
         if (wanted === (tonie.name || "")) return;
-        await saveName(tonie, nameInput.value);
+        savingName = true;
+        try {
+          await saveName(tonie, nameInput.value);
+        } finally {
+          savingName = false;
+        }
+      }
+      nameInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        commitName();
+      });
+      nameInput.addEventListener("blur", () => {
+        // A window or app switch blurs a field that stays active. That is not
+        // the operator leaving it, and half a name must not reach the Tonie.
+        if (document.activeElement !== nameInput) commitName();
       });
       const field = element("div", { className: "tonie-rename-field" }, [
         element("label", { for: nameId, text: "Name on myTonies" }),
@@ -473,14 +504,15 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
 
     function chapterRow(tonie, chapter, index) {
       const titleId = `tonie-${tonie.id}-chapter-${chapter.id}`;
+      const titleKey = `tonie-${chapter.id}-title`;
       const title = element("input", {
         id: titleId,
         type: "text",
-        value: chapter.title || "",
+        value: drafts.get(titleKey) ?? (chapter.title || ""),
         maxlength: "128",
         "aria-label": `Chapter ${index + 1} title`,
         "data-tonie-title": "",
-        "data-focus-key": `tonie-${chapter.id}-title`,
+        "data-focus-key": titleKey,
         "data-tonie-control": "",
       });
       const up = element("button", {
@@ -593,21 +625,30 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         renaming = "";
         row.removeAttribute("data-renaming");
       }
-      title.addEventListener("change", () => {
+      // Enter and leaving the field save, and close it again on a phone. Not
+      // change: a field redrawn with a carried draft has no change baseline left
+      // to fire against. A save in flight has this field disabled, so nothing
+      // here can be dropped by the one-save-at-a-time guard.
+      function commitTitle() {
+        if (redrawing || mutation.pending || title.isConnected === false) return;
         leaveRename();
+        if (title.value === (chapter.title || "")) return;
         saveChapters(tonie, chapterDrafts(row.parentNode), "Chapter title saved to the Tonie.");
-      });
-      // Leaving the field closes it again on a phone. A blur caused by a
-      // redraw removing the field must not, or a poll would shut it mid-edit.
+      }
       title.addEventListener("blur", () => {
-        if (redrawing || title.isConnected === false) return;
-        leaveRename();
+        // A window or app switch blurs a field that stays active. That is not
+        // the operator leaving it, and half a title must not reach the Tonie.
+        if (document.activeElement !== title) commitTitle();
       });
       title.addEventListener("keydown", (event) => {
-        if (event.key !== "Escape" || renaming !== chapter.id) return;
-        title.value = chapter.title || "";
-        leaveRename();
-        more.focus({ preventScroll: true });
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commitTitle();
+        } else if (event.key === "Escape" && renaming === chapter.id) {
+          title.value = chapter.title || "";
+          leaveRename();
+          more.focus({ preventScroll: true });
+        }
       });
       up.addEventListener("click", () => saveChapters(tonie, moveItem(chapterDrafts(row.parentNode), index, -1), "Chapter moved up on the Tonie."));
       down.addEventListener("click", () => saveChapters(tonie, moveItem(chapterDrafts(row.parentNode), index, 1), "Chapter moved down on the Tonie."));
@@ -841,6 +882,9 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
     function render({ focusKey = "", passive = false } = {}) {
       if (!active || signal?.aborted) return;
       const token = focusKey ? { key: focusKey } : rememberFocus(root);
+      // A redraw that names its focus target (after a save) shows saved values.
+      const editing = focusKey ? null : editedField();
+      drafts = new Map(editing ? [[editing.getAttribute("data-focus-key"), editing.value]] : []);
       removeTicked = null;
       const loadView = tonieLoadView({ state: loadState, tonies, error: loadError });
       stale.hidden = !loadView.stale;
@@ -856,6 +900,7 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
         replace(stale);
       }
 
+      redrawing = true;
       if (loadView.kind === "loading") {
         replace(list, element("li", { className: "route-pending tonie-loading" }, [
           iconNode("tonie", "route-pending-mark"),
@@ -883,10 +928,9 @@ export function createToniesScreen({ request = api, refresh = null } = {}) {
           ]),
         ]));
       } else {
-        redrawing = true;
         replace(list, ...tonies.map(tonieRow));
-        redrawing = false;
       }
+      redrawing = false;
       replace(selectionBar, ...selectionBarChildren());
       selectionBar.hidden = !selectionBar.childNodes.length;
       root.querySelectorAll("[data-tonie-control]").forEach((control) => {

@@ -268,7 +268,7 @@ test("a completed chapter save re-enables Refresh Tonies without re-enabling a b
 
     const title = screen.node("#tonie-t1-chapter-c1");
     title.value = "One renamed";
-    await title.dispatchEvent({ type: "change" });
+    await title.dispatchEvent({ type: "blur" });
     await flush();
 
     assert.equal(screen.puts.length, 1);

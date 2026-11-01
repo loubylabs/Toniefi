@@ -166,7 +166,7 @@ test("an empty Tonie name is still refused, and an empty Tonie still offers rena
     const input = s.one(".tonie-name-input");
     assert.ok(input, "rename is offered with no chapters");
     input.value = "   ";
-    await input.dispatchEvent({ type: "change" });
+    await input.dispatchEvent({ type: "blur" });
     await flush();
     assert.equal(s.writes.length, 0);
     assert.equal(input.value, "Tonie t9", "the old name is put back");

@@ -93,7 +93,7 @@ test("renaming a Tonie sends only a name and updates the row", async () => {
     .find((node) => node.className.includes("tonie-name-input"));
   assert.ok(field, "an expanded Tonie should offer its name");
   field.value = "Bedtime Bear";
-  await field.dispatchEvent({ type: "change" });
+  await field.dispatchEvent({ type: "blur" });
   await flush();
   assert.equal(harness.patches.length, 1);
   assert.deepEqual(Object.keys(harness.patches[0].body).sort(), ["base_name", "name"]);
@@ -112,7 +112,7 @@ test("a blank name is refused in the browser and never reaches the network", asy
   const field = harness.dom.workspace.querySelectorAll("input")
     .find((node) => node.className.includes("tonie-name-input"));
   field.value = "   ";
-  await field.dispatchEvent({ type: "change" });
+  await field.dispatchEvent({ type: "blur" });
   await flush();
   assert.equal(harness.patches.length, 0);
   assert.equal(field.value, "Creative Tonie");
