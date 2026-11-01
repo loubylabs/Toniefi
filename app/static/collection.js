@@ -331,15 +331,16 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
   };
   phoneQuery?.addEventListener?.("change", onViewport);
 
-  function renderDetail({ focusKey = "", fallback = null } = {}) {
+  function renderDetail({ focusKey = "", fallback = null, draft = null } = {}) {
     if (!active || signal.aborted || !collection) return;
     const preparation = forgePreparationState(collection, jobs);
     const token = focusKey ? { key: focusKey } : rememberFocus(root);
     // A refresh poll redraws the page every few seconds while work runs. A
     // title being typed (the collection's or a chapter's) survives it rather
     // than snapping back to the saved one. A redraw that names its focus
-    // target (after a save) shows the saved titles.
-    const drafts = new Map();
+    // target (after a save) shows the saved titles, unless it hands back the
+    // draft a failed save could not keep.
+    const drafts = new Map(draft === null ? [] : [[focusKey, draft]]);
     const editing = document.activeElement;
     const editingKey = editing && root.contains(editing) ? editing.getAttribute("data-focus-key") || "" : "";
     if (!focusKey && (editingKey === "collection-title" || /^chapter-.+-title$/.test(editingKey))) {
@@ -544,21 +545,22 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           notify("Chapter title saved.", { kind: "success" });
         } catch (error) {
           if (!active || signal.aborted) return;
-          titleInput.disabled = false;
           notify(error.message, { kind: "failure", timeout: 0 });
           // A failed rename keeps its field open, with what was typed in it.
-          if (isPhone()) startRename(false);
-          titleInput.focus({ preventScroll: true });
+          // The failure already reloaded and redrew the page, so this row may
+          // be gone: draw the live one back into the rename.
+          renaming = track.name;
+          moreOpen = "";
+          renderDetail({ focusKey: titleKey, draft: title });
         } finally {
           savingChapterTitle = false;
         }
       }
       // A phone shows the title as text; Rename opens the field.
-      function startRename(redraw = true) {
+      function startRename() {
         renaming = track.name;
         moreOpen = "";
-        if (redraw) renderDetail({ focusKey: titleKey });
-        else row.setAttribute("data-renaming", "");
+        renderDetail({ focusKey: titleKey });
       }
       function leaveRename() {
         if (renaming !== track.name) return;
@@ -610,7 +612,7 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         "data-focus-key": `chapter-${track.name}-rename`,
         "aria-label": `Rename ${track.title}`,
         "data-collection-mutation": "",
-        onclick: () => startRename(),
+        onclick: startRename,
       }, [element("span", { text: "Rename" })]);
       const play = element("button", {
         type: "button",

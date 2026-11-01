@@ -207,6 +207,38 @@ for (const phone of [true, false]) {
     }
   });
 
+  test(`${width}: a failed chapter rename stays in the live row with the typed text, focused, and survives a poll`, async () => {
+    const { dom, patches, fail, controller, poll } = await mount({ phone });
+    const row = () => rowFor(dom, "one.mp3");
+    const input = () => row().querySelector("input");
+    try {
+      if (phone) await row().querySelector(".chapter-rename").click();
+      input().focus();
+      input().value = "Will fail";
+      fail.patch = new Error("Could not save the title.");
+      await input().dispatchEvent({ type: "keydown", key: "Enter" });
+      await flush();
+      assert.equal(patches.length, 1);
+      assert.equal(row().hasAttribute("data-renaming"), true);
+      assert.equal(input().value, "Will fail");
+      assert.equal(input().disabled, false);
+      assert.equal(dom.document.activeElement, input());
+
+      await poll();
+      assert.equal(row().hasAttribute("data-renaming"), true);
+      assert.equal(input().value, "Will fail");
+      assert.equal(dom.document.activeElement, input());
+
+      fail.patch = null;
+      await input().dispatchEvent({ type: "keydown", key: "Enter" });
+      await flush();
+      assert.deepEqual(patches.at(-1)[1], { title: "Will fail" });
+      assert.equal(row().hasAttribute("data-renaming"), false);
+    } finally {
+      controller.abort();
+      dom.restore();
+    }
+  });
 }
 
 test("the phone header keeps one line of facts and Source and Forge open state across a re-render", async () => {
