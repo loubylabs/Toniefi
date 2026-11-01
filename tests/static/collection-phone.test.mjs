@@ -161,3 +161,22 @@ test("Trim is a closed details on a phone whose open state survives a re-render;
     dom.restore();
   }
 });
+
+test("the phone header keeps one line of facts and Source and Forge open state across a re-render", async () => {
+  const { dom, media, controller, poll } = await mount();
+  try {
+    assert.match(dom.workspace.querySelector(".collection-detail-line").textContent, /20m · 2 chapters/);
+    const more = () => dom.workspace.querySelector(".collection-detail-more");
+    assert.equal(more().hasAttribute("open"), false);
+    more().open = true;
+    await more().dispatchEvent({ type: "toggle" });
+    await poll();
+    assert.equal(more().hasAttribute("open"), true);
+    media.resize(false);
+    assert.equal(dom.workspace.querySelector(".collection-detail-more"), null);
+    assert.ok(dom.workspace.querySelector(".collection-detail-facts"));
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});

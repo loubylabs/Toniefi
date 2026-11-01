@@ -3585,6 +3585,75 @@ img.collection-detail-cover {
     line-height: 1.2;
   }
 
+  /* The jacket sits beside the title; the line of facts and the details under
+     them use the full width. */
+  .collection-detail-heading {
+    grid-template-columns: 72px minmax(0, 1fr);
+    padding-bottom: var(--space-3);
+    gap: var(--space-1) var(--space-3);
+  }
+
+  .collection-detail-heading > div {
+    display: contents;
+  }
+
+  .collection-detail-cover {
+    width: 72px;
+    grid-column: 1;
+    grid-row: 1 / span 3;
+  }
+
+  .collection-detail-heading > div > * {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .collection-detail-heading h1 {
+    margin: 0;
+    justify-self: stretch;
+    font-size: 1.5rem;
+  }
+
+  .collection-detail-heading h1 .collection-title-input {
+    font-size: 1.5rem;
+  }
+
+  .collection-detail-line {
+    margin: 0;
+    color: var(--ink-muted);
+    font-size: var(--type-sm);
+    font-weight: 720;
+  }
+
+  .collection-detail-more {
+    grid-column: 1 / -1 !important;
+    justify-self: stretch !important;
+  }
+
+  .collection-detail-more > summary {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    cursor: pointer;
+    font-size: var(--type-sm);
+    font-weight: 740;
+  }
+
+  .collection-detail-more .collection-detail-facts {
+    margin-top: var(--space-1);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collection-source-link {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .collection-source-copy {
+    min-height: 44px;
+  }
+
   /* Trim and Ads are closed lines between the header and the chapters, not
      panels under 200 of them. The capacity plan stays last. */
   .collection-detail-grid {

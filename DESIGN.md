@@ -292,6 +292,7 @@ Thin 1px pale rules are the default structural edge. Heavy 2px deep-ink rules te
 
 - **Style:** Raised white paper, a thin pale rule, working corners, 0.5rem by 0.75rem padding, and a 2.75rem minimum height.
 - **Inline Editing:** Row fields may rest on transparent paper with a transparent border, then reveal raised paper and a pale rule on hover or focus. The collection page title is one: the h1 holds the field, Enter or leaving it saves, Escape restores the saved title, and there is no separate Save button. Long state stamps such as a chapter's "Sent · Tonie · date" use sentence case; short state stamps stay uppercase.
+- **Inline Editing on a phone:** Below 760px a chapter's title is two clamped lines of text, not a field, so 223 long titles stay short rows. Rename, behind the row's More, opens the field (focused, 16px, 44px tall); Enter or leaving it saves, Escape restores, with the same save as the desktop field. More, the chapter being renamed, and every closed details (capacity groups, Trim, Ads, Source and Forge) live in JS state and survive each refresh redraw; a desktop draws none of them.
 - **Focus:** The universal electric-blue outline sits outside the field. Invalid fields also receive a failure-red border and adjacent error text.
 - **Disabled:** Disabled controls use 0.55 opacity and the blocked cursor. Explanatory copy must say why when the disabled state is consequential.
 

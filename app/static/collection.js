@@ -129,6 +129,26 @@ function sourceFact(collection) {
   ]);
 }
 
+// A phone keeps one line of facts under the title; Source, Uploader and Forge
+// (with Copy source URL) wait in a details whose open state the caller holds.
+function phoneFacts(collection, open, onToggle) {
+  const count = collection.track_count || 0;
+  const line = element("p", {
+    className: "collection-detail-line",
+    text: `${collection.total_duration || "No duration yet"} · ${count} ${count === 1 ? "chapter" : "chapters"}`,
+  });
+  const details = element("details", { className: "collection-detail-more", open }, [
+    element("summary", { text: "Source and Forge" }),
+    element("dl", { className: "collection-detail-facts" }, [
+      element("div", {}, [element("dt", { text: "Source" }), sourceFact(collection)]),
+      element("div", {}, [element("dt", { text: "Uploader" }), element("dd", { text: collection.uploader || "Not provided" })]),
+      element("div", {}, [element("dt", { text: "Forge" }), element("dd", { text: forgeSummary(collection) })]),
+    ]),
+  ]);
+  details.addEventListener("toggle", () => onToggle(details.open));
+  return [line, details];
+}
+
 function detailFacts(collection) {
   const facts = [
     ["Uploader", collection.uploader || "Not provided"],
@@ -416,7 +436,12 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
               : preparation.state === "pending" ? "Forge queued" : "Forge incomplete",
           }),
           element("h1", { id: "collection-detail-title", tabindex: "-1" }, [titleInput]),
-          detailFacts(collection),
+          ...(isPhone()
+            ? phoneFacts(collection, openPanels.has("facts"), (open) => {
+              if (open) openPanels.add("facts");
+              else openPanels.delete("facts");
+            })
+            : [detailFacts(collection)]),
         ]),
       ]),
     ]);
