@@ -136,6 +136,19 @@ export function selectionProblems(groups, selections, limitSeconds, picked = [])
   return problems;
 }
 
+// One line for a phone's sheet footer, where the whole list would push Send off
+// the screen. It only ever counts what selectionProblems returned; the list
+// itself stays one tap away, so no reason is hidden.
+export function problemSummary(groups, selections, problems) {
+  if (problems.length <= 1) return problems[0] || "";
+  const unchosen = groups.filter((_, index) => !selections[index]?.tonie).length;
+  const others = problems.length - unchosen;
+  const otherText = `${others} other ${others === 1 ? "problem" : "problems"}`;
+  if (!unchosen) return `${others} problems to fix before sending`;
+  const need = `${unchosen} of ${groups.length} ${groups.length === 1 ? "group" : "groups"} ${unchosen === 1 ? "needs" : "need"} a Tonie`;
+  return others ? `${need} · ${otherText}` : need;
+}
+
 export function buildPushBatchPayload(groups, selections, operationKey) {
   return {
     operation_key: operationKey,

@@ -236,10 +236,23 @@ class MiniDocument {
     this.body = new MiniElement("body", this);
     this.activeElement = null;
     this.hidden = false;
+    this.listeners = new Map();
   }
 
   createElement(tagName) {
     return new MiniElement(tagName, this);
+  }
+
+  addEventListener(name, listener) {
+    this.listeners.set(name, [...(this.listeners.get(name) || []), listener]);
+  }
+
+  removeEventListener(name, listener) {
+    this.listeners.set(name, (this.listeners.get(name) || []).filter((item) => item !== listener));
+  }
+
+  dispatchEvent(event) {
+    (this.listeners.get(event.type) || []).forEach((listener) => listener(event));
   }
 
   getElementById(id) {

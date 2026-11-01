@@ -8,6 +8,7 @@ import {
   membershipSignature,
   newOperationKey,
   packSelection,
+  problemSummary,
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
@@ -342,13 +343,35 @@ export function createLibraryScreen({
     });
     const toolbar = element("div", { className: "library-toolbar" }, [searchField, filterGroup, selectStarred]);
     const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
-    const summary = element("p", { className: "library-summary", role: "status", "aria-live": "polite" });
+    // tabindex and the focus key give a phone somewhere to land when the sheet
+    // ends: the search box a desktop lands on would raise the keyboard.
+    const summary = element("p", {
+      className: "library-summary",
+      role: "status",
+      "aria-live": "polite",
+      tabindex: "-1",
+      "data-focus-key": "library-summary",
+    });
     const list = element("ul", { className: "library-list" });
+    // The phone's collapsed form of the bar. CSS keeps it off a desktop.
+    const dock = element("section", { className: "library-send-dock", "aria-label": "Selected to send", hidden: true });
     const sendBar = element("section", {
       className: "library-send-bar",
       "aria-labelledby": "library-send-title",
       hidden: true,
     });
+    // Below this width the bar is a dock plus a full-screen sheet, and whether
+    // the sheet is open lives here, not in the DOM, because every tick and
+    // refresh poll rebuilds it.
+    const phoneQuery = globalThis.window?.matchMedia?.("(max-width: 759.98px)") || null;
+    const onPhone = () => Boolean(phoneQuery?.matches);
+    let sheetOpen = false;
+    // What the bar is showing: "none", "selection" or "receipt".
+    let barMode = "none";
+    // Rebuilding the bar on a poll must not close or scroll what the operator
+    // is reading, so these outlive each render too.
+    let problemsOpen = false;
+    const openMembership = new Set();
     let tonies = null;
     let toniesError = "";
     let selections = [];
@@ -823,7 +846,13 @@ export function createLibraryScreen({
       }
       selectStarred.hidden = !selectableCollections(collections, jobs).some((collection) => starredNames(collection).length);
       selectStarred.disabled = sending;
+      // Read before the rebuild and put back after it, so a refresh poll cannot
+      // snap the groups back to the top while the operator is partway down.
+      const groupScroll = sendBar.querySelector(".library-send-groups, .library-receipt")?.scrollTop || 0;
       renderSendBar();
+      const scroller = sendBar.querySelector(".library-send-groups, .library-receipt");
+      if (scroller && groupScroll) scroller.scrollTop = groupScroll;
+      syncSheet();
       // The send bar is the region the operator is watching while the POST is
       // in flight, so it is the region that reports being busy.
       sendBar.setAttribute("aria-busy", String(Boolean(sending)));
@@ -833,6 +862,59 @@ export function createLibraryScreen({
 
     function limitSeconds() {
       return sendCapacityLimit(refresh.snapshot.status || {});
+    }
+
+    // A receipt has no collapsed form, so on a phone it is always the sheet.
+    function sheetShown() {
+      return onPhone() && (barMode === "receipt" || (barMode === "selection" && sheetOpen));
+    }
+
+    // Everything the sheet covers goes inert and the page stops scrolling, and
+    // both come undone the moment the sheet is not shown, whatever the reason.
+    // Idempotent, so every render, viewport change and route leave can call it.
+    function syncSheet({ leaving = false } = {}) {
+      const shown = !leaving && sheetShown();
+      if (shown) {
+        sendBar.setAttribute("data-sheet", "open");
+        sendBar.setAttribute("role", "dialog");
+        sendBar.setAttribute("aria-modal", "true");
+      } else {
+        sendBar.removeAttribute("data-sheet");
+        sendBar.removeAttribute("role");
+        sendBar.removeAttribute("aria-modal");
+      }
+      dock.hidden = barMode !== "selection" || shown;
+      for (const node of [header, toolbar, stale, summary, list, dock, ...document.querySelectorAll(".mobile-navigation, .skip-link")]) {
+        node.toggleAttribute("inert", shown);
+      }
+      document.body.classList.toggle("library-sheet-open", shown);
+    }
+
+    // Where focus lands when the selection or receipt is gone and no dock is
+    // left to return to.
+    function landingKey() {
+      return onPhone() ? "library-summary" : "library-search";
+    }
+
+    // Nothing closes while a send is in flight: the bar is frozen for it, and a
+    // replace may be waiting on its confirmation dialog.
+    function closeSheet() {
+      if (sending) return;
+      sheetOpen = false;
+      if (barMode === "receipt") {
+        receipt = null;
+        render({ focusKey: landingKey() });
+      } else {
+        render({ focusKey: "library-send-choose" });
+      }
+    }
+
+    function onKeydown(event) {
+      if (event.key === "Escape" && sheetShown()) closeSheet();
+    }
+
+    function onViewportChange() {
+      render({ passive: true });
     }
 
     // The caller says where focus belongs when the fetch settles, because the
@@ -946,17 +1028,16 @@ export function createLibraryScreen({
         text: allDone ? "Done" : "Hide this",
         "data-focus-key": "library-send-done",
       });
-      done.addEventListener("click", () => {
-        receipt = null;
-        render({ focusKey: "library-search" });
-      });
+      done.addEventListener("click", closeSheet);
       sendBar.hidden = false;
       replace(sendBar,
         element("div", { className: "screen-heading" }, [
           element("h2", { id: "library-send-title", text: allDone ? "Sent" : "Sending now" }),
         ]),
         element("ol", { className: "library-receipt", role: "status", "aria-live": "polite" }, rows),
-        element("div", { className: "library-send-actions" }, [done]),
+        element("div", { className: "library-send-foot" }, [
+          element("div", { className: "library-send-actions" }, [done]),
+        ]),
       );
     }
 
@@ -964,11 +1045,16 @@ export function createLibraryScreen({
       if (!active || signal?.aborted) return;
       const picked = selection.ordered(collections);
       if (!picked.length && receipt) {
+        barMode = "receipt";
+        replace(dock);
         renderReceipt();
         return;
       }
       sendBar.hidden = picked.length === 0;
       if (!picked.length) {
+        barMode = "none";
+        sheetOpen = false;
+        replace(dock);
         replace(sendBar);
         selections = [];
         operationKey = "";
@@ -976,6 +1062,7 @@ export function createLibraryScreen({
         announcedProblem = "";
         return;
       }
+      barMode = "selection";
       const groups = packSelection(picked, limitSeconds());
       const nextSignature = membershipSignature(groups);
       if (nextSignature !== signature) {
@@ -986,20 +1073,50 @@ export function createLibraryScreen({
         signature = nextSignature;
         selections = groups.map(() => ({ tonie: null, replaceExisting: false }));
         operationKey = "";
+        openMembership.clear();
       }
       const totalSeconds = groups.reduce((sum, group) => sum + group.seconds, 0);
       // Chapters, because a partial story is not a story: "1 story selected"
       // beside a single ticked chapter of 196 would be a lie about what Send
       // is about to write to a Creative Tonie.
       const chapters = groups.reduce((sum, group) => sum + group.entries.length, 0);
+      const chapterWord = `${chapters} ${chapters === 1 ? "chapter" : "chapters"}`;
+      const storyWord = `${picked.length} ${picked.length === 1 ? "story" : "stories"}`;
+      const choose = element("button", {
+        type: "button",
+        className: "button button-primary library-send-choose",
+        "aria-haspopup": "dialog",
+        "data-focus-key": "library-send-choose",
+        onclick: () => {
+          sheetOpen = true;
+          render({ focusKey: "library-send-close" });
+        },
+      }, [element("span", { text: "Choose Tonies" })]);
+      replace(dock,
+        element("div", { className: "library-send-dock-copy" }, [
+          element("strong", { text: `${storyWord} · ${humanDuration(totalSeconds)}` }),
+          element("small", { text: chapterWord }),
+        ]),
+        choose,
+      );
       const heading = element("div", { className: "screen-heading" }, [
+        element("p", { className: "library-send-sheet-title", text: "Choose Tonies" }),
         element("h2", {
           id: "library-send-title",
-          text: `${chapters} ${chapters === 1 ? "chapter" : "chapters"} from ${picked.length} ${picked.length === 1 ? "story" : "stories"} · ${humanDuration(totalSeconds)}`,
+          text: `${chapterWord} from ${storyWord} · ${humanDuration(totalSeconds)}`,
         }),
         element("button", { type: "button", className: "button button-secondary library-send-refresh", "data-focus-key": "library-send-refresh" }, [
           iconNode("refresh"), element("span", { text: "Refresh targets" }),
         ]),
+        element("button", {
+          type: "button",
+          className: "icon-button library-send-close",
+          "aria-label": "Close",
+          title: "Close",
+          disabled: sending,
+          "data-focus-key": "library-send-close",
+          onclick: closeSheet,
+        }, [iconNode("close")]),
       ]);
       heading.querySelector("button").addEventListener("click", () => loadTargets());
 
@@ -1071,7 +1188,14 @@ export function createLibraryScreen({
         for (const entry of group.entries) {
           if (!sourceTitles.includes(entry.collectionTitle)) sourceTitles.push(entry.collectionTitle);
         }
-        const membership = element("details", { className: "library-send-membership-disclosure" }, [
+        const membership = element("details", {
+          className: "library-send-membership-disclosure",
+          open: openMembership.has(group.index),
+          ontoggle: (event) => {
+            if (event.target.open) openMembership.add(group.index);
+            else openMembership.delete(group.index);
+          },
+        }, [
           element("summary", {
             text: `${group.entries.length} ${group.entries.length === 1 ? "chapter" : "chapters"} · ${humanDuration(group.seconds)} · ${sourceTitles.join(", ")}`,
           }),
@@ -1120,6 +1244,21 @@ export function createLibraryScreen({
       if (toniesErrorMessage) {
         replace(validation, element("li", { text: toniesErrorMessage }));
       }
+      // A phone's footer gets one line, with the full list inside it. A failed
+      // load or a single problem is already one line, and stays as it is.
+      const problemsNode = onPhone() && !toniesErrorMessage && problems.length > 1
+        ? element("details", {
+          className: "library-send-problems",
+          open: problemsOpen,
+          ontoggle: (event) => { problemsOpen = event.target.open; },
+        }, [
+          element("summary", {}, [
+            element("span", { text: problemSummary(groups, selections, problems) }),
+            iconNode("chevronRight"),
+          ]),
+          validation,
+        ])
+        : validation;
       // The paragraph is rebuilt every render, so it can never be the live
       // region that fires: a node has to be in the document before its text
       // changes. Announcing the message itself is the only way a screen reader
@@ -1154,14 +1293,16 @@ export function createLibraryScreen({
       });
       cancel.addEventListener("click", () => {
         selection.clear();
-        render({ focusKey: "library-search" });
+        render({ focusKey: landingKey() });
       });
 
       replace(sendBar,
         heading,
         element("ol", { className: "library-send-groups" }, groupNodes),
-        validation,
-        element("div", { className: "library-send-actions" }, [cancel, send]),
+        element("div", { className: "library-send-foot" }, [
+          problemsNode,
+          element("div", { className: "library-send-actions" }, [cancel, send]),
+        ]),
       );
     }
 
@@ -1268,14 +1409,19 @@ export function createLibraryScreen({
       }
     });
 
-    root.append(header, toolbar, stale, summary, list, sendBar);
+    root.append(header, toolbar, stale, summary, list, dock, sendBar);
     replace(workspace, root);
     render({ passive: true });
     const unsubscribe = refresh.subscribe(onRefresh);
+    document.addEventListener("keydown", onKeydown);
+    phoneQuery?.addEventListener?.("change", onViewportChange);
     refresh.request();
     return () => {
       active = false;
       unsubscribe();
+      document.removeEventListener("keydown", onKeydown);
+      phoneQuery?.removeEventListener?.("change", onViewportChange);
+      syncSheet({ leaving: true });
     };
   };
 }
