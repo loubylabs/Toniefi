@@ -1297,6 +1297,12 @@ test("the desktop send bar stays capped and the phone dock clears the navigation
   );
 });
 
+test("the Library filter keeps every choice on a phone", () => {
+  // Measured before this: Starred clipped by 16px at 390, and gone at 320.
+  assert.equal(phoneDeclarations(".library-filter").display, "grid");
+  assert.equal(phoneDeclarations(".library-filter")["grid-template-columns"], "repeat(2, minmax(0, 1fr))");
+});
+
 test("a phone's chapter list has no scroller of its own to trap the thumb", () => {
   // Measured at 390x844 before this: a 352px scroller holding 14,988px.
   assert.equal(baseDeclarations(".library-chapter-list")["max-height"], "22rem");

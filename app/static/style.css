@@ -3482,16 +3482,6 @@ img.collection-detail-cover {
     display: none;
   }
 
-  .library-filter {
-    width: 100%;
-  }
-
-  .library-filter label {
-    padding-inline: var(--space-2);
-    flex: 1 1 auto;
-    justify-content: center;
-  }
-
   .tonie-summary {
     min-height: 6.5rem;
     padding: var(--space-3);
@@ -4278,6 +4268,31 @@ img.collection-detail-cover {
 }
 
 @media (max-width: 759.98px) {
+  /* Four segments never fit one row at 390 once "Ready to send" is in them, and
+     the group clips what overflows, so they sit two by two. */
+  .library-filter {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .library-filter label {
+    padding-inline: var(--space-2);
+    justify-content: center;
+  }
+
+  .library-filter label + label {
+    border-left: 0;
+  }
+
+  .library-filter label:nth-of-type(even) {
+    border-left: 1px solid var(--bookcloth);
+  }
+
+  .library-filter label:nth-of-type(n + 3) {
+    border-top: 1px solid var(--bookcloth);
+  }
+
   /* A row is one line of the list: tick, jacket, title, More. The body gives
      up its own box so its children sit in the row's grid. */
   .library-list {

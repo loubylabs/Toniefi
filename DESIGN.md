@@ -311,6 +311,8 @@ Work-cart records pair a cover jacket with a compact operational body. Each reco
 
 ### Library Row
 
+The Library's segmented filter sits two by two below 760px, so every choice stays whole at 320px.
+
 On a desktop a row is a tick, a stretched jacket, and a body holding the title, stamp, facts and five actions in the open. A ready story's title is also a link to its collection, with an underline on hover and no other change.
 
 **The Phone Row.** Below 760px a row is about 96px, so about seven stories fit on a screen: a grid of `2.75rem 3.5rem minmax(0, 1fr) 2.75rem`, holding a full-height tick cell; a 56px square jacket, aligned to the top; a title clamped to two lines (a 44px link when ready), its stamp and one line of facts ("223 ch · 28h 50m · 23 Tonies"); and a 44x44 More button using the `more` icon, labeled "More actions for" plus the title. More opens one row at a time, with its state in JS, and shows the source and date, then Open, Star, Choose chapters, Download and Delete in a two-column grid spanning the row. Whatever needs attention stays out of More: a story that is not ready keeps Finish preparation in view, and a partial-selection count, a skipped-video note or an error always shows. Choose chapters opens a panel spanning the row whose list has no scroller of its own on a phone, because a nested scroller with no gutter beside it traps the thumb; each chapter is about 64px, with its star beside it, a whole-line tick, a two-line title and its duration.
