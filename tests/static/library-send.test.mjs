@@ -1297,6 +1297,14 @@ test("the desktop send bar stays capped and the phone dock clears the navigation
   );
 });
 
+test("a phone's chapter list has no scroller of its own to trap the thumb", () => {
+  // Measured at 390x844 before this: a 352px scroller holding 14,988px.
+  assert.equal(baseDeclarations(".library-chapter-list")["max-height"], "22rem");
+  assert.equal(phoneDeclarations(".library-chapter-list")["max-height"], "none");
+  assert.equal(phoneDeclarations(".library-chapter-list").overflow, "visible");
+  assert.equal(phoneDeclarations(".library-chapter-panel")["grid-column"], "1 / -1");
+});
+
 test("only the chapter list gives way when the send bar runs out of room", () => {
   // The target field and the send buttons are the point of the bar, so the
   // list of what is being sent is the one part allowed to shrink and scroll.
