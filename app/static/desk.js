@@ -1397,6 +1397,14 @@ export function createDeskScreen({
       paste.setCustomValidity("");
       entries.push(...added.map((value) => newSourceEntry(value)));
       paste.value = "";
+      // A thumb has just pasted, so the next step is Prepare, not editing the
+      // new row: focusing a row's URL field would raise the keyboard over the
+      // tray. A keyboard or mouse user keeps focus on the first new row.
+      if (globalThis.window?.matchMedia?.("(pointer: coarse)")?.matches) {
+        renderSources();
+        if (!prepareButton.disabled) prepareButton.focus();
+        return;
+      }
       renderSources({ focusKey: `${entries[entries.length - added.length].id}-input` });
     });
     clearSources.addEventListener("click", () => {

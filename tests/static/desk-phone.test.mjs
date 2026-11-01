@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createDeskScreen, forgeFoldOpen, workStripSummary } from "../../app/static/desk.js";
@@ -72,6 +73,8 @@ async function mount({ phone = true, coarse = false, jobs = [] } = {}) {
     }),
     refresh,
   })({ workspace: dom.workspace, navigate() {}, signal: controller.signal });
+  // Forge defaults load asynchronously; Prepare waits for them.
+  await new Promise((resolve) => setTimeout(resolve, 0));
   await flush();
   return {
     dom,
@@ -183,4 +186,53 @@ test("tapping the work strip lands on the cart heading", async () => {
   } finally {
     screen.done();
   }
+});
+
+async function addToTray(screen, lines) {
+  screen.dom.document.getElementById("source-paste").value = lines.join("\n");
+  await [...screen.dom.workspace.querySelectorAll("button")].find((button) => button.textContent.includes("Add to tray")).click();
+  await flush();
+}
+
+test("Add to tray focuses Prepare under a coarse pointer, so no keyboard rises", async () => {
+  const screen = await mount({ coarse: true });
+  try {
+    await addToTray(screen, ["https://example.test/one", "https://example.test/two"]);
+    const prepare = screen.dom.workspace.querySelector(".desk-prepare-button");
+    assert.equal(prepare.disabled, false);
+    assert.equal(screen.dom.document.activeElement, prepare);
+  } finally {
+    screen.done();
+  }
+});
+
+test("Add to tray under a coarse pointer never lands in a URL field, even when Prepare must wait", async () => {
+  const screen = await mount({ coarse: true });
+  try {
+    await addToTray(screen, ["https://example.test/one", "not a url"]);
+    assert.equal(screen.dom.workspace.querySelector(".desk-prepare-button").disabled, true);
+    assert.notEqual(screen.dom.document.activeElement?.tagName, "INPUT");
+  } finally {
+    screen.done();
+  }
+});
+
+test("Add to tray keeps focus on the first new row with a mouse or keyboard", async () => {
+  const screen = await mount({ coarse: false });
+  try {
+    await addToTray(screen, ["https://example.test/one", "https://example.test/two"]);
+    const [first] = screen.dom.workspace.querySelector(".source-row-list").querySelectorAll("input");
+    assert.equal(screen.dom.document.activeElement.getAttribute("data-focus-key"), "source-1-input");
+    assert.equal(first.getAttribute("aria-label"), "Source URL 1");
+  } finally {
+    screen.done();
+  }
+});
+
+test("the phone source tray holds a row on one line and shows more than a row and a half", () => {
+  const css = readFileSync(new URL("../../app/static/style.css", import.meta.url), "utf8");
+  const phone = css.slice(css.indexOf("@media (max-width: 759.98px)"));
+  assert.match(phone, /\.source-row-list \{\s*max-block-size: 16rem;/);
+  assert.match(phone, /\.source-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(phone, /\.source-row-field input \{\s*min-height: 2\.75rem;\s*font-size: 1rem;/);
 });

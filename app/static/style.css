@@ -3310,24 +3310,60 @@ img.collection-detail-cover {
     width: 100%;
   }
 
+  /* A row is the field and its three controls on one line, about 60px, so a
+     tray of five is not 600px of scrolling in a 9rem window. The link icon
+     gives its column to the URL, which is the part that needs the room. */
   .source-row {
-    padding: var(--space-3);
-    grid-template-columns: 1.5rem minmax(0, 1fr);
-    align-items: start;
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .source-row-icon {
+    display: none;
   }
 
   .source-row-list {
-    max-block-size: 9rem;
+    max-block-size: 16rem;
+  }
+
+  .source-row-field input {
+    min-height: 2.75rem;
+    font-size: 1rem;
   }
 
   .source-row-controls {
-    grid-column: 2;
     justify-content: flex-end;
   }
 
   .source-row-controls .icon-button {
-    width: 45px;
-    height: 45px;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  /* A tick is the whole line to tap, not the 20px box in it. */
+  .forge-option-toggle {
+    min-height: 2.75rem;
+  }
+
+  .forge-number-control {
+    min-height: 2.75rem;
+  }
+
+  .desk-clear-button,
+  .playlist-pick-button {
+    min-height: 2.75rem;
+  }
+
+  .playlist-picker-row label {
+    flex: 1;
+    min-height: 2.75rem;
+  }
+
+  .secondary-inline-form input,
+  .local-upload-form input {
+    min-height: 2.75rem;
+    font-size: 1rem;
   }
 
   .forge-definition-list {
