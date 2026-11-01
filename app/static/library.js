@@ -7,7 +7,9 @@ import {
   createSendAttempt,
   membershipSignature,
   newOperationKey,
+  operationIntent,
   packSelection,
+  problemSummary,
   rebindTargets,
   selectionProblems,
   sendCapacityLimit,
@@ -96,6 +98,28 @@ export function createSelectionState() {
     },
     size: () => chosen.size,
     clear() { chosen.clear(); },
+    // The chosen names per story, with the fingerprint they were chosen under.
+    // Only what still exists: a stale name is never written back.
+    serialize: (collections) => Object.fromEntries(collections
+      .filter((collection) => chosen.has(collection.slug))
+      .map((collection) => [collection.slug, {
+        fingerprint: collection.manifest_fingerprint || "",
+        names: keep(collection, picked(collection.slug)),
+      }])
+      .filter(([, entry]) => entry.names.length)),
+    // A story that is gone, changed or no longer sendable drops out whole, and
+    // a chapter that is gone drops out alone (setTracks filters it, and removes
+    // the story if nothing is left). Only names return: no target and no
+    // operation key is ever stored, so a restored selection is a new operation
+    // the operator still has to aim, and a finished send cannot come back.
+    restore(collections, stored) {
+      for (const collection of collections) {
+        const entry = stored?.[collection.slug];
+        if (entry && entry.fingerprint === (collection.manifest_fingerprint || "") && Array.isArray(entry.names)) {
+          put(collection.slug, keep(collection, new Set(entry.names)));
+        }
+      }
+    },
     ordered: (collections) => collections
       // A story whose chosen chapters have all vanished is kept, carrying no
       // tracks, so the Send bar's own guard can refuse it by name rather than
@@ -195,6 +219,9 @@ export const LIBRARY_FILTERS = [
   { value: "starred", label: "Starred" },
 ];
 const FILTER_STORAGE_KEY = "toniefi.library.filter";
+const SELECTION_STORAGE_KEY = "toniefi.library.selection";
+const OPERATION_STORAGE_KEY = "toniefi.library.operation";
+const SCROLL_STORAGE_KEY = "toniefi.library.scroll";
 
 export function starredNames(collection) {
   return (collection.tracks || []).filter((track) => track.starred).map((track) => track.name);
@@ -221,6 +248,23 @@ function storeFilter(value) {
     globalThis.sessionStorage?.setItem(FILTER_STORAGE_KEY, value);
   } catch {
     // Private mode or a blocked store: the filter just does not persist.
+  }
+}
+
+function storedJson(key) {
+  try {
+    return JSON.parse(globalThis.sessionStorage?.getItem(key) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+function storeValue(key, value) {
+  try {
+    if (value == null) globalThis.sessionStorage?.removeItem(key);
+    else globalThis.sessionStorage?.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode, a blocked store or a full one: this just does not persist.
   }
 }
 
@@ -256,7 +300,7 @@ export function createLibraryScreen({
 } = {}) {
   if (!refresh) throw new Error("Library requires the application refresh coordinator.");
 
-  return function renderLibrary({ workspace, signal }) {
+  return function renderLibrary({ workspace, signal, from = "", popped = false }) {
     let active = true;
     let collections = refresh.snapshot.collections || [];
     let jobs = refresh.snapshot.jobs || [];
@@ -273,7 +317,7 @@ export function createLibraryScreen({
       className: "button button-secondary library-rescan",
       "data-focus-key": "library-rescan",
       "data-collection-mutation": "",
-    }, [iconNode("refresh"), element("span", { text: "Rescan" })]);
+    }, [iconNode("refresh"), element("span", { className: "heading-action-label", text: "Rescan" })]);
     const header = element("div", { className: "screen-heading" }, [titleGroup, rescan]);
     const searchLabel = element("label", { for: "library-search", text: "Search collection titles" });
     const search = element("input", {
@@ -342,13 +386,36 @@ export function createLibraryScreen({
     });
     const toolbar = element("div", { className: "library-toolbar" }, [searchField, filterGroup, selectStarred]);
     const stale = element("div", { className: "stale-notice", role: "status", hidden: true });
-    const summary = element("p", { className: "library-summary", role: "status", "aria-live": "polite" });
+    // tabindex and the focus key give a phone somewhere to land when the sheet
+    // ends: the search box a desktop lands on would raise the keyboard.
+    const summary = element("p", {
+      className: "library-summary",
+      role: "status",
+      "aria-live": "polite",
+      tabindex: "-1",
+      "data-focus-key": "library-summary",
+    });
     const list = element("ul", { className: "library-list" });
+    // The phone's collapsed form of the bar. CSS keeps it off a desktop.
+    const dock = element("section", { className: "library-send-dock", "aria-label": "Selected to send", hidden: true });
     const sendBar = element("section", {
       className: "library-send-bar",
       "aria-labelledby": "library-send-title",
       hidden: true,
     });
+    // Below this width the bar is a dock plus a full-screen sheet, and whether
+    // the sheet is open lives here, not in the DOM, because every tick and
+    // refresh poll rebuilds it.
+    const phoneQuery = globalThis.window?.matchMedia?.("(max-width: 759.98px)") || null;
+    const onPhone = () => Boolean(phoneQuery?.matches);
+    let sheetOpen = false;
+    let selectionRestored = false;
+    // What the bar is showing: "none", "selection" or "receipt".
+    let barMode = "none";
+    // Rebuilding the bar on a poll must not close or scroll what the operator
+    // is reading, so these outlive each render too.
+    let problemsOpen = false;
+    const openMembership = new Set();
     let tonies = null;
     let toniesError = "";
     let selections = [];
@@ -364,6 +431,9 @@ export function createLibraryScreen({
     // Which rows have their chapter list open. The render rebuilds the whole
     // list on every tick, so this cannot live in the DOM.
     const expanded = new Set();
+    // The one row whose actions are open on a phone, for the same reason.
+    let moreOpen = "";
+    let moreFresh = "";
     // Each open panel's own scroll position, keyed by slug so two open panels
     // never share one. The render rebuilds the whole library list on every
     // tick (see above), which would otherwise snap a long chapter list back
@@ -685,9 +755,48 @@ export function createLibraryScreen({
         // Same-titled imports are common (a re-import, two uploads), and the
         // source kind and date are what tell them apart. The full address is
         // on hover rather than printed across the row.
-        element("li", { title: collection.url || collection.path || "", text: sourceLabel(collection) }),
-        added ? element("li", { text: `Added ${added}` }) : null,
+        element("li", { className: "library-fact-origin", title: collection.url || collection.path || "", text: sourceLabel(collection) }),
+        added ? element("li", { className: "library-fact-origin", text: `Added ${added}` }) : null,
       ].filter(Boolean));
+      // A phone's one line. The list above is what it shows once More is open,
+      // reduced there to the two facts this line leaves out.
+      const brief = element("p", {
+        className: "library-row-brief",
+        text: `${collection.track_count || 0} ch · ${collection.total_duration || "No duration yet"} · ${collection.tonies_needed || 0} ${collection.tonies_needed === 1 ? "Tonie" : "Tonies"}`,
+      });
+      const title = collection.title || "Untitled collection";
+      const actionsId = `library-actions-${collection.slug}`;
+      const rowOpen = moreOpen === collection.slug;
+      const more = element("button", {
+        type: "button",
+        className: "icon-button library-row-more",
+        "aria-label": `More actions for ${title}`,
+        "aria-expanded": String(rowOpen),
+        "aria-controls": actionsId,
+        "data-focus-key": `library-${collection.slug}-more`,
+        onclick: () => {
+          moreOpen = rowOpen ? "" : collection.slug;
+          // Only this render's row eases in; a refresh poll rebuilds it settled.
+          moreFresh = moreOpen;
+          render({ focusKey: `library-${collection.slug}-more` });
+          moreFresh = "";
+        },
+      }, [iconNode("more")]);
+      // A real link on every width, so the title is the short way to a story
+      // on a phone, where Open waits behind More.
+      const titleLink = preparation.state === "ready"
+        ? element("a", {
+          className: "library-row-title-link",
+          href: `/collection/${encodeURIComponent(collection.slug)}`,
+          "data-route": "collection",
+          "data-focus-key": `library-${collection.slug}-title`,
+          "data-collection-mutation": "",
+          text: title,
+          onclick: (event) => {
+            if (mutation.pending) event.preventDefault();
+          },
+        })
+        : null;
       const panelId = `library-chapters-${collection.slug}`;
       const open = selectable && expanded.has(collection.slug);
       const chooseChapters = selectable
@@ -745,23 +854,32 @@ export function createLibraryScreen({
         : null;
       const body = element("div", { className: "library-row-body" }, [
         element("div", { className: "library-row-heading" }, [
-          element("h2", { id: titleId, text: collection.title || "Untitled collection" }),
+          titleLink
+            ? element("h2", { id: titleId }, [titleLink])
+            : element("h2", { id: titleId, text: title }),
           element("span", {
             className: "status-stamp",
             "data-status": collection.stage === "forged" ? "success" : "warning",
             text: stageLabel(collection.stage),
           }),
         ]),
+        brief,
         facts,
         chapterCount,
         skippedNote(collection),
         preparation.state === "failed"
           ? element("p", { className: "inline-error", role: "alert", text: preparation.error })
           : null,
-        element("div", { className: "library-row-actions" }, [primary, rowStar, chooseChapters, download, removeButton]),
+        more,
+        element("div", { className: "library-row-actions", id: actionsId }, [primary, rowStar, chooseChapters, download, removeButton]),
         open ? chapterPanel(collection, panelId) : null,
       ]);
-      return element("li", { className: "library-row", "aria-labelledby": titleId }, [tickCell, collectionCover(collection), body]);
+      return element("li", {
+        className: "library-row",
+        "aria-labelledby": titleId,
+        "data-more-open": rowOpen ? "" : null,
+        "data-more-fresh": rowOpen && moreFresh === collection.slug ? "" : null,
+      }, [tickCell, collectionCover(collection), body]);
     }
 
     // A passive render (first paint, a refresh poll) never rescues focus into
@@ -823,7 +941,14 @@ export function createLibraryScreen({
       }
       selectStarred.hidden = !selectableCollections(collections, jobs).some((collection) => starredNames(collection).length);
       selectStarred.disabled = sending;
+      // Read before the rebuild and put back after it, so a refresh poll cannot
+      // snap the groups back to the top while the operator is partway down.
+      const groupScroll = sendBar.querySelector(".library-send-groups, .library-receipt")?.scrollTop || 0;
       renderSendBar();
+      const scroller = sendBar.querySelector(".library-send-groups, .library-receipt");
+      if (scroller && groupScroll) scroller.scrollTop = groupScroll;
+      syncSheet();
+      persistSelection();
       // The send bar is the region the operator is watching while the POST is
       // in flight, so it is the region that reports being busy.
       sendBar.setAttribute("aria-busy", String(Boolean(sending)));
@@ -835,10 +960,92 @@ export function createLibraryScreen({
       return sendCapacityLimit(refresh.snapshot.status || {});
     }
 
+    // The ticks outlive this screen so a look at a story costs nothing. Nothing
+    // is written until the stored ticks have been read back, or the first
+    // render would wipe them. Nothing is kept while a send is in flight either:
+    // leaving mid-POST leaves an unknown outcome, and ticks waiting on return
+    // would make sending the same audio again one press easier. A failed send
+    // renders once more, which writes them back.
+    function persistSelection() {
+      if (!selectionRestored) return;
+      const ticks = sending ? {} : selection.serialize(collections);
+      storeValue(SELECTION_STORAGE_KEY, Object.keys(ticks).length ? ticks : null);
+    }
+
+    // Called only with a collection list in hand: a fresh page starts with none
+    // and the coordinator publishes once per resource, so an empty list can mean
+    // "not here yet", and restoring against it would drop every tick as vanished.
+    function restoreSelection() {
+      if (selectionRestored) return;
+      selectionRestored = true;
+      selection.restore(selectableCollections(collections, jobs), storedJson(SELECTION_STORAGE_KEY));
+      // Passive: a restored selection must not move focus or raise a keyboard.
+      if (selection.size() && tonies === null) loadTargets("", { passive: true });
+    }
+
+    // A receipt has no collapsed form, so on a phone it is always the sheet.
+    function sheetShown() {
+      return onPhone() && (barMode === "receipt" || (barMode === "selection" && sheetOpen));
+    }
+
+    // Everything the sheet covers goes inert and the page stops scrolling, and
+    // both come undone the moment the sheet is not shown, whatever the reason.
+    // Idempotent, so every render, viewport change and route leave can call it.
+    function syncSheet({ leaving = false } = {}) {
+      const shown = !leaving && sheetShown();
+      if (shown) {
+        sendBar.setAttribute("data-sheet", "open");
+        sendBar.setAttribute("role", "dialog");
+        sendBar.setAttribute("aria-modal", "true");
+      } else {
+        sendBar.removeAttribute("data-sheet");
+        sendBar.removeAttribute("role");
+        sendBar.removeAttribute("aria-modal");
+      }
+      dock.hidden = barMode !== "selection" || shown;
+      for (const node of [header, toolbar, stale, summary, list, dock, ...document.querySelectorAll(".mobile-navigation, .skip-link")]) {
+        node.toggleAttribute("inert", shown);
+      }
+      document.body.classList.toggle("library-sheet-open", shown);
+    }
+
+    // Where focus lands when the selection or receipt is gone and no dock is
+    // left to return to.
+    function landingKey() {
+      return onPhone() ? "library-summary" : "library-search";
+    }
+
+    // Nothing closes while a send is in flight: the bar is frozen for it, and a
+    // replace may be waiting on its confirmation dialog.
+    function closeSheet() {
+      if (sending) return;
+      sheetOpen = false;
+      if (barMode === "receipt") {
+        receipt = null;
+        render({ focusKey: landingKey() });
+      } else {
+        render({ focusKey: "library-send-choose" });
+      }
+    }
+
+    function onKeydown(event) {
+      if (event.key === "Escape" && sheetShown()) closeSheet();
+    }
+
+    // Turning a phone back returns to the same place, sheet included. A landscape
+    // iPhone crosses into the desktop bar and back, and a modal sheet that comes
+    // back has to bring focus with it: everything outside it is inert.
+    function onViewportChange() {
+      const intoSheet = sheetShown() && !sendBar.contains(document.activeElement);
+      render(intoSheet
+        ? { focusKey: barMode === "receipt" ? "library-send-done" : "library-send-close" }
+        : { passive: true });
+    }
+
     // The caller says where focus belongs when the fetch settles, because the
     // first tick on a row loads targets too: restoring to the refresh button
     // there would take focus off the checkbox the operator just used.
-    async function loadTargets(focusKey = "library-send-refresh") {
+    async function loadTargets(focusKey = "library-send-refresh", { passive = false } = {}) {
       // Two reads can be in flight at once, because Refresh targets stays live
       // while the automatic first load is still running. Only the newest answer
       // may land: an older one carries obsolete free space AND an obsolete
@@ -886,7 +1093,7 @@ export function createLibraryScreen({
       // Tonie write has no undo. Keeping the key hands the moved payload back
       // under the same key, so the server's idempotency digest answers 409 and
       // tells the operator the situation moved instead of uploading again.
-      if (active && !signal?.aborted) render({ focusKey });
+      if (active && !signal?.aborted) render({ focusKey, passive });
     }
 
     // Focus is NOT handled here. `render` already wraps the whole screen in
@@ -946,17 +1153,16 @@ export function createLibraryScreen({
         text: allDone ? "Done" : "Hide this",
         "data-focus-key": "library-send-done",
       });
-      done.addEventListener("click", () => {
-        receipt = null;
-        render({ focusKey: "library-search" });
-      });
+      done.addEventListener("click", closeSheet);
       sendBar.hidden = false;
       replace(sendBar,
         element("div", { className: "screen-heading" }, [
           element("h2", { id: "library-send-title", text: allDone ? "Sent" : "Sending now" }),
         ]),
         element("ol", { className: "library-receipt", role: "status", "aria-live": "polite" }, rows),
-        element("div", { className: "library-send-actions" }, [done]),
+        element("div", { className: "library-send-foot" }, [
+          element("div", { className: "library-send-actions" }, [done]),
+        ]),
       );
     }
 
@@ -964,11 +1170,19 @@ export function createLibraryScreen({
       if (!active || signal?.aborted) return;
       const picked = selection.ordered(collections);
       if (!picked.length && receipt) {
+        barMode = "receipt";
+        replace(dock);
         renderReceipt();
         return;
       }
       sendBar.hidden = picked.length === 0;
       if (!picked.length) {
+        // Only a selection that was on screen and is now gone. A first render
+        // has restored nothing yet, and an empty list is not a cleared selection.
+        if (barMode === "selection" && collections.length) storeValue(OPERATION_STORAGE_KEY, null);
+        barMode = "none";
+        sheetOpen = false;
+        replace(dock);
         replace(sendBar);
         selections = [];
         operationKey = "";
@@ -976,6 +1190,7 @@ export function createLibraryScreen({
         announcedProblem = "";
         return;
       }
+      barMode = "selection";
       const groups = packSelection(picked, limitSeconds());
       const nextSignature = membershipSignature(groups);
       if (nextSignature !== signature) {
@@ -986,20 +1201,50 @@ export function createLibraryScreen({
         signature = nextSignature;
         selections = groups.map(() => ({ tonie: null, replaceExisting: false }));
         operationKey = "";
+        openMembership.clear();
       }
       const totalSeconds = groups.reduce((sum, group) => sum + group.seconds, 0);
       // Chapters, because a partial story is not a story: "1 story selected"
       // beside a single ticked chapter of 196 would be a lie about what Send
       // is about to write to a Creative Tonie.
       const chapters = groups.reduce((sum, group) => sum + group.entries.length, 0);
+      const chapterWord = `${chapters} ${chapters === 1 ? "chapter" : "chapters"}`;
+      const storyWord = `${picked.length} ${picked.length === 1 ? "story" : "stories"}`;
+      const choose = element("button", {
+        type: "button",
+        className: "button button-primary library-send-choose",
+        "aria-haspopup": "dialog",
+        "data-focus-key": "library-send-choose",
+        onclick: () => {
+          sheetOpen = true;
+          render({ focusKey: "library-send-close" });
+        },
+      }, [element("span", { text: "Choose Tonies" })]);
+      replace(dock,
+        element("div", { className: "library-send-dock-copy" }, [
+          element("strong", { text: `${storyWord} · ${humanDuration(totalSeconds)}` }),
+          element("small", { text: chapterWord }),
+        ]),
+        choose,
+      );
       const heading = element("div", { className: "screen-heading" }, [
+        element("p", { className: "library-send-sheet-title", text: "Choose Tonies" }),
         element("h2", {
           id: "library-send-title",
-          text: `${chapters} ${chapters === 1 ? "chapter" : "chapters"} from ${picked.length} ${picked.length === 1 ? "story" : "stories"} · ${humanDuration(totalSeconds)}`,
+          text: `${chapterWord} from ${storyWord} · ${humanDuration(totalSeconds)}`,
         }),
         element("button", { type: "button", className: "button button-secondary library-send-refresh", "data-focus-key": "library-send-refresh" }, [
           iconNode("refresh"), element("span", { text: "Refresh targets" }),
         ]),
+        element("button", {
+          type: "button",
+          className: "icon-button library-send-close",
+          "aria-label": "Close",
+          title: "Close",
+          disabled: sending,
+          "data-focus-key": "library-send-close",
+          onclick: closeSheet,
+        }, [iconNode("close")]),
       ]);
       heading.querySelector("button").addEventListener("click", () => loadTargets());
 
@@ -1071,7 +1316,14 @@ export function createLibraryScreen({
         for (const entry of group.entries) {
           if (!sourceTitles.includes(entry.collectionTitle)) sourceTitles.push(entry.collectionTitle);
         }
-        const membership = element("details", { className: "library-send-membership-disclosure" }, [
+        const membership = element("details", {
+          className: "library-send-membership-disclosure",
+          open: openMembership.has(group.index),
+          ontoggle: (event) => {
+            if (event.target.open) openMembership.add(group.index);
+            else openMembership.delete(group.index);
+          },
+        }, [
           element("summary", {
             text: `${group.entries.length} ${group.entries.length === 1 ? "chapter" : "chapters"} · ${humanDuration(group.seconds)} · ${sourceTitles.join(", ")}`,
           }),
@@ -1120,6 +1372,21 @@ export function createLibraryScreen({
       if (toniesErrorMessage) {
         replace(validation, element("li", { text: toniesErrorMessage }));
       }
+      // A phone's footer gets one line, with the full list inside it. A failed
+      // load or a single problem is already one line, and stays as it is.
+      const problemsNode = onPhone() && !toniesErrorMessage && problems.length > 1
+        ? element("details", {
+          className: "library-send-problems",
+          open: problemsOpen,
+          ontoggle: (event) => { problemsOpen = event.target.open; },
+        }, [
+          element("summary", {}, [
+            element("span", { text: problemSummary(groups, selections, problems) }),
+            iconNode("chevronRight"),
+          ]),
+          validation,
+        ])
+        : validation;
       // The paragraph is rebuilt every render, so it can never be the live
       // region that fires: a node has to be in the document before its text
       // changes. Announcing the message itself is the only way a screen reader
@@ -1154,20 +1421,31 @@ export function createLibraryScreen({
       });
       cancel.addEventListener("click", () => {
         selection.clear();
-        render({ focusKey: "library-search" });
+        render({ focusKey: landingKey() });
       });
 
       replace(sendBar,
         heading,
         element("ol", { className: "library-send-groups" }, groupNodes),
-        validation,
-        element("div", { className: "library-send-actions" }, [cancel, send]),
+        element("div", { className: "library-send-foot" }, [
+          problemsNode,
+          element("div", { className: "library-send-actions" }, [cancel, send]),
+        ]),
       );
     }
 
     async function submitSend(groups) {
       if (sending) return;
-      if (!operationKey) operationKey = newOperationKey();
+      // The key outlives a reload, or a reload could turn the retry of a send
+      // the server already accepted into a second operation it cannot catch.
+      // Choosing the target again clears operationKey, so the stored one is
+      // matched against what this send intends, not just taken.
+      const intent = operationIntent(groups, selections);
+      if (!operationKey) {
+        const kept = storedJson(OPERATION_STORAGE_KEY);
+        operationKey = kept?.intent === intent ? kept.key : newOperationKey();
+      }
+      storeValue(OPERATION_STORAGE_KEY, { key: operationKey, intent });
       const payload = buildPushBatchPayload(groups, selections, operationKey);
       const replacing = selections.filter((choice) => choice.replaceExisting);
       const attempt = createSendAttempt({
@@ -1210,6 +1488,7 @@ export function createLibraryScreen({
           };
           selection.clear();
           operationKey = "";
+          storeValue(OPERATION_STORAGE_KEY, null);
           const sent = groups.reduce((sum, group) => sum + group.entries.length, 0);
           notify(`${sent} ${sent === 1 ? "chapter is" : "chapters are"} queued to send.`, { kind: "success" });
           announce("Creative Tonie send queued.");
@@ -1232,7 +1511,10 @@ export function createLibraryScreen({
       stale.hidden = !failed;
       if (failed) showStale("Library information could not refresh. Showing the last available local collection index.");
       else replace(stale);
-      if (!failed) collections = snapshot.collections || [];
+      if (!failed) {
+        collections = snapshot.collections || [];
+        if (collections.length) restoreSelection();
+      }
       render({ passive: true });
     }
 
@@ -1268,14 +1550,40 @@ export function createLibraryScreen({
       }
     });
 
-    root.append(header, toolbar, stale, summary, list, sendBar);
+    root.append(header, toolbar, stale, summary, list, dock, sendBar);
     replace(workspace, root);
+    if (collections.length) restoreSelection();
     render({ passive: true });
     const unsubscribe = refresh.subscribe(onRefresh);
+    document.addEventListener("keydown", onKeydown);
+    phoneQuery?.addEventListener?.("change", onViewportChange);
+
+    // The position is read as it changes, not when leaving: on back and forward
+    // the browser may already be moving the page by the time cleanup runs.
+    let scrollY = globalThis.window?.scrollY || 0;
+    const onScroll = () => { scrollY = globalThis.window.scrollY; };
+    globalThis.window?.addEventListener?.("scroll", onScroll, { passive: true });
+    // Back, forward and Back to Library are a return to where the operator was;
+    // the Library tab from anywhere else restores nothing. The route is attached
+    // only after this function returns, so the page has no height to scroll
+    // until the router says it is in place.
+    const savedScroll = popped || from === "collection" ? Number(storedJson(SCROLL_STORAGE_KEY)) : 0;
+    const landScroll = () => {
+      document.removeEventListener("toniefi:routechange", landScroll);
+      if (active && savedScroll > 0) globalThis.window?.scrollTo?.(0, savedScroll);
+    };
+    if (savedScroll > 0) document.addEventListener("toniefi:routechange", landScroll);
+
     refresh.request();
     return () => {
       active = false;
       unsubscribe();
+      document.removeEventListener("keydown", onKeydown);
+      document.removeEventListener("toniefi:routechange", landScroll);
+      phoneQuery?.removeEventListener?.("change", onViewportChange);
+      globalThis.window?.removeEventListener?.("scroll", onScroll);
+      storeValue(SCROLL_STORAGE_KEY, Math.round(scrollY));
+      syncSheet({ leaving: true });
     };
   };
 }

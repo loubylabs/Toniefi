@@ -136,6 +136,19 @@ export function selectionProblems(groups, selections, limitSeconds, picked = [])
   return problems;
 }
 
+// One line for a phone's sheet footer, where the whole list would push Send off
+// the screen. It only ever counts what selectionProblems returned; the list
+// itself stays one tap away, so no reason is hidden.
+export function problemSummary(groups, selections, problems) {
+  if (problems.length <= 1) return problems[0] || "";
+  const unchosen = groups.filter((_, index) => !selections[index]?.tonie).length;
+  const others = problems.length - unchosen;
+  const otherText = `${others} other ${others === 1 ? "problem" : "problems"}`;
+  if (!unchosen) return `${others} problems to fix before sending`;
+  const need = `${unchosen} of ${groups.length} ${groups.length === 1 ? "group" : "groups"} ${unchosen === 1 ? "needs" : "need"} a Tonie`;
+  return others ? `${need} · ${otherText}` : need;
+}
+
 export function buildPushBatchPayload(groups, selections, operationKey) {
   return {
     operation_key: operationKey,
@@ -213,6 +226,17 @@ export function membershipSignature(groups) {
   return JSON.stringify(groups.map((group) => (
     group.entries.map((entry) => [entry.slug, entry.manifestFingerprint, entry.name])
   )));
+}
+
+export function operationIntent(groups, selections) {
+  // What the operator decided: this membership, on these Tonies, with these
+  // effects. Not remote_chapters: that is what the world did, and a first send
+  // that landed moves it. Keeping the key then is what earns the server's 409
+  // in place of a second append.
+  return JSON.stringify([
+    membershipSignature(groups),
+    selections.map(({ tonie, replaceExisting }) => [tonie?.householdId, tonie?.id, replaceExisting]),
+  ]);
 }
 
 export function rebindTargets(selections, tonies) {

@@ -122,7 +122,8 @@ the collection slugs, their manifest fingerprints, and the exact files in that g
 The operation key tracks the operator's intent, not the remote snapshot. It clears on a
 membership, target or effect change, and on success. **A target refresh never clears it**, whatever
 the refresh returned and whether it failed, because clearing it on refresh means a send that landed
-but lost its response gets appended a second time.
+but lost its response gets appended a second time. It is kept in the tab's session storage with the
+intent it was made for, so a reload that reaches the same membership, target and effect reuses it.
 
 Each chapter the collection routes return carries `sent: {tonie, at}`, its latest **finished** push,
 read from the push jobs (which are never pruned), so no second record can drift. It is history, not

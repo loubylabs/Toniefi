@@ -236,10 +236,23 @@ class MiniDocument {
     this.body = new MiniElement("body", this);
     this.activeElement = null;
     this.hidden = false;
+    this.listeners = new Map();
   }
 
   createElement(tagName) {
     return new MiniElement(tagName, this);
+  }
+
+  addEventListener(name, listener) {
+    this.listeners.set(name, [...(this.listeners.get(name) || []), listener]);
+  }
+
+  removeEventListener(name, listener) {
+    this.listeners.set(name, (this.listeners.get(name) || []).filter((item) => item !== listener));
+  }
+
+  dispatchEvent(event) {
+    (this.listeners.get(event.type) || []).forEach((listener) => listener(event));
   }
 
   getElementById(id) {
@@ -257,6 +270,10 @@ export function buttonWithText(root, text) {
 }
 
 export function installDom() {
+  // Newer Node ships a sessionStorage global. Every test is its own tab, so one
+  // test's Library ticks must not be restored into the next. A test that wants
+  // a session across mounts installs its own store, which has no clear().
+  globalThis.sessionStorage?.clear?.();
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
   const document = new MiniDocument();

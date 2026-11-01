@@ -171,7 +171,7 @@ svg {
   display: flex;
   min-width: 0;
   height: 100vh;
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-5) max(var(--space-4), env(safe-area-inset-left));
   flex-direction: column;
   color: var(--bookcloth-ink);
   background-color: var(--bookcloth-deep);
@@ -344,6 +344,7 @@ svg {
   min-width: 0;
   width: 100%;
   padding: clamp(1.5rem, 3vw, 3.5rem);
+  padding-right: max(clamp(1.5rem, 3vw, 3.5rem), env(safe-area-inset-right));
   background:
     linear-gradient(rgba(205, 211, 200, 0.22) 1px, transparent 1px) 0 0 / 100% 3rem,
     var(--paper);
@@ -721,6 +722,10 @@ textarea::placeholder {
 .audio-stop svg {
   width: 1rem;
   height: 1rem;
+}
+
+.audio-dismiss-mark {
+  display: none;
 }
 
 .screen-heading {
@@ -1185,6 +1190,19 @@ img.collection-detail-cover {
 
 .chapter-remove {
   color: var(--failure);
+}
+
+/* Phone-only parts of a chapter row. On a desktop the title is the field, the
+   actions sit in the row, and none of these exist. */
+.chapter-title-text,
+.chapter-action-label,
+.chapter-row-controls .chapter-more,
+.chapter-row-controls .chapter-rename {
+  display: none;
+}
+
+.chapter-more-actions {
+  display: contents;
 }
 
 .capacity-plan,
@@ -1793,6 +1811,13 @@ img.collection-detail-cover {
   background: rgba(255, 255, 255, 0.68);
 }
 
+/* The one-line fold and the work strip are phone furniture; a desktop shows the
+   summary open and has the cart beside the intake. */
+.forge-fold-summary,
+.work-strip {
+  display: none;
+}
+
 .desk-section-heading {
   min-height: 3.75rem;
   padding: var(--space-3) var(--space-4);
@@ -2328,6 +2353,19 @@ img.collection-detail-cover {
   gap: var(--space-2);
 }
 
+/* Where the cart is a grid of rows (below 1200px) the link and the row buttons
+   stay on one line and wrap only when they must; at 760px beside the sidebar
+   they spilled 12px past the edge. The mark-only Dismiss keeps its square. */
+@media (max-width: 1199.98px) {
+  .work-cart-actions {
+    flex-wrap: wrap;
+  }
+
+  .work-cart-row-buttons {
+    margin-left: auto;
+  }
+}
+
 .work-cart-dismiss {
   width: 2.5rem;
   min-height: 2.5rem;
@@ -2624,6 +2662,16 @@ img.collection-detail-cover {
   height: 1.1rem;
 }
 
+/* Phone-only parts of a chapter row and the bar of ticked chapters; a desktop
+   edits the title in place and removes from the toolbar. */
+.tonie-chapter-title-text,
+.tonie-chapter-rename,
+.tonie-chapter-more,
+.tonie-action-label,
+.tonie-selection-bar {
+  display: none;
+}
+
 .tonie-empty,
 .tonie-list-empty {
   min-height: 16rem;
@@ -2676,6 +2724,29 @@ img.collection-detail-cover {
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 0.3rem 0.8rem rgba(11, 42, 32, 0.07), 0 0.1rem 0.2rem rgba(11, 42, 32, 0.05);
+}
+
+/* Beside the sidebar, below about 1100px, the three fixed columns leave the
+   title none (0px at 760, 9px past the edge). The log line wraps instead: the
+   title takes a line, the stamp and time follow, the action stays right. */
+@media (min-width: 760px) and (max-width: 1099.98px) {
+  .activity-row {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+
+  .activity-title {
+    flex: 1 0 100%;
+  }
+
+  .activity-action {
+    margin-left: auto;
+  }
+
+  .activity-messages {
+    flex: 1 0 100%;
+  }
 }
 
 .activity-title {
@@ -2768,6 +2839,10 @@ img.collection-detail-cover {
   border-radius: calc(var(--radius) / 2);
   background: #fff0ee;
   color: var(--failure);
+}
+
+.activity-error-toggle {
+  display: none;
 }
 
 .activity-guidance {
@@ -3137,11 +3212,33 @@ img.collection-detail-cover {
 
   #workspace {
     min-height: 100vh;
-    padding: var(--space-5) var(--space-4) calc(6.25rem + env(safe-area-inset-bottom));
+    padding:
+      calc(var(--space-3) + env(safe-area-inset-top))
+      max(var(--space-4), env(safe-area-inset-right))
+      calc(6.25rem + env(safe-area-inset-bottom))
+      max(var(--space-4), env(safe-area-inset-left));
   }
 
   body.audio-player-visible #workspace {
-    padding-bottom: calc(18rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(13rem + env(safe-area-inset-bottom));
+  }
+
+  /* A focused control scrolls to clear whatever floats at the bottom: the nav,
+     the player above it, and the dock, work strip or remove bar above those. */
+  html {
+    scroll-padding-bottom: calc(5.25rem + env(safe-area-inset-bottom));
+  }
+
+  html:has(.library-send-dock:not([hidden]), .work-strip:not([hidden]), .tonie-selection-bar:not([hidden])) {
+    scroll-padding-bottom: calc(10rem + env(safe-area-inset-bottom));
+  }
+
+  html:has(body.audio-player-visible) {
+    scroll-padding-bottom: calc(12.25rem + env(safe-area-inset-bottom));
+  }
+
+  html:has(body.audio-player-visible):has(.library-send-dock:not([hidden]), .work-strip:not([hidden]), .tonie-selection-bar:not([hidden])) {
+    scroll-padding-bottom: calc(17rem + env(safe-area-inset-bottom));
   }
 
   .route-pending {
@@ -3237,9 +3334,9 @@ img.collection-detail-cover {
   }
 
   .persistent-utilities {
-    right: var(--space-3);
+    right: max(var(--space-3), env(safe-area-inset-right));
     bottom: calc(5.25rem + env(safe-area-inset-bottom));
-    width: calc(100vw - 1.5rem);
+    width: calc(100vw - max(var(--space-3), env(safe-area-inset-right)) - max(var(--space-3), env(safe-area-inset-left)));
   }
 
   .button,
@@ -3261,11 +3358,12 @@ img.collection-detail-cover {
   }
 
   .desk-intake > h1 {
-    font-size: clamp(2.1rem, 11vw, 3.25rem);
+    font-size: 2rem;
   }
 
   .desk-lead {
-    margin-bottom: var(--space-5);
+    margin: var(--space-2) 0 var(--space-4);
+    font-size: var(--type-sm);
   }
 
   .source-list-heading {
@@ -3290,24 +3388,60 @@ img.collection-detail-cover {
     width: 100%;
   }
 
+  /* A row is the field and its three controls on one line, about 60px, so a
+     tray of five is not 600px of scrolling in a 9rem window. The link icon
+     gives its column to the URL, which is the part that needs the room. */
   .source-row {
-    padding: var(--space-3);
-    grid-template-columns: 1.5rem minmax(0, 1fr);
-    align-items: start;
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .source-row-icon {
+    display: none;
   }
 
   .source-row-list {
-    max-block-size: 9rem;
+    max-block-size: 16rem;
+  }
+
+  .source-row-field input {
+    min-height: 2.75rem;
+    font-size: 1rem;
   }
 
   .source-row-controls {
-    grid-column: 2;
     justify-content: flex-end;
   }
 
   .source-row-controls .icon-button {
-    width: 45px;
-    height: 45px;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  /* A tick is the whole line to tap, not the 20px box in it. */
+  .forge-option-toggle {
+    min-height: 2.75rem;
+  }
+
+  .forge-number-control {
+    min-height: 2.75rem;
+  }
+
+  .desk-clear-button,
+  .playlist-pick-button {
+    min-height: 2.75rem;
+  }
+
+  .playlist-picker-row label {
+    flex: 1;
+    min-height: 2.75rem;
+  }
+
+  .secondary-inline-form input,
+  .local-upload-form input {
+    min-height: 2.75rem;
+    font-size: 1rem;
   }
 
   .forge-definition-list {
@@ -3363,27 +3497,173 @@ img.collection-detail-cover {
     padding-top: var(--space-5);
   }
 
+  /* A record is a 56px jacket beside its body, about 110px, so a screen holds
+     several. The jacket is a square that is never stretched into a strip. */
   .work-cart-row {
-    grid-template-columns: 5.5rem minmax(0, 1fr);
+    grid-template-columns: 3.5rem minmax(0, 1fr);
+    column-gap: var(--space-3);
+    padding: var(--space-2) 0 var(--space-2) var(--space-3);
   }
 
   .work-cart-cover {
-    min-height: 11rem;
+    width: 3.5rem;
+    height: 3.5rem;
+    min-height: 0;
+    border: var(--rule-thin);
+    border-radius: var(--radius);
+    font-size: 1.25rem;
   }
 
+  .work-cart-row-body {
+    padding: 0 var(--space-3) 0 0;
+  }
+
+  /* One line of source, wrapped inside the column instead of ellipsized, and
+     never wider than it. */
+  .work-cart-source {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* The summary folds to one line; the numbers wait inside. */
+  .forge-fold-summary {
+    display: flex;
+    min-height: 3.5rem;
+    padding: var(--space-2) var(--space-4);
+    align-items: center;
+    gap: var(--space-2);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .forge-fold-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .forge-fold-summary strong {
+    font-size: var(--type-base);
+  }
+
+  .forge-fold-copy {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+    line-height: 1.25;
+  }
+
+  .forge-fold-copy small {
+    color: var(--ink-muted);
+    font-size: var(--type-xs);
+  }
+
+  .forge-fold-chevron svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .forge-fold[open] .forge-fold-chevron svg {
+    transform: rotate(90deg);
+  }
+
+  .forge-fold > .desk-section-heading {
+    display: none;
+  }
+
+  /* Sits above the fixed bottom bar like the Library dock, and follows the
+     operator down the intake until the cart itself is in view. */
+  .work-strip:not([hidden]) {
+    position: sticky;
+    z-index: 10;
+    bottom: calc(4.5rem + env(safe-area-inset-bottom));
+    display: flex;
+    width: 100%;
+    min-height: 2.75rem;
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    align-items: center;
+    gap: var(--space-2);
+    border: 1px solid var(--bookcloth-deep);
+    border-radius: var(--radius);
+    background: var(--bookcloth);
+    color: var(--paper-raised);
+    font-weight: 760;
+    box-shadow: 0 -0.5rem 1.5rem rgba(11, 42, 32, 0.12), 0 -0.125rem 0.4rem rgba(11, 42, 32, 0.08);
+    animation: phone-dock-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  body.audio-player-visible .work-strip:not([hidden]) {
+    bottom: calc(12.25rem + env(safe-area-inset-bottom));
+  }
+
+  .work-strip-label {
+    min-width: 0;
+    flex: 1;
+    text-align: left;
+  }
+
+  .work-strip svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: var(--action);
+  }
+
+  /* Title and stamp share one line; a long title takes two and the stamp stays
+     whole beside it. */
   .work-cart-row-header {
-    align-items: flex-start;
-    flex-direction: column;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
   }
 
-  /* The link and the row buttons stay on one line and wrap only when they must;
-     the mark-only Dismiss keeps its square, it never stretches into a bar. */
-  .work-cart-actions {
-    flex-wrap: wrap;
+  .work-cart-row-header h3 {
+    display: -webkit-box;
+    flex: 1 1 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 
-  .work-cart-row-buttons {
-    margin-left: auto;
+  /* The body is two columns so a running record's View details sits beside its
+     progress instead of costing a row; a record with Retry or Dismiss keeps
+     its own full-width line for them. */
+  .work-cart-row-body {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-auto-flow: row dense;
+    column-gap: var(--space-2);
+  }
+
+  .work-cart-row-body > * {
+    grid-column: 1 / -1;
+  }
+
+  .work-cart-row-body > .work-cart-progress {
+    grid-column: 1;
+  }
+
+  .work-cart-row-body > .work-cart-actions {
+    grid-column: 2;
+    margin-top: 0;
+  }
+
+  .work-cart-row-body > .work-cart-actions:has(.work-cart-row-buttons) {
+    grid-column: 1 / -1;
+  }
+
+  .work-cart-source,
+  .work-cart-facts,
+  .work-cart-progress {
+    margin-top: var(--space-1);
+  }
+
+  .work-cart-progress-track {
+    margin-top: 0;
   }
 
   .work-cart-link,
@@ -3406,13 +3686,43 @@ img.collection-detail-cover {
     width: 100%;
   }
 
-  .library-row-body {
-    padding: var(--space-3);
+  /* A screen opens on its work: the h1 with its one action as a 44px icon on
+     the same line, no lede. The action's text stays in the DOM, visually
+     hidden, so it keeps its accessible name. */
+  :is(.library-screen, .activity-screen, .tonies-screen, .settings-screen) > .screen-heading {
+    margin-bottom: var(--space-3);
+    align-items: center;
+    flex-direction: row;
+    gap: var(--space-3);
   }
 
-  .library-row-heading {
-    flex-direction: column;
+  :is(.library-screen, .activity-screen, .tonies-screen, .settings-screen) > .screen-heading h1 {
+    font-size: 2rem;
   }
+
+  :is(.library-screen, .activity-screen, .tonies-screen, .settings-screen) > .screen-heading p {
+    display: none;
+  }
+
+  :is(.library-screen, .activity-screen, .tonies-screen) > .screen-heading > .button {
+    width: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .heading-action-label,
+  .library-search-field label {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
 
   .collection-facts {
     display: grid;
@@ -3421,21 +3731,6 @@ img.collection-detail-cover {
 
   .collection-facts li + li::before {
     content: none;
-  }
-
-  .library-row .collection-facts {
-    display: flex;
-    gap: var(--space-1) var(--space-3);
-  }
-
-  .collection-detail-heading {
-    padding-bottom: var(--space-5);
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4);
-  }
-
-  .collection-detail-cover {
-    width: min(11rem, 48vw);
   }
 
   .collection-detail-facts,
@@ -3451,35 +3746,276 @@ img.collection-detail-cover {
     margin-top: var(--space-6);
   }
 
+  /* A chapter is one short row: number, the title as two clamped lines with
+     its facts under it, Play, More. Rename, Move and Remove wait behind More;
+     Rename is what opens the title field. */
   .collection-chapter-row {
-    grid-template-columns: 1.25rem 1.5rem minmax(0, 1fr);
-    align-items: start;
+    padding: var(--space-1);
+    grid-template-columns: 1.25rem minmax(0, 1fr) 44px 44px;
+    align-items: center;
+    column-gap: var(--space-1);
+  }
+
+  .chapter-grip {
+    display: none;
+  }
+
+  .chapter-index {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .chapter-title-field {
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
+    grid-column: 2;
+    grid-row: 1;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-2);
   }
 
-  /* Stacked under the field, the duration aligns with the title text inside
-     it, as the marks already do. */
-  .chapter-title-field > span {
-    padding-inline: calc(var(--space-3) + 1px);
+  .chapter-title-text {
+    display: -webkit-box;
+    flex: 1 1 100%;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: var(--type-sm);
+    font-weight: 680;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .chapter-title-field input {
+    display: none;
+  }
+
+  .collection-chapter-row[data-renaming] .chapter-title-text {
+    display: none;
+  }
+
+  .collection-chapter-row[data-renaming] .chapter-title-field input {
+    display: block;
+    flex: 1 1 100%;
+    min-height: 44px;
+    margin-block: var(--space-1);
+    border-color: var(--rule);
+    background: var(--paper-raised);
+    font-size: 1rem;
+  }
+
+  .collection-chapter-row .chapter-title-field .chapter-marks {
+    padding-inline: 0;
+    grid-column: auto;
+    flex: 0 1 auto;
+    min-width: 0;
   }
 
   .chapter-row-controls {
-    grid-column: 3;
-    justify-content: flex-end;
-    flex-wrap: wrap;
+    display: contents;
   }
 
-  .chapter-row-controls .icon-button,
   .chapter-play {
+    width: 44px;
     min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .chapter-play span:not([aria-hidden]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .chapter-row-controls .chapter-more {
+    display: inline-grid;
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .chapter-more-actions {
+    display: none;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: var(--space-1) 0 var(--space-2);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+  }
+
+  .collection-chapter-row[data-more-open] .chapter-more-actions {
+    display: grid;
+  }
+
+  .chapter-more-actions > .button,
+  .chapter-more-actions > .icon-button {
+    display: inline-flex;
+    width: 100%;
+    min-height: 44px;
+    height: auto;
+    padding-inline: var(--space-2);
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-2);
+    border-color: var(--rule);
+    font-size: var(--type-sm);
+    font-weight: 700;
+  }
+
+  .chapter-action-label {
+    display: inline;
+  }
+
+  .collection-chapter-row .chapter-title-field .chapter-sent {
+    min-height: 1.25rem;
+    max-width: 100%;
+    padding: 0 var(--space-1);
+    font-size: 0.6875rem;
+    white-space: normal;
+    line-height: 1.2;
+  }
+
+  /* The jacket sits beside the title; the line of facts and the details under
+     them use the full width. */
+  .collection-detail-heading {
+    grid-template-columns: 72px minmax(0, 1fr);
+    padding-bottom: var(--space-3);
+    gap: var(--space-1) var(--space-3);
+  }
+
+  .collection-detail-heading > div {
+    display: contents;
+  }
+
+  .collection-detail-cover {
+    width: 72px;
+    grid-column: 1;
+    grid-row: 1 / span 3;
+  }
+
+  .collection-detail-heading > div > * {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .collection-detail-heading h1 {
+    margin: 0;
+    justify-self: stretch;
+    font-size: 1.5rem;
+  }
+
+  .collection-detail-heading h1 .collection-title-input {
+    font-size: 1.5rem;
+  }
+
+  .collection-detail-line {
+    margin: 0;
+    color: var(--ink-muted);
+    font-size: var(--type-sm);
+    font-weight: 720;
+  }
+
+  .collection-detail-more {
+    grid-column: 1 / -1 !important;
+    justify-self: stretch !important;
+  }
+
+  .collection-detail-more > summary {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    cursor: pointer;
+    font-size: var(--type-sm);
+    font-weight: 740;
+  }
+
+  .collection-detail-more .collection-detail-facts {
+    margin-top: var(--space-1);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collection-source-link {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .collection-source-copy {
     min-height: 44px;
   }
 
-  .chapter-play {
-    flex: 1 1 7rem;
+  /* Trim and Ads are closed lines between the header and the chapters, not
+     panels under 200 of them. The capacity plan stays last. */
+  .collection-detail-grid {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .collection-detail-plan {
+    display: contents;
+  }
+
+  .assignment-details {
+    order: -1;
+    padding-block: 0;
+  }
+
+  .collection-detail-plan > .capacity-plan {
+    order: 1;
+    margin-top: var(--space-3);
+  }
+
+  .assignment-details > summary {
+    display: flex;
+    min-height: 52px;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .assignment-details > summary h2 {
+    font-size: var(--type-base);
+  }
+
+  .assignment-details[open] > summary {
+    margin-bottom: var(--space-1);
+  }
+
+  .assignment-details[open] {
+    padding-bottom: var(--space-3);
+  }
+
+  .forge-number-control input {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+
+  /* Each Tonie's group is a closed line; its chapters wait inside. */
+  .capacity-group:has(> .capacity-group-details) {
+    padding-block: 0;
+  }
+
+  .capacity-group-details summary {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    cursor: pointer;
+    font-size: var(--type-sm);
+    font-weight: 740;
+  }
+
+  .capacity-group-details[open] summary {
+    margin-bottom: var(--space-1);
+  }
+
+  .capacity-group-details[open] .capacity-track-list {
+    margin-bottom: var(--space-2);
   }
 
   .capacity-plan,
@@ -3493,29 +4029,6 @@ img.collection-detail-cover {
 
   .library-search-field > span {
     display: none;
-  }
-
-  .library-filter {
-    width: 100%;
-  }
-
-  .library-filter label {
-    padding-inline: var(--space-2);
-    flex: 1 1 auto;
-    justify-content: center;
-  }
-
-  .library-row-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  /* The row body beside the jacket is narrow; tighter insets keep
-     "Choose chapters" on one line at phone widths. */
-  .library-row-actions .button {
-    width: 100%;
-    padding-inline: var(--space-2);
-    white-space: normal;
   }
 
   .tonie-summary {
@@ -3540,47 +4053,222 @@ img.collection-detail-cover {
     grid-row: 1;
   }
 
+  /* The detail is one column whose order is set here, so Clear all can sit
+     after the chapters while the toolbar's markup stays as it is. */
   .tonie-detail {
+    display: flex;
     padding: var(--space-3);
+    flex-direction: column;
   }
 
-  .tonie-clear {
-    margin-left: 0;
-    width: 100%;
-  }
-
+  .tonie-detail-heading,
   .tonie-detail-bulk {
-    width: 100%;
+    display: contents;
   }
 
-  /* A label never breaks inside the button; when Select all and Remove N
-     selected cannot share the line, the button takes its own. */
-  .tonie-detail-bulk .button {
-    flex: 1 1 auto;
-    white-space: nowrap;
+  .tonie-detail-heading p,
+  .tonie-remove-selected {
+    display: none;
   }
 
-  .tonie-chapter-row {
-    grid-template-columns: 44px 1.25rem 1.5rem minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .tonie-chapter-tick,
   .tonie-select-all-field {
+    order: 1;
     min-height: 44px;
+    margin-bottom: var(--space-1);
+  }
+
+  .tonie-chapter-list {
+    order: 2;
+  }
+
+  /* After the list, ruled off and a gap away, so a thumb scrolling the
+     chapters does not land on it. */
+  .tonie-clear {
+    order: 3;
+    width: 100%;
+    margin: var(--space-8) 0 0;
+    padding-top: 0;
+  }
+
+  /* One folded line each; the open state is kept in JS. */
+  .tonie-fold {
+    margin-bottom: var(--space-2);
+    border: var(--rule-thin);
+    border-radius: calc(var(--radius) / 2);
+    background: var(--paper-raised);
+  }
+
+  .tonie-fold.tonie-history {
+    display: block;
+  }
+
+  .tonie-fold > summary,
+  .tonie-fold.tonie-history > summary {
+    display: flex;
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    align-items: center;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .tonie-fold[open] > summary {
+    border-bottom: var(--rule-thin);
+  }
+
+  .tonie-fold > :not(summary) {
+    margin: var(--space-3);
+  }
+
+  .tonie-fold .tonie-rename-field {
+    margin-bottom: 0;
+  }
+
+  .tonie-name-input,
+  .tonie-chapter-title input {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+
+  .tonie-history.tonie-fold {
+    margin-bottom: var(--space-3);
+  }
+
+  .tonie-history .tonie-history-note,
+  .tonie-history .tonie-history-list {
+    margin: var(--space-3);
+  }
+
+  /* About 80px: a 44px tick, the number, a title on two lines with its
+     duration, and More. The grip is a mouse affordance and is gone. */
+  .tonie-chapter-row {
+    min-height: 5rem;
+    padding: var(--space-1) 0 var(--space-1) 0;
+    grid-template-columns: 44px 1.5rem minmax(0, 1fr) 44px;
+    align-items: center;
+    gap: 0 var(--space-2);
+  }
+
+  .tonie-grip {
+    display: none;
   }
 
   .tonie-chapter-tick {
+    grid-column: 1;
+    grid-row: 1;
     min-width: 44px;
+    min-height: 44px;
+  }
+
+  .tonie-chapter-number {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .tonie-chapter-title {
+    grid-column: 3;
+    grid-row: 1;
+    gap: 0;
+  }
+
+  .tonie-chapter-title-text {
+    display: -webkit-box;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-weight: 700;
+    line-height: 1.3;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .tonie-chapter-row:not([data-renaming]) .tonie-chapter-title input {
+    display: none;
+  }
+
+  .tonie-chapter-row[data-renaming] .tonie-chapter-title-text {
+    display: none;
+  }
+
+  .tonie-chapter-row .tonie-chapter-more {
+    display: inline-grid;
+    grid-column: 4;
+    grid-row: 1;
   }
 
   .tonie-chapter-actions {
-    grid-column: 4;
-    justify-content: flex-start;
+    display: none;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: var(--space-1) var(--space-2) var(--space-2);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
   }
 
-  .tonie-chapter-title input {
+  .tonie-chapter-row[data-more-open] .tonie-chapter-actions {
+    display: grid;
+  }
+
+  .tonie-chapter-actions > .button,
+  .tonie-chapter-actions > .tonie-move {
+    display: inline-flex;
+    width: 100%;
     min-height: 44px;
+    height: auto;
+    padding-inline: var(--space-2);
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--type-sm);
+    font-weight: 700;
+  }
+
+  .tonie-action-label {
+    display: inline;
+  }
+
+  /* Sits above the fixed bottom bar like the Library dock, and follows the
+     operator down the chapters. */
+  .tonie-selection-bar:not([hidden]) {
+    position: sticky;
+    z-index: 10;
+    bottom: calc(4.5rem + env(safe-area-inset-bottom));
+    display: flex;
+    min-height: 4rem;
+    margin-top: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    align-items: center;
+    gap: var(--space-2);
+    border: var(--rule-thin);
+    border-radius: var(--radius);
+    background: var(--paper-raised);
+    box-shadow: 0 -0.5rem 1.5rem rgba(11, 42, 32, 0.12), 0 -0.125rem 0.4rem rgba(11, 42, 32, 0.08);
+    animation: phone-dock-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  body.audio-player-visible .tonie-selection-bar:not([hidden]) {
+    bottom: calc(12.25rem + env(safe-area-inset-bottom));
+  }
+
+  .tonie-selection-bar .button {
+    flex: 1 1 0;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  /* A raw yt-dlp error can run past a thousand pixels. Four lines show; the
+     toggle opens the rest, and its state lives in activity.js. */
+  .activity-error[data-open="false"] {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+  }
+
+  .activity-error-toggle {
+    display: inline-flex;
+    justify-self: start;
   }
 
   .activity-row {
@@ -3629,6 +4317,10 @@ img.collection-detail-cover {
     grid-column: auto;
   }
 
+  .account-facts[data-configured="false"] {
+    display: none;
+  }
+
   .settings-form-actions {
     align-items: stretch;
     flex-direction: column;
@@ -3638,12 +4330,50 @@ img.collection-detail-cover {
     width: 100%;
   }
 
-  .audio-player-heading {
-    align-items: flex-start;
+  /* The player is one title line with a 44px mark-only Dismiss, over the
+     controls: under 100px, so it keeps clear of the content it floats above. */
+  .audio-player-host {
+    padding: var(--space-1) var(--space-3) var(--space-2);
   }
 
-  .audio-player-heading strong {
-    max-width: 56vw;
+  .audio-player-heading {
+    margin-bottom: 0;
+    align-items: center;
+  }
+
+  .audio-player-heading > div {
+    min-width: 0;
+  }
+
+  .audio-player-caption {
+    display: none;
+  }
+
+  .audio-dismiss {
+    width: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .audio-dismiss-mark {
+    display: grid;
+  }
+
+  .audio-dismiss-label {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
+  .audio-player-host audio {
+    height: 40px;
   }
 }
 
@@ -3916,24 +4646,6 @@ img.collection-detail-cover {
 }
 
 @media (max-width: 759.98px) {
-  .library-row {
-    grid-template-columns: auto 5rem minmax(0, 1fr);
-  }
-
-  .library-select-cell {
-    padding: var(--space-3) var(--space-1) var(--space-3) var(--space-3);
-  }
-
-  .library-send-bar {
-    padding: var(--space-4);
-    /* Sits above the fixed .mobile-navigation (min-height: calc(4.5rem +
-       env(safe-area-inset-bottom)), z-index: 70) rather than under it, so a
-       tap on Send lands on the send button, not the nav painted over it.
-       The height cap itself lives in the base rule: it is needed at every
-       width, and stating it twice is how the desktop bar went uncapped. */
-    bottom: calc(4.5rem + env(safe-area-inset-bottom));
-  }
-
   .library-send-membership li {
     flex-direction: column;
     gap: 0;
@@ -4291,4 +5003,640 @@ img.collection-detail-cover {
   padding: 0 0 var(--space-3) var(--space-4);
   color: var(--ink-muted);
   list-style: decimal;
+}
+
+
+/* ---------------------------------------------------- Library on a phone */
+
+.library-send-dock,
+.library-send-close,
+.library-send-sheet-title,
+.library-row-more,
+.library-row-brief {
+  display: none;
+}
+
+.library-row-title-link {
+  text-decoration: none;
+}
+
+.library-row-title-link:hover {
+  text-decoration: underline;
+}
+
+/* A phone's footer groups these; a desktop bar never sees the wrapper. */
+.library-send-foot {
+  display: contents;
+}
+
+.library-send-foot > * {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 759.98px) {
+  /* Four segments never fit one row at 390 once "Ready to send" is in them, and
+     the group clips what overflows, so they sit two by two. */
+  .library-filter {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .library-toolbar {
+    margin-bottom: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .library-summary {
+    margin-bottom: var(--space-2);
+  }
+
+  .library-filter label {
+    padding-inline: var(--space-2);
+    justify-content: center;
+  }
+
+  .library-filter label + label {
+    border-left: 0;
+  }
+
+  .library-filter label:nth-of-type(even) {
+    border-left: 1px solid var(--bookcloth);
+  }
+
+  .library-filter label:nth-of-type(n + 3) {
+    border-top: 1px solid var(--bookcloth);
+  }
+
+  /* A row is one line of the list: tick, jacket, title, More. The body gives
+     up its own box so its children sit in the row's grid. */
+  .library-list {
+    gap: var(--space-2);
+  }
+
+  .library-row {
+    grid-template-columns: 2.75rem 3.5rem minmax(0, 1fr) 2.75rem;
+    align-items: start;
+  }
+
+  .library-row-body {
+    display: contents;
+  }
+
+  .library-select-cell {
+    min-width: 0;
+    padding: 0;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    align-self: stretch;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .library-cover {
+    width: 3.5rem;
+    height: 3.5rem;
+    margin-top: var(--space-2);
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    border-right: 0;
+    border-radius: calc(var(--radius) / 2);
+  }
+
+  .library-cover.collection-cover-fallback {
+    font-size: 1.125rem;
+  }
+
+  .library-row-heading {
+    padding: 0.375rem 0 0 var(--space-2);
+    grid-column: 3;
+    grid-row: 1;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* 2 lines of 1.375rem are exactly the 2.75rem hit target, so a clamped title
+     cannot show a sliver of its third line. */
+  .library-row h2 {
+    font-size: 1rem;
+    letter-spacing: -0.01em;
+    line-height: 1.375rem;
+  }
+
+  .library-row-title-link {
+    display: -webkit-box;
+    min-height: 2.75rem;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  /* Text with no link has no hit target to hold, only the clamp. */
+  .library-row h2:not(:has(a)) {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .library-row-heading .status-stamp {
+    min-height: 1.25rem;
+    padding: 0 var(--space-1);
+  }
+
+  .library-row-brief {
+    display: block;
+    margin: 0;
+    padding: 0.125rem 0 0.375rem var(--space-2);
+    grid-column: 3;
+    grid-row: 2;
+    color: var(--ink-muted);
+    font-size: var(--type-xs);
+    font-weight: 680;
+    line-height: 1.125rem;
+  }
+
+  .library-row-more {
+    display: inline-grid;
+    grid-column: 4;
+    grid-row: 1 / span 2;
+  }
+
+  /* Everything below the line spans the row, in document order. */
+  .library-row .collection-facts,
+  .library-row .library-chapter-count,
+  .library-row .library-source,
+  .library-row .inline-error,
+  .library-row-actions {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin: 0 var(--space-2) var(--space-2);
+  }
+
+  .library-row .collection-facts {
+    display: none;
+  }
+
+  /* Source and date wait behind More; the line above already says the rest. */
+  .library-row[data-more-open] .collection-facts {
+    display: flex;
+    gap: var(--space-1) var(--space-3);
+  }
+
+  .library-row .collection-facts li:not(.library-fact-origin) {
+    display: none;
+  }
+
+  /* Closed, the actions take no room at all, except that a story which is not
+     ready keeps its next safe action in view. */
+  .library-row-actions {
+    display: grid;
+    margin-block: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-2);
+  }
+
+  .library-row-actions > * {
+    margin-bottom: var(--space-2);
+  }
+
+  .library-row:not([data-more-open]) .library-row-actions > :not(.library-finish) {
+    display: none;
+  }
+
+  .library-row:not([data-more-open]) .library-finish {
+    grid-column: 1 / -1;
+  }
+
+  /* "Choose chapters" holds one line at 390. */
+  .library-row-actions .button {
+    width: 100%;
+    padding-inline: var(--space-1);
+    gap: var(--space-1);
+    white-space: normal;
+  }
+
+  .library-delete {
+    margin-left: 0;
+  }
+
+  /* The panel spans the row and the page does the scrolling: a nested
+     scroller on a screen with no gutter beside it traps the thumb. */
+  .library-chapter-panel {
+    min-width: 0;
+    margin: 0;
+    padding: var(--space-2);
+    grid-column: 1 / -1;
+  }
+
+  .library-chapter-controls .button {
+    flex: 1 1 auto;
+    padding-inline: var(--space-2);
+    white-space: normal;
+  }
+
+  .library-chapter-list {
+    max-height: none;
+    overflow: visible;
+    overscroll-behavior: auto;
+    scrollbar-gutter: auto;
+  }
+
+  .library-chapter-row + .library-chapter-row {
+    border-top: var(--rule-thin);
+  }
+
+  .library-chapter-label {
+    display: grid;
+    min-width: 0;
+    padding: var(--space-1) var(--space-1) var(--space-1) 0;
+    grid-template-columns: 1.375rem 1.75rem minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--space-2);
+  }
+
+  .library-chapter-select,
+  .library-chapter-index {
+    grid-row: 1 / span 2;
+  }
+
+  .library-chapter-index {
+    min-width: 0;
+  }
+
+  .library-chapter-text {
+    padding: 0;
+    grid-column: 3;
+  }
+
+  .library-chapter-title {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: var(--type-sm);
+    line-height: 1.25;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .library-chapter-duration {
+    grid-column: 3;
+    line-height: 1.25;
+  }
+
+  /* A long "Sent · Tonie · date" stamp wraps rather than leaving the row. */
+  .library-chapter-label .chapter-sent {
+    white-space: normal;
+  }
+
+  /* The bar is a dock plus a sheet here: closed, it never covers a row. */
+  .library-send-bar {
+    display: none;
+  }
+
+  /* Sits above the fixed .mobile-navigation (min-height: calc(4.5rem +
+     env(safe-area-inset-bottom)), z-index: 70) rather than under it. */
+  .library-send-dock:not([hidden]) {
+    position: sticky;
+    z-index: 10;
+    bottom: calc(4.5rem + env(safe-area-inset-bottom));
+    display: flex;
+    min-height: 4rem;
+    margin-top: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    border: var(--rule-thin);
+    border-radius: var(--radius);
+    background: var(--paper-raised);
+    box-shadow: 0 -0.5rem 1.5rem rgba(11, 42, 32, 0.12), 0 -0.125rem 0.4rem rgba(11, 42, 32, 0.08);
+    animation: phone-dock-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* The fixed audio player stands above the nav, so the dock clears it too. */
+  body.audio-player-visible .library-send-dock:not([hidden]) {
+    bottom: calc(12.25rem + env(safe-area-inset-bottom));
+  }
+
+  .library-send-dock-copy {
+    display: grid;
+    min-width: 0;
+    line-height: 1.25;
+  }
+
+  .library-send-dock-copy small {
+    color: var(--ink-muted);
+    font-size: var(--type-xs);
+  }
+
+  .library-send-choose {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  /* Above the nav (70), below the notifications' lane (80) and any dialog,
+     which sits in the top layer. */
+  .library-send-bar[data-sheet="open"] {
+    position: fixed;
+    z-index: 75;
+    inset: 0;
+    display: flex;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    animation: phone-sheet-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  body.library-sheet-open {
+    overflow: hidden;
+  }
+
+  /* The player would stand on Send, and a notice on the footer: the player
+     waits behind the sheet (it keeps playing), and notices drop in below the
+     sheet's header. */
+  body.library-sheet-open .audio-player-host {
+    display: none;
+  }
+
+  body.library-sheet-open .persistent-utilities {
+    top: calc(5rem + env(safe-area-inset-top));
+    bottom: auto;
+  }
+
+  .library-send-bar[data-sheet="open"] .screen-heading {
+    display: grid;
+    margin: 0;
+    padding: calc(var(--space-2) + env(safe-area-inset-top)) max(var(--space-2), env(safe-area-inset-right)) var(--space-2) max(var(--space-4), env(safe-area-inset-left));
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0 var(--space-1);
+    border-bottom: var(--rule-thin);
+  }
+
+  .library-send-sheet-title {
+    display: block;
+    grid-column: 1;
+    margin: 0;
+    color: var(--ink);
+    font-size: var(--type-lg);
+    font-weight: 790;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+  }
+
+  .library-send-bar[data-sheet="open"] h2 {
+    grid-column: 1;
+    color: var(--ink-muted);
+    font-size: var(--type-sm);
+    font-weight: 680;
+    letter-spacing: normal;
+    line-height: 1.3;
+  }
+
+  /* A receipt has no title above it, so its h2 is the title. */
+  .library-send-bar[data-sheet="open"]:has(.library-receipt) h2 {
+    min-height: 2.75rem;
+    align-content: center;
+    color: var(--ink);
+    font-size: var(--type-lg);
+    font-weight: 790;
+  }
+
+  .library-send-bar[data-sheet="open"] .library-send-refresh {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .library-send-close {
+    display: inline-grid;
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+
+  /* Icon-only for the room, with its words kept as the accessible name. */
+  .library-send-bar[data-sheet="open"] .library-send-refresh {
+    width: 2.75rem;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .library-send-refresh > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  /* The sheet has one scroller, and the footer never moves. */
+  .library-send-bar[data-sheet="open"] .library-send-groups,
+  .library-send-bar[data-sheet="open"] .library-receipt {
+    padding: var(--space-3) max(var(--space-4), env(safe-area-inset-right)) var(--space-3) max(var(--space-4), env(safe-area-inset-left));
+    align-content: start;
+    overscroll-behavior: contain;
+  }
+
+  .library-send-group + .library-send-group {
+    padding-top: var(--space-3);
+    border-top: var(--rule-thin);
+  }
+
+  .library-send-foot {
+    display: block;
+    padding: var(--space-3) max(var(--space-4), env(safe-area-inset-right)) calc(var(--space-3) + env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left));
+    border-top: var(--rule-thin);
+    background: var(--paper-raised);
+  }
+
+  .library-send-foot .library-send-actions {
+    margin-top: var(--space-2);
+  }
+
+  .library-send-foot .library-send-validation {
+    margin: 0;
+  }
+
+  .library-send-problems > summary {
+    display: flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    color: var(--warning);
+    font-size: var(--type-sm);
+    font-weight: 680;
+    cursor: pointer;
+  }
+
+  .library-send-problems > summary > span:last-child {
+    display: inline-grid;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: none;
+    transform: rotate(90deg);
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .library-send-problems[open] > summary > span:last-child {
+    transform: rotate(-90deg);
+  }
+
+  .library-send-foot .library-send-clear {
+    flex: 0 1 auto;
+  }
+
+  /* A long list scrolls inside itself, so opening it cannot move Send. */
+  .library-send-problems .library-send-validation {
+    max-height: 30svh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .library-send-targets {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .library-send-target-card {
+    min-height: 3.25rem;
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .library-send-effect {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    margin-top: var(--space-2);
+  }
+
+  .library-send-effect label {
+    display: flex;
+    min-height: 2.75rem;
+    margin: 0;
+    cursor: pointer;
+  }
+}
+
+/* HTML5 drag-and-drop never starts from a touch, so a coarse pointer gets no
+   grip and no drag copy. Move up and Move down stay on every row. */
+.drag-copy-coarse,
+.drag-copy-phone {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .chapter-grip,
+  .tonie-grip,
+  .drag-copy {
+    display: none;
+  }
+
+  .drag-copy-coarse {
+    display: inline;
+  }
+}
+
+@media (max-width: 759.98px) {
+  .drag-copy,
+  .drag-copy-coarse {
+    display: none;
+  }
+
+  .drag-copy-phone {
+    display: inline;
+  }
+
+  /* A closed line has to say it opens. One authored chevron for every phone
+     fold, turning down when open, the same mark the Forge fold and the Tonie
+     rows already use. */
+  .collection-detail-more > summary,
+  .assignment-details > summary,
+  .capacity-group-details summary,
+  .tonie-fold > summary {
+    justify-content: space-between;
+    gap: var(--space-3);
+    list-style: none;
+  }
+
+  .collection-detail-more > summary::-webkit-details-marker,
+  .assignment-details > summary::-webkit-details-marker,
+  .capacity-group-details summary::-webkit-details-marker,
+  .tonie-fold > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .collection-detail-more > summary::after,
+  .assignment-details > summary::after,
+  .capacity-group-details summary::after,
+  .tonie-fold > summary::after {
+    flex: 0 0 auto;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: currentColor;
+    content: "";
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+
+  .collection-detail-more[open] > summary::after,
+  .assignment-details[open] > summary::after,
+  .capacity-group-details[open] summary::after,
+  .tonie-fold[open] > summary::after {
+    transform: rotate(90deg);
+  }
+
+  /* The closed Trim and Remove ads lines stay one 52px line: the shared
+     .assignment-panel padding would otherwise add 24px to each. */
+  .assignment-panel.assignment-details {
+    padding-block: 0;
+  }
+
+  .assignment-panel.assignment-details[open] {
+    padding-bottom: var(--space-3);
+  }
+
+  /* One Paper Field: chapters inside an open Tonie are ruled lines, not cards
+     inside a card. */
+  .tonie-chapter-list {
+    gap: 0;
+  }
+
+  .tonie-chapter-row {
+    border-width: 0 0 1px;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  /* More reveals what it opens, once: the script marks only the row the tap
+     just opened, so a refresh poll that rebuilds the row never replays it. */
+  .library-row[data-more-fresh] .library-row-actions,
+  .library-row[data-more-fresh] .collection-facts,
+  .collection-chapter-row[data-more-fresh] .chapter-more-actions,
+  .tonie-chapter-row[data-more-fresh] .tonie-chapter-actions {
+    animation: phone-more-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes phone-sheet-in {
+    from {
+      transform: translateY(100%);
+    }
+  }
+
+  @keyframes phone-dock-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem);
+    }
+  }
+
+  @keyframes phone-more-in {
+    from {
+      opacity: 0;
+      transform: translateY(-0.25rem);
+    }
+  }
 }

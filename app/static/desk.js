@@ -14,6 +14,12 @@ import {
 } from "./shared.js";
 
 const MAX_SOURCES = 50;
+const PHONE_QUERY = "(max-width: 759.98px)";
+
+// A desktop always shows the Forge summary; a phone shows it only once opened.
+export function forgeFoldOpen(phone, remembered) {
+  return phone ? Boolean(remembered) : true;
+}
 // A send belongs here more than anything else does: it is the only job kind
 // with no undo, and it was the one kind the cart refused to show.
 const DESK_JOB_KINDS = new Set(["prepare_url", "librivox", "upload_prepare", "forge", "push"]);
@@ -198,6 +204,18 @@ export function forgeProfileStatus(options = {}) {
   return safe
     ? { label: "Safe maximum", status: "success" }
     : { label: "Custom settings", status: "warning" };
+}
+
+// What the closed phone line says. The numbers (−16 LUFS, a dBTP ceiling) are
+// jargon on a first screen, so they wait in the opened detail; the line keeps
+// the claim in plain words, and never hides that a setting was changed.
+export function forgeFoldLine(options = {}) {
+  const selected = normalizedOptions(options);
+  const safe = forgeProfileStatus(selected).status === "success";
+  return {
+    headline: selected.normalize ? "Standard loudness" : "Loudness off",
+    detail: safe ? "Forge defaults" : "Forge defaults · custom",
+  };
 }
 
 export function moveSourceEntries(entries, id, offset) {
@@ -496,11 +514,34 @@ function createForgeSummary({ forgeDefaults, signal }) {
     element("summary", {}, [iconNode("settings"), element("span", { text: "Edit defaults" })]),
     controls,
   ]);
-  const section = element("section", { className: "forge-summary", "aria-labelledby": "forge-summary-title" }, [
+  // A phone folds the whole summary to one line, which is all that is shown
+  // until it is opened; a desktop shows it open and has no line. Whether it is
+  // open is held here, not read back from the DOM, so a re-render or a turn of
+  // the phone cannot lose it.
+  const foldHeadline = element("strong", { text: forgeFoldLine().headline });
+  const foldDetail = element("small", { text: forgeFoldLine().detail });
+  const fold = element("details", { className: "forge-fold" }, [
+    element("summary", { className: "forge-fold-summary" }, [
+      iconNode("forge", "desk-section-icon"),
+      element("span", { className: "forge-fold-copy" }, [foldHeadline, foldDetail]),
+      iconNode("chevronRight", "forge-fold-chevron"),
+    ]),
     headingRow,
     definitions,
     disclosure,
   ]);
+  const section = element("section", { className: "forge-summary", "aria-labelledby": "forge-summary-title" }, [fold]);
+  const phoneQuery = globalThis.window?.matchMedia?.(PHONE_QUERY) || null;
+  let foldOpen = false;
+  const syncFold = () => {
+    fold.open = forgeFoldOpen(Boolean(phoneQuery?.matches), foldOpen);
+  };
+  fold.addEventListener("toggle", () => {
+    if (phoneQuery?.matches) foldOpen = fold.open;
+  });
+  phoneQuery?.addEventListener?.("change", syncFold);
+  signal?.addEventListener?.("abort", () => phoneQuery?.removeEventListener?.("change", syncFold), { once: true });
+  syncFold();
   const updateDefinitions = () => {
     const options = readForgeOptions(section);
     const values = forgeDefinitionValues(options);
@@ -510,6 +551,9 @@ function createForgeSummary({ forgeDefaults, signal }) {
     const profile = forgeProfileStatus(options);
     profileBadge.textContent = profile.label;
     profileBadge.dataset.status = profile.status;
+    const line = forgeFoldLine(options);
+    foldHeadline.textContent = line.headline;
+    foldDetail.textContent = line.detail;
   };
   const persistDefaults = () => forgeDefaults.save(readForgeOptions(section));
   const loadDefaults = async () => {
@@ -702,7 +746,8 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
     element("p", { text: "Prepared stories and work in progress will stay visible here." }),
   ]);
   const count = element("span", { className: "work-cart-count", text: "0" });
-  const heading = element("h2", { id: "work-cart-title", text: "Live work cart" });
+  // Focusable by script only: the phone's work strip lands here.
+  const heading = element("h2", { id: "work-cart-title", tabindex: "-1", text: "Live work cart" });
   // One button for the whole batch, and only once there is a batch to clear.
   // Below two finished rows the per-row control is already the shorter path.
   const clearFinished = element("button", {
@@ -798,7 +843,7 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
   let priorStaleKey = "";
 
   function onRefresh(snapshot) {
-    if (signal?.aborted) return;
+    if (signal?.aborted) return [];
     const items = buildWorkCartItems(snapshot.jobs, snapshot.collections, snapshot.dismissals || {});
     const notice = deskRefreshNotice(snapshot);
     const staleAnnouncement = staleRefreshAnnouncement(priorStaleKey, notice);
@@ -834,9 +879,73 @@ export function createLiveWorkCart({ request, requestRefresh, navigate, signal =
     }
     if (announcements.length) liveStatus.textContent = announcements.join(" ");
     priorPhases = phases;
+    return items;
   }
 
   return { host, onRefresh };
+}
+
+const WORKING_PHASES = new Set(["queued", "extracting", "forging", "sending"]);
+
+// Real counts only: what is running and what failed. A ready or sent record
+// needs nothing from the operator, so it never raises the strip.
+export function workStripSummary(items) {
+  const working = items.filter((item) => WORKING_PHASES.has(item.phase)).length;
+  const failed = items.filter((item) => item.phase === "failed").length;
+  const parts = [];
+  if (working) parts.push(`${working} working`);
+  if (failed) parts.push(`${failed} failed`);
+  return { working, failed, label: parts.join(" · ") };
+}
+
+// On a phone the cart sits below the intake, out of sight while work runs.
+// The strip is the one way back to it: shown only while there is running or
+// failed work and the cart is off screen, and it lands on the cart's heading.
+export function createWorkStrip({ target, signal }) {
+  const label = element("span", { className: "work-strip-label" });
+  const button = element("button", {
+    type: "button",
+    className: "work-strip",
+    "data-focus-key": "work-strip",
+    hidden: true,
+  }, [iconNode("desk"), label, iconNode("arrowDown")]);
+  const phoneQuery = globalThis.window?.matchMedia?.(PHONE_QUERY) || null;
+  let summary = workStripSummary([]);
+  // Until the observer reports, the cart is presumed off screen.
+  let cartVisible = false;
+  const sync = () => {
+    const show = Boolean(phoneQuery?.matches) && (summary.working + summary.failed) > 0 && !cartVisible;
+    button.hidden = !show;
+    label.textContent = summary.label;
+    button.setAttribute("aria-label", `${summary.label}. Go to the work cart`);
+  };
+  const Observer = globalThis.IntersectionObserver;
+  const observer = Observer
+    ? new Observer((entries) => {
+      const latest = entries[entries.length - 1];
+      if (!latest) return;
+      cartVisible = latest.isIntersecting;
+      sync();
+    })
+    : null;
+  observer?.observe(target);
+  phoneQuery?.addEventListener?.("change", sync);
+  signal?.addEventListener?.("abort", () => {
+    observer?.disconnect();
+    phoneQuery?.removeEventListener?.("change", sync);
+  }, { once: true });
+  button.addEventListener("click", () => {
+    const reduced = Boolean(globalThis.window?.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+    target.scrollIntoView?.({ block: "start", behavior: reduced ? "auto" : "smooth" });
+    target.querySelector("#work-cart-title")?.focus?.({ preventScroll: true });
+  });
+  return {
+    host: button,
+    update(items) {
+      summary = workStripSummary(items);
+      sync();
+    },
+  };
 }
 
 function animateSubmission(rows, root, cart) {
@@ -1302,6 +1411,14 @@ export function createDeskScreen({
       paste.setCustomValidity("");
       entries.push(...added.map((value) => newSourceEntry(value)));
       paste.value = "";
+      // A thumb has just pasted, so the next step is Prepare, not editing the
+      // new row: focusing a row's URL field would raise the keyboard over the
+      // tray. A keyboard or mouse user keeps focus on the first new row.
+      if (globalThis.window?.matchMedia?.("(pointer: coarse)")?.matches) {
+        renderSources();
+        if (!prepareButton.disabled) prepareButton.focus();
+        return;
+      }
       renderSources({ focusKey: `${entries[entries.length - added.length].id}-input` });
     });
     clearSources.addEventListener("click", () => {
@@ -1370,7 +1487,10 @@ export function createDeskScreen({
     });
     intake.append(heading, lead, form, secondary.host);
     const cart = createLiveWorkCart({ request, requestRefresh: () => refresh.request(), navigate, signal });
-    root.append(intake, cart.host);
+    // After the cart in document order (the Persistent-Work Rule), and sticky
+    // above the bottom bar, so it follows the operator down the intake.
+    const strip = createWorkStrip({ target: cart.host, signal });
+    root.append(intake, cart.host, strip.host);
     replace(workspace, root);
     renderSources();
     forgeSummary.ready.then(() => {
@@ -1379,11 +1499,11 @@ export function createDeskScreen({
     });
 
     const onRefresh = (snapshot) => {
-      cart.onRefresh(snapshot);
+      strip.update(cart.onRefresh(snapshot));
       secondary.onRefresh(snapshot);
     };
     const unsubscribe = refresh.subscribe(onRefresh);
-    cart.onRefresh(refresh.snapshot);
+    strip.update(cart.onRefresh(refresh.snapshot));
     secondary.onRefresh(refresh.snapshot);
     return () => unsubscribe();
   };

@@ -309,11 +309,14 @@ export function createPersistentAudioPlayer({
 } = {}) {
   if (!host) throw new Error("The persistent audio player host is missing.");
   const label = element("strong", { id: "audioTrackLabel", text: "No chapter selected" });
+  // A phone shows the mark alone; the label stays in the DOM, visually hidden.
+  const dismissMark = element("span", { className: "audio-dismiss-mark", "aria-hidden": "true" });
+  dismissMark.innerHTML = icon("close");
   const dismiss = element("button", {
     type: "button",
     className: "button button-secondary audio-dismiss",
     "aria-label": "Dismiss chapter player",
-  }, [element("span", { text: "Dismiss" })]);
+  }, [dismissMark, element("span", { className: "audio-dismiss-label", text: "Dismiss" })]);
   const heading = element("div", { className: "audio-player-heading" }, [
     element("div", {}, [element("span", { className: "audio-player-caption", text: "Now previewing" }), label]),
     dismiss,

@@ -149,6 +149,14 @@ export function activityDetail(job) {
 }
 
 
+// About four lines of the phone column. Shorter errors show whole and get no toggle.
+const CLAMPED_ERROR_CHARS = 120;
+
+export function errorIsLong(error) {
+  return String(error || "").length > CLAMPED_ERROR_CHARS;
+}
+
+
 export function activityFacts(job) {
   const facts = [["Type", kindLabel(job.kind)], ["Job", `#${job.id}`]];
   // A finished send already stores what it delivered. Printing it is what
@@ -170,12 +178,15 @@ export function createActivityScreen({ request = api, refresh } = {}) {
     let active = true;
     let jobs = activityHistory(refresh.snapshot);
     const retrying = new Set();
+    // Jobs whose clamped error the person opened. Held here, not in the DOM:
+    // every poll rebuilds the rows.
+    const openErrors = new Set();
     const root = element("section", { className: "activity-screen", "aria-labelledby": "activity-title" });
     const refreshButton = element("button", {
       type: "button",
       className: "button button-secondary",
       "data-focus-key": "activity-refresh",
-    }, [iconNode("refresh"), element("span", { text: "Refresh history" })]);
+    }, [iconNode("refresh"), element("span", { className: "heading-action-label", text: "Refresh history" })]);
     const header = element("div", { className: "screen-heading" }, [
       element("div", {}, [
         element("h1", { id: "activity-title", text: "Activity" }),
@@ -239,7 +250,34 @@ export function createActivityScreen({ request = api, refresh } = {}) {
       const messages = element("div", { className: "activity-messages" });
       const detail = activityDetail(job);
       if (detail) messages.append(element("p", { className: "activity-progress", text: detail }));
-      if (job.error) messages.append(element("p", { className: "activity-error", role: "alert", text: job.error }));
+      if (job.error) {
+        const open = openErrors.has(job.id);
+        messages.append(element("p", {
+          className: "activity-error",
+          role: "alert",
+          id: `activity-error-${job.id}`,
+          "data-open": open ? "true" : "false",
+          text: job.error,
+        }));
+        // A phone clamps the raw error to four lines; the whole text is only
+        // ever hidden, never cut. The toggle is for errors long enough to clamp.
+        if (errorIsLong(job.error)) {
+          const toggle = element("button", {
+            type: "button",
+            className: "button button-secondary activity-error-toggle",
+            "aria-expanded": open ? "true" : "false",
+            "aria-controls": `activity-error-${job.id}`,
+            "data-focus-key": `activity-${job.id}-error`,
+            text: open ? "Hide full error" : "Show full error",
+          });
+          toggle.addEventListener("click", () => {
+            if (openErrors.has(job.id)) openErrors.delete(job.id);
+            else openErrors.add(job.id);
+            render({ focusKey: `activity-${job.id}-error` });
+          });
+          messages.append(toggle);
+        }
+      }
       const guidance = activityAction(job).guidance;
       if (guidance) messages.append(element("p", { className: "activity-guidance", text: guidance }));
       const when = element("time", { className: "activity-time", title: timestamp(job), text: relativeTime(job) });

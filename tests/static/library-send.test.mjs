@@ -1285,23 +1285,33 @@ test("a replace of a group larger than the free figure still sends", async () =>
 });
 
 
-test("the phone send bar leaves the collections behind it on screen", () => {
-  // Measured at 390x844 before this cap: the bar stood 756px tall, hid every
-  // row it was sending, and ended 32px below the top of the fixed navigation,
-  // so the last of Send sat behind it. A bar that tall is also pinned against
-  // the top of its containing block, where the sticky bottom offset has no
-  // room left to lift it clear.
-  // The cap is stated once, in the base rule, so it now protects the desktop
-  // bar too. Measured there at 1440x900 before this: 1469px tall.
+test("the desktop send bar stays capped and the phone dock clears the navigation", () => {
+  // Measured at 1440x900 before the cap: the bar stood 1469px tall.
   assert.equal(baseDeclarations(".library-send-bar")["max-height"], "min(55svh, 34rem)");
-  // Only the offset that clears the fixed phone navigation is phone-specific.
+  // A phone shows a dock instead, above the fixed navigation, and the bar only
+  // as a full-screen sheet.
+  assert.equal(phoneDeclarations(".library-send-bar").display, "none");
   assert.equal(
-    phoneDeclarations(".library-send-bar").bottom,
+    phoneDeclarations(".library-send-dock:not([hidden])").bottom,
     "calc(4.5rem + env(safe-area-inset-bottom))",
   );
 });
 
-test("only the chapter list gives way when the phone send bar runs out of room", () => {
+test("the Library filter keeps every choice on a phone", () => {
+  // Measured before this: Starred clipped by 16px at 390, and gone at 320.
+  assert.equal(phoneDeclarations(".library-filter").display, "grid");
+  assert.equal(phoneDeclarations(".library-filter")["grid-template-columns"], "repeat(2, minmax(0, 1fr))");
+});
+
+test("a phone's chapter list has no scroller of its own to trap the thumb", () => {
+  // Measured at 390x844 before this: a 352px scroller holding 14,988px.
+  assert.equal(baseDeclarations(".library-chapter-list")["max-height"], "22rem");
+  assert.equal(phoneDeclarations(".library-chapter-list")["max-height"], "none");
+  assert.equal(phoneDeclarations(".library-chapter-list").overflow, "visible");
+  assert.equal(phoneDeclarations(".library-chapter-panel")["grid-column"], "1 / -1");
+});
+
+test("only the chapter list gives way when the send bar runs out of room", () => {
   // The target field and the send buttons are the point of the bar, so the
   // list of what is being sent is the one part allowed to shrink and scroll.
   assert.equal(baseDeclarations(".library-send-bar > *").flex, "0 0 auto");
