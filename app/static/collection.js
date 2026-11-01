@@ -76,19 +76,21 @@ export function activeRewrite(jobs, slug, kinds = REWRITE_KINDS) {
   )) || null;
 }
 
-function trimSecondsField(id, label) {
+function trimSecondsField(id, label, seconds, onInput) {
+  const input = element("input", {
+    id,
+    type: "number",
+    min: "0",
+    step: "0.1",
+    value: seconds,
+    inputmode: "decimal",
+    "data-focus-key": id,
+    "data-collection-mutation": "",
+  });
+  input.addEventListener("input", () => onInput(input.value));
   return element("label", { className: "forge-number-control", for: id }, [
     element("span", { text: label }),
-    element("input", {
-      id,
-      type: "number",
-      min: "0",
-      step: "0.1",
-      value: "0",
-      inputmode: "decimal",
-      "data-focus-key": id,
-      "data-collection-mutation": "",
-    }),
+    input,
   ]);
 }
 
@@ -321,6 +323,9 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
   let renaming = "";
   const openGroups = new Set();
   const openPanels = new Set();
+  // The seconds typed into Trim, for the same reason: losing one to a poll
+  // would cut the audio by only the other, and a trim cannot be undone.
+  const trimSeconds = { head: "0", tail: "0" };
   const onViewport = () => {
     if (collection) renderDetail();
   };
@@ -803,13 +808,13 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
           ? "Trimming every chapter. Editing stays locked until it finishes."
           : "Cut the same seconds off every chapter. This changes the saved audio and cannot be undone.",
       }),
-      trimSecondsField("trim-head-input", "Cut from start, seconds"),
-      trimSecondsField("trim-tail-input", "Cut from end, seconds"),
+      trimSecondsField("trim-head-input", "Cut from start, seconds", trimSeconds.head, (value) => { trimSeconds.head = value; }),
+      trimSecondsField("trim-tail-input", "Cut from end, seconds", trimSeconds.tail, (value) => { trimSeconds.tail = value; }),
       trimButton,
     ]);
     trimButton.addEventListener("click", async () => {
-      const trimHead = Number(trimPanel.querySelector("#trim-head-input").value) || 0;
-      const trimTail = Number(trimPanel.querySelector("#trim-tail-input").value) || 0;
+      const trimHead = Number(trimSeconds.head) || 0;
+      const trimTail = Number(trimSeconds.tail) || 0;
       if (trimHead <= 0 && trimTail <= 0) {
         notify("Enter seconds to cut from the start or the end.", { kind: "failure", timeout: 0 });
         return;
@@ -823,6 +828,8 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         });
         if (!active || signal.aborted) return;
         jobs = [{ id: receipt.job_id, kind: "trim", status: "queued", payload: { slug } }, ...jobs];
+        trimSeconds.head = "0";
+        trimSeconds.tail = "0";
         renderDetail({ focusKey: "trim-submit" });
         notify(`${collection.title || "Collection"} is queued to be trimmed.`, { kind: "success" });
         await refresh.request();

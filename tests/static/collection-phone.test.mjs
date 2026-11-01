@@ -39,10 +39,18 @@ async function mount({ phone = true } = {}) {
   globalThis.window.matchMedia = () => media;
   const controller = new AbortController();
   const patches = [];
+  const posts = [];
+  const fail = { patch: null, post: null };
   const request = async (url, options = {}) => {
     if (options.method === "PATCH") {
       patches.push([url, JSON.parse(options.body)]);
+      if (fail.patch) throw fail.patch;
       return {};
+    }
+    if (options.method === "POST") {
+      posts.push([url, JSON.parse(options.body)]);
+      if (fail.post) throw fail.post;
+      return { job_id: 1 };
     }
     return collection;
   };
@@ -68,7 +76,7 @@ async function mount({ phone = true } = {}) {
     for (const listener of listeners) listener(refresh.snapshot);
     await flush();
   };
-  return { dom, media, patches, controller, poll };
+  return { dom, media, patches, posts, fail, controller, poll };
 }
 
 const rowFor = (dom, name) => dom.workspace.querySelectorAll(".collection-chapter-row")
@@ -161,6 +169,45 @@ test("Trim is a closed details on a phone whose open state survives a re-render;
     dom.restore();
   }
 });
+
+for (const phone of [true, false]) {
+  const width = phone ? "phone" : "desktop";
+
+  test(`${width}: trim seconds survive a poll, so head then tail cuts both`, async () => {
+    const { dom, posts, fail, controller, poll } = await mount({ phone });
+    const field = (id) => dom.workspace.querySelector(`#${id}`);
+    const set = (id, value) => {
+      field(id).value = value;
+      return field(id).dispatchEvent({ type: "input" });
+    };
+    try {
+      await set("trim-head-input", "30");
+      await poll();
+      assert.equal(field("trim-head-input").value, "30");
+      await set("trim-tail-input", "5");
+      await poll();
+      assert.equal(field("trim-head-input").value, "30");
+      assert.equal(field("trim-tail-input").value, "5");
+
+      // A refused trim keeps what was typed; an accepted one is done with it.
+      fail.post = new Error("Busy");
+      await dom.workspace.querySelector(".trim-button").click();
+      await flush();
+      assert.deepEqual(posts.at(-1), ["/api/collections/story/trim", { trim_head: 30, trim_tail: 5 }]);
+      assert.equal(field("trim-head-input").value, "30");
+      fail.post = null;
+      await dom.workspace.querySelector(".trim-button").click();
+      await flush();
+      assert.equal(posts.length, 2);
+      assert.equal(field("trim-head-input").value, "0");
+      assert.equal(field("trim-tail-input").value, "0");
+    } finally {
+      controller.abort();
+      dom.restore();
+    }
+  });
+
+}
 
 test("the phone header keeps one line of facts and Source and Forge open state across a re-render", async () => {
   const { dom, media, controller, poll } = await mount();

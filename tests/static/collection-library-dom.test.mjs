@@ -822,6 +822,7 @@ test("the collection screen trims a finished collection, locks editing meanwhile
     assert.equal(trimCalls().length, 0, "nothing to cut sends nothing");
 
     dom.workspace.querySelector("#trim-head-input").value = "3";
+    await dom.workspace.querySelector("#trim-head-input").dispatchEvent({ type: "input" });
     await buttonWithText(dom.workspace, "Trim every chapter").click();
     await flush();
     assert.equal(trimCalls().length, 1);
