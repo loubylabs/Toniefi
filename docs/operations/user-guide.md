@@ -145,6 +145,18 @@ If the myTonies app or another tab changed the same Tonie first, TonieFi refuses
 It reloads the real list instead of overwriting someone else's edit. These actions only touch the
 Tonie Cloud. Your local library is never changed from this screen.
 
+## On a phone
+
+Everything works on a phone, but some controls move to save room:
+
+- Each story and chapter folds to one short line. Tap the three dots for its other actions: Star,
+  Choose chapters, Download and Delete on a story; Rename, Move up, Move down and Remove on a
+  chapter. Tap a story's title to open it.
+- Dragging needs a mouse, so reorder with Move up and Move down.
+- Ticked stories show a bar above the menu. **Choose Tonies** opens a full screen with your groups
+  and Send.
+- Ticks and your place in the Library stay when you open a story and go back.
+
 ## Work keeps running
 
 Jobs are stored in a SQLite database (a small file-based database), so they carry on when you
