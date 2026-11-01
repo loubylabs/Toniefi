@@ -2800,6 +2800,10 @@ img.collection-detail-cover {
   color: var(--failure);
 }
 
+.activity-error-toggle {
+  display: none;
+}
+
 .activity-guidance {
   color: var(--ink-muted);
   font-size: var(--type-sm);
@@ -4205,6 +4209,21 @@ img.collection-detail-cover {
     flex: 1 1 0;
     min-height: 44px;
     white-space: nowrap;
+  }
+
+  /* A raw yt-dlp error can run past a thousand pixels. Four lines show; the
+     toggle opens the rest, and its state lives in activity.js. */
+  .activity-error[data-open="false"] {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+  }
+
+  .activity-error-toggle {
+    display: inline-flex;
+    justify-self: start;
   }
 
   .activity-row {
