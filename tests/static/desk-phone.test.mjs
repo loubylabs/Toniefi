@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { createDeskScreen, forgeFoldOpen, workStripSummary } from "../../app/static/desk.js";
+import { createDeskScreen, forgeFoldLine, forgeFoldOpen, workStripSummary } from "../../app/static/desk.js";
 
 import { flush, installDom } from "./mini-dom.mjs";
 
@@ -121,6 +121,25 @@ test("opening the phone Forge fold is remembered across a turn of the screen", a
   } finally {
     screen.done();
   }
+});
+
+test("the phone Forge fold names the loudness in words and keeps the numbers for the opened detail", async () => {
+  const screen = await mount();
+  try {
+    const summary = screen.fold.querySelector(".forge-fold-summary");
+    assert.match(summary.textContent, /Forge defaults/);
+    assert.match(summary.textContent, /Standard loudness/);
+    assert.doesNotMatch(summary.textContent, /LUFS|dBTP/);
+    assert.match(screen.fold.querySelector(".forge-definition-list").textContent, /−16 LUFS, −1\.5 dBTP/);
+  } finally {
+    screen.done();
+  }
+});
+
+test("the closed line stays truthful when loudness or another default changes", () => {
+  assert.deepEqual(forgeFoldLine(), { headline: "Standard loudness", detail: "Forge defaults" });
+  assert.deepEqual(forgeFoldLine({ normalize: false }), { headline: "Loudness off", detail: "Forge defaults · custom" });
+  assert.deepEqual(forgeFoldLine({ trim_head: 2 }), { headline: "Standard loudness", detail: "Forge defaults · custom" });
 });
 
 test("the work strip counts only running and failed work", () => {

@@ -3470,14 +3470,16 @@ img.collection-detail-cover {
     font-size: var(--type-base);
   }
 
-  .forge-fold-note {
+  .forge-fold-copy {
+    display: grid;
     min-width: 0;
-    margin-left: auto;
-    overflow: hidden;
+    flex: 1;
+    line-height: 1.25;
+  }
+
+  .forge-fold-copy small {
     color: var(--ink-muted);
-    font-size: var(--type-sm);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: var(--type-xs);
   }
 
   .forge-fold-chevron svg {

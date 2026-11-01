@@ -206,6 +206,18 @@ export function forgeProfileStatus(options = {}) {
     : { label: "Custom settings", status: "warning" };
 }
 
+// What the closed phone line says. The numbers (−16 LUFS, a dBTP ceiling) are
+// jargon on a first screen, so they wait in the opened detail; the line keeps
+// the claim in plain words, and never hides that a setting was changed.
+export function forgeFoldLine(options = {}) {
+  const selected = normalizedOptions(options);
+  const safe = forgeProfileStatus(selected).status === "success";
+  return {
+    headline: selected.normalize ? "Standard loudness" : "Loudness off",
+    detail: safe ? "Forge defaults" : "Forge defaults · custom",
+  };
+}
+
 export function moveSourceEntries(entries, id, offset) {
   const next = [...entries];
   const index = next.findIndex((entry) => entry.id === id);
@@ -506,12 +518,12 @@ function createForgeSummary({ forgeDefaults, signal }) {
   // until it is opened; a desktop shows it open and has no line. Whether it is
   // open is held here, not read back from the DOM, so a re-render or a turn of
   // the phone cannot lose it.
-  const foldNote = element("span", { className: "forge-fold-note", text: "Safe maximum" });
+  const foldHeadline = element("strong", { text: forgeFoldLine().headline });
+  const foldDetail = element("small", { text: forgeFoldLine().detail });
   const fold = element("details", { className: "forge-fold" }, [
     element("summary", { className: "forge-fold-summary" }, [
       iconNode("forge", "desk-section-icon"),
-      element("strong", { text: "Forge defaults" }),
-      foldNote,
+      element("span", { className: "forge-fold-copy" }, [foldHeadline, foldDetail]),
       iconNode("chevronRight", "forge-fold-chevron"),
     ]),
     headingRow,
@@ -539,7 +551,9 @@ function createForgeSummary({ forgeDefaults, signal }) {
     const profile = forgeProfileStatus(options);
     profileBadge.textContent = profile.label;
     profileBadge.dataset.status = profile.status;
-    foldNote.textContent = profile.label;
+    const line = forgeFoldLine(options);
+    foldHeadline.textContent = line.headline;
+    foldDetail.textContent = line.detail;
   };
   const persistDefaults = () => forgeDefaults.save(readForgeOptions(section));
   const loadDefaults = async () => {
