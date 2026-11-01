@@ -1806,6 +1806,13 @@ img.collection-detail-cover {
   background: rgba(255, 255, 255, 0.68);
 }
 
+/* The one-line fold and the work strip are phone furniture; a desktop shows the
+   summary open and has the cart beside the intake. */
+.forge-fold-summary,
+.work-strip {
+  display: none;
+}
+
 .desk-section-heading {
   min-height: 3.75rem;
   padding: var(--space-3) var(--space-4);
@@ -3376,17 +3383,170 @@ img.collection-detail-cover {
     padding-top: var(--space-5);
   }
 
+  /* A record is a 56px jacket beside its body, about 110px, so a screen holds
+     several. The jacket is a square that is never stretched into a strip. */
   .work-cart-row {
-    grid-template-columns: 5.5rem minmax(0, 1fr);
+    grid-template-columns: 3.5rem minmax(0, 1fr);
+    column-gap: var(--space-3);
+    padding: var(--space-2) 0 var(--space-2) var(--space-3);
   }
 
   .work-cart-cover {
-    min-height: 11rem;
+    width: 3.5rem;
+    height: 3.5rem;
+    min-height: 0;
+    border: var(--rule-thin);
+    border-radius: var(--radius);
+    font-size: 1.25rem;
   }
 
+  .work-cart-row-body {
+    padding: 0 var(--space-3) 0 0;
+  }
+
+  /* One line of source, wrapped inside the column instead of ellipsized, and
+     never wider than it. */
+  .work-cart-source {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* The summary folds to one line; the numbers wait inside. */
+  .forge-fold-summary {
+    display: flex;
+    min-height: 3.5rem;
+    padding: var(--space-2) var(--space-4);
+    align-items: center;
+    gap: var(--space-2);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .forge-fold-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .forge-fold-summary strong {
+    font-size: var(--type-base);
+  }
+
+  .forge-fold-note {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    color: var(--ink-muted);
+    font-size: var(--type-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .forge-fold-chevron svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    transition: transform 0.15s ease;
+  }
+
+  .forge-fold[open] .forge-fold-chevron svg {
+    transform: rotate(90deg);
+  }
+
+  .forge-fold > .desk-section-heading {
+    display: none;
+  }
+
+  /* Sits above the fixed bottom bar like the Library dock, and follows the
+     operator down the intake until the cart itself is in view. */
+  .work-strip:not([hidden]) {
+    position: sticky;
+    z-index: 10;
+    bottom: calc(4.5rem + env(safe-area-inset-bottom));
+    display: flex;
+    width: 100%;
+    min-height: 2.75rem;
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    align-items: center;
+    gap: var(--space-2);
+    border: 1px solid var(--bookcloth-deep);
+    border-radius: var(--radius);
+    background: var(--bookcloth);
+    color: var(--paper-raised);
+    font-weight: 760;
+    box-shadow: 0 -0.5rem 1.5rem rgba(11, 42, 32, 0.12), 0 -0.125rem 0.4rem rgba(11, 42, 32, 0.08);
+  }
+
+  body.audio-player-visible .work-strip:not([hidden]) {
+    bottom: calc(14.25rem + env(safe-area-inset-bottom));
+  }
+
+  .work-strip-label {
+    min-width: 0;
+    flex: 1;
+    text-align: left;
+  }
+
+  .work-strip svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: var(--action);
+  }
+
+  /* Title and stamp share one line; a long title takes two and the stamp stays
+     whole beside it. */
   .work-cart-row-header {
-    align-items: flex-start;
-    flex-direction: column;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .work-cart-row-header h3 {
+    display: -webkit-box;
+    flex: 1 1 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  /* The body is two columns so a running record's View details sits beside its
+     progress instead of costing a row; a record with Retry or Dismiss keeps
+     its own full-width line for them. */
+  .work-cart-row-body {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-auto-flow: row dense;
+    column-gap: var(--space-2);
+  }
+
+  .work-cart-row-body > * {
+    grid-column: 1 / -1;
+  }
+
+  .work-cart-row-body > .work-cart-progress {
+    grid-column: 1;
+  }
+
+  .work-cart-row-body > .work-cart-actions {
+    grid-column: 2;
+    margin-top: 0;
+  }
+
+  .work-cart-row-body > .work-cart-actions:has(.work-cart-row-buttons) {
+    grid-column: 1 / -1;
+  }
+
+  .work-cart-source,
+  .work-cart-facts,
+  .work-cart-progress {
+    margin-top: var(--space-1);
+  }
+
+  .work-cart-progress-track {
+    margin-top: 0;
   }
 
   /* The link and the row buttons stay on one line and wrap only when they must;
