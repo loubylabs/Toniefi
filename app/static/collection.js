@@ -455,6 +455,8 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         element("p", {}, [
           element("span", { className: "drag-copy", text: "Drag with a pointer, or use the Move up and Move down buttons." }),
           element("span", { className: "drag-copy-coarse", text: "Use the Move up and Move down buttons." }),
+          // On a phone those buttons live in each chapter's More menu.
+          element("span", { className: "drag-copy-phone", text: "To reorder, open a chapter's More menu." }),
         ]),
       ]),
     ]);
