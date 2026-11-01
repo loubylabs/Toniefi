@@ -433,3 +433,211 @@ test("the row's brief is the one line a phone shows", async () => {
     screen.stop();
   }
 });
+
+const SELECTION_KEY = "toniefi.library.selection";
+const SCROLL_KEY = "toniefi.library.scroll";
+
+// A session that outlives each mounted screen, the way a browser tab does.
+function withSession(run) {
+  return async () => {
+    const original = globalThis.sessionStorage;
+    const values = new Map();
+    globalThis.sessionStorage = {
+      getItem: (key) => (values.has(key) ? values.get(key) : null),
+      setItem: (key, value) => values.set(key, String(value)),
+      removeItem: (key) => values.delete(key),
+    };
+    try {
+      await run(values);
+    } finally {
+      if (original === undefined) delete globalThis.sessionStorage;
+      else globalThis.sessionStorage = original;
+    }
+  };
+}
+
+const stored = (values) => JSON.parse(values.get(SELECTION_KEY) ?? "null");
+const ticked = (screen) => screen.all(".library-select").filter((box) => box.checked).length;
+
+test("the selection survives leaving and coming back, with no target and no key", withSession(async (values) => {
+  const first = mount({ collections: [story("a"), story("b")], phone: false });
+  await flush();
+  await tickFirst(first);
+  assert.deepEqual(stored(values), { a: { fingerprint: "f-a", names: ["a-1.mp3", "a-2.mp3"] } });
+  first.stop();
+
+  const second = mount({ collections: [story("a"), story("b")], phone: false });
+  try {
+    await flush();
+    assert.equal(ticked(second), 1);
+    assert.equal(second.node(".library-send-bar").hidden, false);
+    assert.ok(second.all(".library-send-target").length, "targets load for a restored selection");
+    assert.equal(second.all(".library-send-target").filter((input) => input.checked).length, 0, "nothing is aimed for them");
+    assert.equal(second.node(".library-send-submit").disabled, true);
+    assert.equal(values.get(SELECTION_KEY).includes("operation"), false);
+    assert.equal(second.dom.document.activeElement, null, "a restore moves no focus and raises no keyboard");
+  } finally {
+    second.stop();
+  }
+}));
+
+test("a partial selection comes back partial", withSession(async () => {
+  const first = mount({ collections: [story("a", 3)] });
+  await flush();
+  await first.all("button").find((button) => button.getAttribute("data-focus-key") === "library-a-chapters").click();
+  await first.node(".library-chapter-select").dispatchEvent({ type: "change" });
+  await flush();
+  first.stop();
+
+  const second = mount({ collections: [story("a", 3)] });
+  try {
+    await flush();
+    assert.equal(second.node(".library-chapter-count").textContent, "1 of 3 chapters selected");
+    assert.match(second.node(".library-send-bar").textContent, /1 chapter from 1 story/);
+  } finally {
+    second.stop();
+  }
+}));
+
+test("restore drops a deleted story, a changed story and a vanished chapter", withSession(async (values) => {
+  values.set(SELECTION_KEY, JSON.stringify({
+    deleted: { fingerprint: "f-deleted", names: ["deleted-1.mp3"] },
+    changed: { fingerprint: "old", names: ["changed-1.mp3"] },
+    trimmed: { fingerprint: "f-trimmed", names: ["trimmed-1.mp3", "gone.mp3"] },
+    emptied: { fingerprint: "f-emptied", names: ["gone.mp3"] },
+    raw: { fingerprint: "", names: ["raw-1.mp3"] },
+  }));
+  const screen = mount({
+    collections: [
+      story("changed"),
+      story("trimmed"),
+      story("emptied"),
+      { slug: "raw", stage: "extracted", title: "Raw", tracks: [{ name: "raw-1.mp3", seconds: 60 }] },
+    ],
+  });
+  try {
+    await flush();
+    assert.deepEqual(stored(values), { trimmed: { fingerprint: "f-trimmed", names: ["trimmed-1.mp3"] } });
+    assert.match(screen.node(".library-send-bar").textContent, /1 chapter from 1 story/);
+  } finally {
+    screen.stop();
+  }
+}));
+
+test("nothing restored and nothing written while the first list has not arrived", withSession(async (values) => {
+  const saved = JSON.stringify({ a: { fingerprint: "f-a", names: ["a-1.mp3"] } });
+  values.set(SELECTION_KEY, saved);
+  // The real coordinator publishes once per resource, so the status answer
+  // reaches the screen while the collection list is still the empty initial one.
+  const screen = mount({ collections: [] });
+  try {
+    await screen.poll();
+    assert.equal(values.get(SELECTION_KEY), saved, "an empty publish does not wipe the ticks");
+    screen.refresh.snapshot.collections = [story("a")];
+    await screen.poll();
+    await flush();
+    assert.deepEqual(stored(values), { a: { fingerprint: "f-a", names: ["a-1.mp3"] } });
+    assert.equal(screen.node(".library-send-dock").hidden, false);
+  } finally {
+    screen.stop();
+  }
+}));
+
+async function aimAndSend(screen) {
+  const target = screen.node(".library-send-target");
+  target.checked = true;
+  await target.dispatchEvent({ type: "change" });
+  const sent = screen.node(".library-send-submit").click();
+  await flush();
+  return sent;
+}
+
+test("clearing the selection clears the store", withSession(async (values) => {
+  const screen = mount({ collections: [story("a")] });
+  try {
+    await flush();
+    await tickFirst(screen);
+    assert.ok(values.has(SELECTION_KEY));
+    await screen.node(".library-send-clear").click();
+    assert.equal(values.has(SELECTION_KEY), false);
+  } finally {
+    screen.stop();
+  }
+}));
+
+test("a finished send clears the store, and coming back restores no selection and no key", withSession(async (values) => {
+  const first = mount({ collections: [story("a")] });
+  await flush();
+  await tickFirst(first);
+  await aimAndSend(first);
+  await flush();
+  assert.equal(first.pushes.length, 1);
+  assert.equal(values.has(SELECTION_KEY), false);
+  first.stop();
+
+  const second = mount({ collections: [story("a")] });
+  try {
+    await flush();
+    assert.equal(ticked(second), 0);
+    assert.equal(second.node(".library-receipt"), null);
+    await tickFirst(second);
+    await aimAndSend(second);
+    await flush();
+    assert.notEqual(second.pushes[0].operation_key, first.pushes[0].operation_key, "ticking again is a new operation");
+  } finally {
+    second.stop();
+  }
+}));
+
+test("nothing is stored while a send is in flight, and a failed send writes the ticks back", withSession(async (values) => {
+  let settle = () => {};
+  const dom = mount({
+    collections: [story("a")],
+    pushAnswer: new Promise((_, reject) => { settle = reject; }),
+  });
+  try {
+    await flush();
+    await tickFirst(dom);
+    const sending = aimAndSend(dom);
+    await flush();
+    assert.equal(dom.pushes.length, 1);
+    assert.equal(values.has(SELECTION_KEY), false, "leaving now must not leave these ticks waiting");
+
+    settle(new Error("Upstream failed"));
+    await sending;
+    await flush();
+    assert.equal(ticked(dom), 1, "the selection is unchanged");
+    assert.deepEqual(Object.keys(stored(values)), ["a"]);
+  } finally {
+    dom.stop();
+  }
+}));
+
+test("the scroll position comes back on Back to Library and on back or forward, not on a fresh visit", withSession(async (values) => {
+  for (const [context, expected] of [
+    [{ from: "collection" }, [11000]],
+    [{ from: "tonies", popped: true }, [11000]],
+    [{ from: "desk" }, []],
+    [{}, []],
+  ]) {
+    values.set(SCROLL_KEY, "11000");
+    const screen = mount({ collections: [story("a")], context });
+    const moves = [];
+    globalThis.window.scrollTo = (_, y) => moves.push(y);
+    assert.equal(moves.length, 0, "the page has no height until the router attaches it");
+    screen.dom.document.dispatchEvent({ type: "toniefi:routechange" });
+    assert.deepEqual(moves, expected);
+    screen.stop();
+  }
+}));
+
+test("leaving stores the position last scrolled to", withSession(async (values) => {
+  const screen = mount({ collections: [story("a")] });
+  try {
+    await flush();
+    screen.leave();
+    assert.equal(values.get(SCROLL_KEY), "0");
+  } finally {
+    screen.stop();
+  }
+}));

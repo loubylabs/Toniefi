@@ -95,10 +95,11 @@ export function createRouter(routes, {
     });
   }
 
-  async function render({ focus = false } = {}) {
+  async function render({ focus = false, popped = false } = {}) {
     const route = resolve();
     if (!route || !workspace) return;
     const renderSequence = ++sequence;
+    const from = current?.name || "";
     current = route;
     markNavigation(navigationEntry(route));
 
@@ -123,6 +124,9 @@ export function createRouter(routes, {
         search: new URLSearchParams(window.location.search),
         signal: controller.signal,
         state: window.history.state,
+        // How this screen was reached, so it can tell a return from a fresh visit.
+        from,
+        popped,
         workspace: target,
         navigate,
       });
@@ -176,7 +180,7 @@ export function createRouter(routes, {
   }
 
   function handlePopState() {
-    render({ focus: true });
+    render({ focus: true, popped: true });
   }
 
   function start() {

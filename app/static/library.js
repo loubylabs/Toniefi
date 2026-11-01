@@ -97,6 +97,28 @@ export function createSelectionState() {
     },
     size: () => chosen.size,
     clear() { chosen.clear(); },
+    // The chosen names per story, with the fingerprint they were chosen under.
+    // Only what still exists: a stale name is never written back.
+    serialize: (collections) => Object.fromEntries(collections
+      .filter((collection) => chosen.has(collection.slug))
+      .map((collection) => [collection.slug, {
+        fingerprint: collection.manifest_fingerprint || "",
+        names: keep(collection, picked(collection.slug)),
+      }])
+      .filter(([, entry]) => entry.names.length)),
+    // A story that is gone, changed or no longer sendable drops out whole, and
+    // a chapter that is gone drops out alone (setTracks filters it, and removes
+    // the story if nothing is left). Only names return: no target and no
+    // operation key is ever stored, so a restored selection is a new operation
+    // the operator still has to aim, and a finished send cannot come back.
+    restore(collections, stored) {
+      for (const collection of collections) {
+        const entry = stored?.[collection.slug];
+        if (entry && entry.fingerprint === (collection.manifest_fingerprint || "") && Array.isArray(entry.names)) {
+          put(collection.slug, keep(collection, new Set(entry.names)));
+        }
+      }
+    },
     ordered: (collections) => collections
       // A story whose chosen chapters have all vanished is kept, carrying no
       // tracks, so the Send bar's own guard can refuse it by name rather than
@@ -196,6 +218,8 @@ export const LIBRARY_FILTERS = [
   { value: "starred", label: "Starred" },
 ];
 const FILTER_STORAGE_KEY = "toniefi.library.filter";
+const SELECTION_STORAGE_KEY = "toniefi.library.selection";
+const SCROLL_STORAGE_KEY = "toniefi.library.scroll";
 
 export function starredNames(collection) {
   return (collection.tracks || []).filter((track) => track.starred).map((track) => track.name);
@@ -222,6 +246,23 @@ function storeFilter(value) {
     globalThis.sessionStorage?.setItem(FILTER_STORAGE_KEY, value);
   } catch {
     // Private mode or a blocked store: the filter just does not persist.
+  }
+}
+
+function storedJson(key) {
+  try {
+    return JSON.parse(globalThis.sessionStorage?.getItem(key) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+function storeValue(key, value) {
+  try {
+    if (value == null) globalThis.sessionStorage?.removeItem(key);
+    else globalThis.sessionStorage?.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode, a blocked store or a full one: this just does not persist.
   }
 }
 
@@ -257,7 +298,7 @@ export function createLibraryScreen({
 } = {}) {
   if (!refresh) throw new Error("Library requires the application refresh coordinator.");
 
-  return function renderLibrary({ workspace, signal }) {
+  return function renderLibrary({ workspace, signal, from = "", popped = false }) {
     let active = true;
     let collections = refresh.snapshot.collections || [];
     let jobs = refresh.snapshot.jobs || [];
@@ -366,6 +407,7 @@ export function createLibraryScreen({
     const phoneQuery = globalThis.window?.matchMedia?.("(max-width: 759.98px)") || null;
     const onPhone = () => Boolean(phoneQuery?.matches);
     let sheetOpen = false;
+    let selectionRestored = false;
     // What the bar is showing: "none", "selection" or "receipt".
     let barMode = "none";
     // Rebuilding the bar on a poll must not close or scroll what the operator
@@ -899,6 +941,7 @@ export function createLibraryScreen({
       const scroller = sendBar.querySelector(".library-send-groups, .library-receipt");
       if (scroller && groupScroll) scroller.scrollTop = groupScroll;
       syncSheet();
+      persistSelection();
       // The send bar is the region the operator is watching while the POST is
       // in flight, so it is the region that reports being busy.
       sendBar.setAttribute("aria-busy", String(Boolean(sending)));
@@ -908,6 +951,29 @@ export function createLibraryScreen({
 
     function limitSeconds() {
       return sendCapacityLimit(refresh.snapshot.status || {});
+    }
+
+    // The ticks outlive this screen so a look at a story costs nothing. Nothing
+    // is written until the stored ticks have been read back, or the first
+    // render would wipe them. Nothing is kept while a send is in flight either:
+    // leaving mid-POST leaves an unknown outcome, and ticks waiting on return
+    // would make sending the same audio again one press easier. A failed send
+    // renders once more, which writes them back.
+    function persistSelection() {
+      if (!selectionRestored) return;
+      const ticks = sending ? {} : selection.serialize(collections);
+      storeValue(SELECTION_STORAGE_KEY, Object.keys(ticks).length ? ticks : null);
+    }
+
+    // Called only with a collection list in hand: a fresh page starts with none
+    // and the coordinator publishes once per resource, so an empty list can mean
+    // "not here yet", and restoring against it would drop every tick as vanished.
+    function restoreSelection() {
+      if (selectionRestored) return;
+      selectionRestored = true;
+      selection.restore(selectableCollections(collections, jobs), storedJson(SELECTION_STORAGE_KEY));
+      // Passive: a restored selection must not move focus or raise a keyboard.
+      if (selection.size() && tonies === null) loadTargets("", { passive: true });
     }
 
     // A receipt has no collapsed form, so on a phone it is always the sheet.
@@ -966,7 +1032,7 @@ export function createLibraryScreen({
     // The caller says where focus belongs when the fetch settles, because the
     // first tick on a row loads targets too: restoring to the refresh button
     // there would take focus off the checkbox the operator just used.
-    async function loadTargets(focusKey = "library-send-refresh") {
+    async function loadTargets(focusKey = "library-send-refresh", { passive = false } = {}) {
       // Two reads can be in flight at once, because Refresh targets stays live
       // while the automatic first load is still running. Only the newest answer
       // may land: an older one carries obsolete free space AND an obsolete
@@ -1014,7 +1080,7 @@ export function createLibraryScreen({
       // Tonie write has no undo. Keeping the key hands the moved payload back
       // under the same key, so the server's idempotency digest answers 409 and
       // tells the operator the situation moved instead of uploading again.
-      if (active && !signal?.aborted) render({ focusKey });
+      if (active && !signal?.aborted) render({ focusKey, passive });
     }
 
     // Focus is NOT handled here. `render` already wraps the whole screen in
@@ -1419,7 +1485,10 @@ export function createLibraryScreen({
       stale.hidden = !failed;
       if (failed) showStale("Library information could not refresh. Showing the last available local collection index.");
       else replace(stale);
-      if (!failed) collections = snapshot.collections || [];
+      if (!failed) {
+        collections = snapshot.collections || [];
+        if (collections.length) restoreSelection();
+      }
       render({ passive: true });
     }
 
@@ -1457,16 +1526,37 @@ export function createLibraryScreen({
 
     root.append(header, toolbar, stale, summary, list, dock, sendBar);
     replace(workspace, root);
+    if (collections.length) restoreSelection();
     render({ passive: true });
     const unsubscribe = refresh.subscribe(onRefresh);
     document.addEventListener("keydown", onKeydown);
     phoneQuery?.addEventListener?.("change", onViewportChange);
+
+    // The position is read as it changes, not when leaving: on back and forward
+    // the browser may already be moving the page by the time cleanup runs.
+    let scrollY = globalThis.window?.scrollY || 0;
+    const onScroll = () => { scrollY = globalThis.window.scrollY; };
+    globalThis.window?.addEventListener?.("scroll", onScroll, { passive: true });
+    // Back, forward and Back to Library are a return to where the operator was;
+    // the Library tab from anywhere else restores nothing. The route is attached
+    // only after this function returns, so the page has no height to scroll
+    // until the router says it is in place.
+    const savedScroll = popped || from === "collection" ? Number(storedJson(SCROLL_STORAGE_KEY)) : 0;
+    const landScroll = () => {
+      document.removeEventListener("toniefi:routechange", landScroll);
+      if (active && savedScroll > 0) globalThis.window?.scrollTo?.(0, savedScroll);
+    };
+    if (savedScroll > 0) document.addEventListener("toniefi:routechange", landScroll);
+
     refresh.request();
     return () => {
       active = false;
       unsubscribe();
       document.removeEventListener("keydown", onKeydown);
+      document.removeEventListener("toniefi:routechange", landScroll);
       phoneQuery?.removeEventListener?.("change", onViewportChange);
+      globalThis.window?.removeEventListener?.("scroll", onScroll);
+      storeValue(SCROLL_STORAGE_KEY, Math.round(scrollY));
       syncSheet({ leaving: true });
     };
   };

@@ -270,6 +270,10 @@ export function buttonWithText(root, text) {
 }
 
 export function installDom() {
+  // Newer Node ships a sessionStorage global. Every test is its own tab, so one
+  // test's Library ticks must not be restored into the next. A test that wants
+  // a session across mounts installs its own store, which has no clear().
+  globalThis.sessionStorage?.clear?.();
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
   const document = new MiniDocument();
