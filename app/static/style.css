@@ -723,6 +723,10 @@ textarea::placeholder {
   height: 1rem;
 }
 
+.audio-dismiss-mark {
+  display: none;
+}
+
 .screen-heading {
   display: flex;
   min-width: 0;
@@ -3175,7 +3179,7 @@ img.collection-detail-cover {
   }
 
   body.audio-player-visible #workspace {
-    padding-bottom: calc(18rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(13rem + env(safe-area-inset-bottom));
   }
 
   .route-pending {
@@ -3533,7 +3537,7 @@ img.collection-detail-cover {
   }
 
   body.audio-player-visible .work-strip:not([hidden]) {
-    bottom: calc(14.25rem + env(safe-area-inset-bottom));
+    bottom: calc(12.25rem + env(safe-area-inset-bottom));
   }
 
   .work-strip-label {
@@ -4202,7 +4206,7 @@ img.collection-detail-cover {
   }
 
   body.audio-player-visible .tonie-selection-bar:not([hidden]) {
-    bottom: calc(14.25rem + env(safe-area-inset-bottom));
+    bottom: calc(12.25rem + env(safe-area-inset-bottom));
   }
 
   .tonie-selection-bar .button {
@@ -4281,12 +4285,50 @@ img.collection-detail-cover {
     width: 100%;
   }
 
-  .audio-player-heading {
-    align-items: flex-start;
+  /* The player is one title line with a 44px mark-only Dismiss, over the
+     controls: under 100px, so it keeps clear of the content it floats above. */
+  .audio-player-host {
+    padding: var(--space-1) var(--space-3) var(--space-2);
   }
 
-  .audio-player-heading strong {
-    max-width: 56vw;
+  .audio-player-heading {
+    margin-bottom: 0;
+    align-items: center;
+  }
+
+  .audio-player-heading > div {
+    min-width: 0;
+  }
+
+  .audio-player-caption {
+    display: none;
+  }
+
+  .audio-dismiss {
+    width: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .audio-dismiss-mark {
+    display: grid;
+  }
+
+  .audio-dismiss-label {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
+  .audio-player-host audio {
+    height: 40px;
   }
 }
 
@@ -5225,7 +5267,7 @@ img.collection-detail-cover {
 
   /* The fixed audio player stands above the nav, so the dock clears it too. */
   body.audio-player-visible .library-send-dock:not([hidden]) {
-    bottom: calc(14.25rem + env(safe-area-inset-bottom));
+    bottom: calc(12.25rem + env(safe-area-inset-bottom));
   }
 
   .library-send-dock-copy {

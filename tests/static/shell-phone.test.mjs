@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createActivityScreen } from "../../app/static/activity.js";
+import { createPersistentAudioPlayer } from "../../app/static/shared.js";
 
 import { flush, installDom } from "./mini-dom.mjs";
 
@@ -70,5 +71,19 @@ test("a long error opens and closes, and a refresh re-render keeps it open", asy
     assert.equal(s.one(".activity-error").getAttribute("data-open"), "false");
   } finally {
     s.stop();
+  }
+});
+
+test("the player's Dismiss keeps its name and its words for a phone's icon-only button", () => {
+  const dom = installDom();
+  try {
+    const host = dom.document.createElement("section");
+    createPersistentAudioPlayer({ host });
+    const dismiss = host.querySelector(".audio-dismiss");
+    assert.equal(dismiss.getAttribute("aria-label"), "Dismiss chapter player");
+    assert.equal(dismiss.querySelector(".audio-dismiss-label").textContent, "Dismiss");
+    assert.ok(dismiss.querySelector(".audio-dismiss-mark"));
+  } finally {
+    dom.restore();
   }
 });
