@@ -3733,16 +3733,6 @@ img.collection-detail-cover {
     content: none;
   }
 
-  .collection-detail-heading {
-    padding-bottom: var(--space-5);
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4);
-  }
-
-  .collection-detail-cover {
-    width: min(11rem, 48vw);
-  }
-
   .collection-detail-facts,
   .collection-detail-plan {
     grid-template-columns: minmax(0, 1fr);
@@ -5218,9 +5208,11 @@ img.collection-detail-cover {
     grid-column: 1 / -1;
   }
 
+  /* "Choose chapters" holds one line at 390. */
   .library-row-actions .button {
     width: 100%;
-    padding-inline: var(--space-2);
+    padding-inline: var(--space-1);
+    gap: var(--space-1);
     white-space: normal;
   }
 
@@ -5413,8 +5405,7 @@ img.collection-detail-cover {
     font-weight: 790;
   }
 
-  .library-send-bar[data-sheet="open"] .library-send-refresh,
-  .library-send-close {
+  .library-send-bar[data-sheet="open"] .library-send-refresh {
     grid-column: 2;
     grid-row: 1 / span 2;
   }
@@ -5422,6 +5413,7 @@ img.collection-detail-cover {
   .library-send-close {
     display: inline-grid;
     grid-column: 3;
+    grid-row: 1 / span 2;
   }
 
   /* Icon-only for the room, with its words kept as the accessible name. */
@@ -5617,12 +5609,6 @@ img.collection-detail-cover {
     border-width: 0 0 1px;
     border-radius: 0;
     background: transparent;
-  }
-
-  /* "Choose chapters" holds one line at 390. */
-  .library-row-actions .button {
-    padding-inline: var(--space-1);
-    gap: var(--space-1);
   }
 
   /* More reveals what it opens, once: the script marks only the row the tap
