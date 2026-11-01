@@ -450,7 +450,12 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
       iconNode("library"),
       element("div", {}, [
         element("h2", { id: "chapter-list-title", text: "Chapter order" }),
-        element("p", { text: "Drag with a pointer, or use the Move up and Move down buttons." }),
+        // HTML5 drag never starts from a touch, so a coarse pointer reads only
+        // the buttons (see the pointer: coarse block in style.css).
+        element("p", {}, [
+          element("span", { className: "drag-copy", text: "Drag with a pointer, or use the Move up and Move down buttons." }),
+          element("span", { className: "drag-copy-coarse", text: "Use the Move up and Move down buttons." }),
+        ]),
       ]),
     ]);
     const chapterList = element("ol", { className: "collection-chapter-list", "aria-labelledby": "chapter-list-title" });

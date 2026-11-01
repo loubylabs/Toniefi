@@ -5469,3 +5469,21 @@ img.collection-detail-cover {
     cursor: pointer;
   }
 }
+
+/* HTML5 drag-and-drop never starts from a touch, so a coarse pointer gets no
+   grip and no drag copy. Move up and Move down stay on every row. */
+.drag-copy-coarse {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .chapter-grip,
+  .tonie-grip,
+  .drag-copy {
+    display: none;
+  }
+
+  .drag-copy-coarse {
+    display: inline;
+  }
+}
