@@ -615,6 +615,60 @@ test("nothing is stored while a send is in flight, and a failed send writes the 
   }
 }));
 
+test("a sheet that comes back from desktop width brings focus inside it", async () => {
+  const screen = mount({ collections: [story("a")] });
+  try {
+    await flush();
+    await tickFirst(screen);
+    await screen.node(".library-send-choose").click();
+    screen.media.resize(false);
+    // The desktop bar hides Close, so a browser has dropped focus to the body.
+    screen.dom.document.activeElement = null;
+    screen.media.resize(true);
+    assert.equal(sheet(screen), "open");
+    assert.equal(screen.focusKey(), "library-send-close");
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a sheet that comes back leaves focus on a control of the bar where it was", async () => {
+  const screen = mount({ collections: [story("a")] });
+  try {
+    await flush();
+    await tickFirst(screen);
+    await screen.node(".library-send-choose").click();
+    const target = screen.node(".library-send-target");
+    target.checked = true;
+    await target.dispatchEvent({ type: "change" });
+    const key = screen.focusKey();
+    screen.media.resize(false);
+    screen.media.resize(true);
+    assert.equal(sheet(screen), "open");
+    assert.equal(screen.focusKey(), key);
+  } finally {
+    screen.stop();
+  }
+});
+
+test("a receipt is always the sheet on a phone, so coming back puts focus inside it", async () => {
+  const screen = mount({ collections: [story("a")] });
+  try {
+    await flush();
+    await tickFirst(screen);
+    await aimAndSend(screen);
+    await flush();
+    assert.ok(screen.node(".library-receipt"));
+    screen.media.resize(false);
+    screen.dom.document.activeElement = null;
+    screen.media.resize(true);
+    assert.equal(screen.node(".library-send-bar").getAttribute("data-sheet"), "open");
+    assert.equal(screen.focusKey(), "library-send-done");
+  } finally {
+    screen.stop();
+  }
+});
+
 const OPERATION_KEY = "toniefi.library.operation";
 
 // A send the server may have accepted, whose answer never arrived.

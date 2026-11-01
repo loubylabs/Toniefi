@@ -1032,8 +1032,14 @@ export function createLibraryScreen({
       if (event.key === "Escape" && sheetShown()) closeSheet();
     }
 
+    // Turning a phone back returns to the same place, sheet included. A landscape
+    // iPhone crosses into the desktop bar and back, and a modal sheet that comes
+    // back has to bring focus with it: everything outside it is inert.
     function onViewportChange() {
-      render({ passive: true });
+      const intoSheet = sheetShown() && !sendBar.contains(document.activeElement);
+      render(intoSheet
+        ? { focusKey: barMode === "receipt" ? "library-send-done" : "library-send-close" }
+        : { passive: true });
     }
 
     // The caller says where focus belongs when the fetch settles, because the
