@@ -892,13 +892,24 @@ export function createCollectionDetail({ workspace, slug, request, refresh, play
         }
       });
     }
+    // An import that stepped over a video, an episode or a song records why in
+    // `skipped`, one line each. Those lines come from yt-dlp, a feed or
+    // Spotify, so they are shown as text, word for word.
+    const skipped = Array.isArray(collection.skipped) ? collection.skipped : [];
+    const skippedPanel = skipped.length
+      ? assignmentPanel("skipped", "skipped-panel", "skipped-title", "Left out", [
+        element("p", { text: "These were not brought in." }),
+        element("ul", { className: "capacity-track-list skipped-list", "aria-labelledby": "skipped-title" },
+          skipped.map((line) => element("li", {}, [element("span", { text: String(line) })]))),
+      ])
+      : null;
     redrawing = true;
     try {
       replace(root, header, element("div", { className: "collection-detail-grid" }, [
         element("div", { className: "collection-detail-main" }, [chapters]),
         element("aside", { className: "collection-detail-plan" }, preparation.state === "ready"
-          ? [capacityPlan(collection, status.usable_limit_seconds, { phone: isPhone(), openGroups }), trimPanel, adsPanel].filter(Boolean)
-          : [preparationPanel]),
+          ? [capacityPlan(collection, status.usable_limit_seconds, { phone: isPhone(), openGroups }), trimPanel, adsPanel, skippedPanel].filter(Boolean)
+          : [preparationPanel, skippedPanel].filter(Boolean)),
       ]));
     } finally {
       redrawing = false;

@@ -237,6 +237,16 @@ error summary come from `ingest`, made public there rather than copied.
 - `sourceLabel` names a `source: "music"` collection "Spotify playlist", "Spotify album" or
   "Spotify song" from its URL path. A Spotify podcast collection stays "Spotify episode".
 
+## Skipped songs on screen
+
+- The collection page shows the manifest's `skipped` lines word for word, as a list under the
+  heading "Left out", for every source that has any, podcasts included. It appears whether or not
+  Forge has finished. The lines come from yt-dlp and Spotify, so they are set as text, never as
+  HTML. On a phone it is a closed details line, like Trim and Ads.
+- The Library row says "Some songs were left out.", with the noun taken from the source: videos
+  for `url`, episodes for `podcast`, songs for `music`. It states no number, because one line
+  such as "2 picked songs are no longer in the list." stands for several songs.
+
 ## Documentation
 
 - `docs/architecture/api.md`: the `track_ids` field, the music preview shape, the artist refusal,
@@ -278,7 +288,10 @@ Python (`tests/test_music.py`):
   music import.
 
 Browser (`tests/static/desk.test.mjs` and the DOM tests beside it): the music link is recognized,
-the pick labels, the empty-pick error, the `track_ids` payload, the notice, and `sourceLabel`.
+the pick labels, "Reading Spotify" while the preview loads, the "Spotify" heading for an untitled
+list, the empty-pick error, the `track_ids` payload, the notice, and `sourceLabel`. The collection
+page lists `skipped` lines under "Left out" for music and podcasts, and the Library row names the
+source's noun without a count.
 
 ## Left to the builder
 

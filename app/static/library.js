@@ -274,15 +274,19 @@ function storeValue(key, value) {
   }
 }
 
-// A playlist that held a private or deleted video arrives short. The chapters
+const SKIPPED_NOUNS = { url: "videos", podcast: "episodes", music: "songs" };
+
+// A playlist, feed or song list that lost entries arrives short. The chapters
 // that did arrive are numbered straight through, so nothing else on the row
-// shows the gap, and the operator would only find it by counting.
+// shows the gap, and the operator would only find it by counting. The row
+// states no number: one `skipped` line can stand for several picks that left
+// the list, so a count of lines would be wrong. The collection page names
+// each line.
 function skippedNote(collection) {
-  const count = (collection?.skipped || []).length;
-  if (!count) return null;
+  if (!(collection?.skipped || []).length) return null;
   return element("p", {
     className: "library-source",
-    text: `${count} ${count === 1 ? "video was" : "videos were"} unavailable and left out.`,
+    text: `Some ${SKIPPED_NOUNS[collection.source] || "items"} were left out.`,
   });
 }
 

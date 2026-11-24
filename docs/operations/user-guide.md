@@ -29,8 +29,9 @@ Paste a Spotify playlist, album or song link. Press **Pick songs** and tick the 
 playlist must be public, because TonieFi reads it without logging in to Spotify. A playlist stops
 at its first 100 songs. The audio does not come from Spotify. TonieFi searches YouTube for each
 song and keeps a result only when its length is close to the song's, so it can be a different
-recording from the one you know. A song with no close match is skipped and listed on the
-collection's page. Use this for music you have the right to copy.
+recording from the one you know. A song with no close match, or whose search or download failed,
+is skipped. The collection's page names it, with the reason, under **Left out**. Use this for
+music you have the right to copy.
 
 ### Remove ads
 
@@ -83,9 +84,11 @@ The Library lists every local collection. Open one to check its cover, chapter t
 playback. You can also reorder and rename chapters. **Download** gives you the whole collection as
 one zip.
 
-If a playlist held a video the site refused to serve, the rest still arrive. The row says how many
-videos were left out. The tracks that did arrive are numbered without gaps, so nothing else would
-tell you a video was missing.
+If a playlist held a video the site refused to serve, a podcast episode would not download, or a
+song had no close match, the rest still arrive. The row says that some videos, episodes or songs
+were left out, without a count, because one line can stand for several picks that left the list.
+The collection's page lists each line, word for word, under **Left out**. The tracks that did
+arrive are numbered without gaps, so nothing else would tell you something was missing.
 
 ### Pick what to send
 
