@@ -133,15 +133,19 @@ def test_an_album_is_owned_by_its_artist(web):
     assert [song.title for song in listing.songs] == ["Opening"]
 
 
-def test_a_single_song_is_a_list_of_one_owned_by_its_artists(web):
-    serve(web, "track", "11dFghVXANMlKmJXsNCbNl", {
+def track_entity() -> dict:
+    return {
         "type": "track", "name": "Cut To The Feeling", "title": "Cut To The Feeling",
         "uri": "spotify:track:11dFghVXANMlKmJXsNCbNl",
         "artists": [{"name": "Carly Rae Jepsen", "uri": "spotify:artist:1"},
                     {"name": "Friend", "uri": "spotify:artist:2"}],
         "duration": 207_959, "isPlayable": True, "isExplicit": False,
         "visualIdentity": cover_images(),
-    })
+    }
+
+
+def test_a_single_song_is_a_list_of_one_owned_by_its_artists(web):
+    serve(web, "track", "11dFghVXANMlKmJXsNCbNl", track_entity())
 
     listing = music.read(TRACK_URL)
 
@@ -191,6 +195,79 @@ def test_a_page_with_no_data_script_is_unreadable(web):
 
     with pytest.raises(RuntimeError, match="Spotify changed its page"):
         music.read(PLAYLIST_URL)
+
+
+def first_song(entity: dict) -> dict:
+    return entity["trackList"][0]
+
+
+# Each shape is one field Spotify could change. A bad optional field degrades
+# to empty, a song without a text uri and title is dropped, and the rest of the
+# list still reads.
+@pytest.mark.parametrize(("kind", "change", "check"), [
+    pytest.param("playlist", lambda e: e.update(visualIdentity="square"),
+                 lambda listing: listing.cover is None, id="visual identity is not a dict"),
+    pytest.param("playlist", lambda e: e.update(visualIdentity={"image": "640.jpg"}),
+                 lambda listing: listing.cover is None, id="images are not a list"),
+    pytest.param("playlist", lambda e: e.update(visualIdentity={"image": ["640.jpg", None, {"url": 5}]}),
+                 lambda listing: listing.cover is None, id="images are not dicts with a text url"),
+    pytest.param("playlist", lambda e: e.update(subtitle=7),
+                 lambda listing: listing.owner == "", id="owner is not text"),
+    pytest.param("playlist", lambda e: e.update(subtitle=["Lantern Hill"]),
+                 lambda listing: listing.owner == "", id="owner is a list"),
+    pytest.param("playlist", lambda e: first_song(e).update(subtitle={"name": "Raffi"}),
+                 lambda listing: listing.songs[0].artists == "", id="song artists are not text"),
+    pytest.param("playlist", lambda e: first_song(e).update(duration="164000"),
+                 lambda listing: listing.songs[0].duration is None, id="song duration is text"),
+    pytest.param("playlist", lambda e: first_song(e).update(duration={"ms": 164000}),
+                 lambda listing: listing.songs[0].duration is None, id="song duration is a dict"),
+    pytest.param("playlist", lambda e: e["trackList"].insert(0, "Baby Beluga"),
+                 lambda listing: [song.title for song in listing.songs] == ["Song", "Song"],
+                 id="a song is not a dict"),
+    pytest.param("playlist", lambda e: first_song(e).update(title=["Song"]),
+                 lambda listing: [song.index for song in listing.songs] == [1], id="a song title is not text"),
+    pytest.param("playlist", lambda e: first_song(e).update(uri=1),
+                 lambda listing: [song.id for song in listing.songs] == ["spotify:track:0002"],
+                 id="a song uri is not text"),
+    pytest.param("track", lambda e: e.update(artists="Carly Rae Jepsen"),
+                 lambda listing: listing.owner == "" and listing.songs[0].artists == "", id="artists are not a list"),
+    pytest.param("track", lambda e: e.update(artists=["Carly Rae Jepsen", {"name": 5}]),
+                 lambda listing: listing.owner == "", id="artists are not dicts with a text name"),
+    pytest.param("track", lambda e: e.update(duration=[207_959]),
+                 lambda listing: listing.songs[0].duration is None, id="track duration is a list"),
+])
+def test_a_malformed_optional_field_degrades_instead_of_crashing(web, kind, change, check):
+    entity = track_entity() if kind == "track" else playlist_entity([listed(1), listed(2)])
+    change(entity)
+    serve(web, kind, {"track": "11dFghVXANMlKmJXsNCbNl", "playlist": "37i9dQZF1DX"}[kind], entity)
+
+    listing = music.read(TRACK_URL if kind == "track" else PLAYLIST_URL)
+
+    assert check(listing)
+
+
+@pytest.mark.parametrize(("kind", "change"), [
+    pytest.param("playlist", lambda e: e.update(name=5), id="playlist name is a number"),
+    pytest.param("playlist", lambda e: e.update(name={"text": "Car Songs"}), id="playlist name is a dict"),
+    pytest.param("track", lambda e: e.update(name=["Cut To The Feeling"]), id="track name is a list"),
+    pytest.param("playlist", lambda e: e.update(trackList="Baby Beluga"), id="track list is text"),
+    pytest.param("playlist", lambda e: e.update(trackList=["Baby Beluga", 5, None]), id="no song is a dict"),
+    pytest.param("playlist", lambda e: e.update(trackList=[{**listed(1), "uri": None}, {**listed(2), "title": 2}]),
+                 id="no song has a text uri and title"),
+    pytest.param("track", lambda e: e.update(uri=None), id="the track has no uri"),
+])
+def test_a_page_left_with_no_name_or_no_usable_song_answers_502_with_the_clean_message(
+    client, web, monkeypatch, kind, change,
+):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    entity = track_entity() if kind == "track" else playlist_entity([listed(1), listed(2)])
+    change(entity)
+    serve(web, kind, {"track": "11dFghVXANMlKmJXsNCbNl", "playlist": "37i9dQZF1DX"}[kind], entity)
+
+    response = client.post("/api/playlist/preview", json={"url": TRACK_URL if kind == "track" else PLAYLIST_URL})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == music.SPOTIFY_UNREADABLE
 
 
 # ----------------------------------------------------------------- preview
@@ -272,7 +349,7 @@ def search(monkeypatch):
     recorded: list[list[str]] = []
     timeouts: list[float] = []
 
-    def install(payload=None, *, stdout: str | None = None, returncode: int = 0,
+    def install(payload=None, *, stdout: str | None = None, returncode: int = 0, stderr: str = "",
                 raises: Exception | None = None) -> list[list[str]]:
         def run(command, **kwargs):
             recorded.append(list(command))
@@ -280,7 +357,7 @@ def search(monkeypatch):
             if raises:
                 raise raises
             body = stdout if stdout is not None else json.dumps(payload)
-            return SimpleNamespace(returncode=returncode, stdout=body, stderr="")
+            return SimpleNamespace(returncode=returncode, stdout=body, stderr=stderr)
 
         monkeypatch.setattr(music.shutil, "which", lambda name: "/usr/bin/yt-dlp")
         monkeypatch.setattr(music.subprocess, "run", run)
@@ -348,16 +425,40 @@ def test_a_search_with_no_entries_is_no_match(search, payload):
     assert music.find_video(song()) is None
 
 
-def test_unreadable_output_is_no_match(search):
+def test_unreadable_output_from_a_clean_exit_is_no_match(search):
+    search(stdout="not json")
+
+    assert music.find_video(song()) is None
+
+
+def test_a_search_that_exits_with_an_error_and_no_entries_failed_with_yt_dlps_reason(search):
+    search(stdout="", returncode=1,
+           stderr="WARNING: retrying\nERROR: [youtube:search] Unable to download API page: HTTP Error 429\n")
+
+    with pytest.raises(music.SearchFailed) as failed:
+        music.find_video(song())
+
+    assert str(failed.value) == "ERROR: [youtube:search] Unable to download API page: HTTP Error 429"
+
+
+def test_a_failed_search_with_nothing_on_stderr_still_says_it_failed(search):
     search(stdout="ERROR: not json", returncode=1)
 
-    assert music.find_video(song()) is None
+    with pytest.raises(music.SearchFailed, match="^the search failed.$"):
+        music.find_video(song())
 
 
-def test_a_timed_out_search_is_no_match(search):
+def test_a_search_that_exits_with_an_error_but_lists_videos_is_still_matched_by_length(search):
+    search({"entries": [entry("studio", 160.0)]}, returncode=1, stderr="ERROR: one entry was refused")
+
+    assert music.find_video(song(duration=164.0)) == "studio"
+
+
+def test_a_timed_out_search_failed_rather_than_found_no_match(search):
     search(raises=subprocess.TimeoutExpired("yt-dlp", 120))
 
-    assert music.find_video(song()) is None
+    with pytest.raises(music.SearchFailed, match="^the search timed out.$"):
+        music.find_video(song())
 
 
 def test_a_missing_yt_dlp_is_an_error_not_a_missed_song(monkeypatch):
@@ -414,16 +515,20 @@ def stage_ready(monkeypatch):
 def youtube(monkeypatch):
     """Stand in for yt-dlp: a search answers from `found`, a download writes the mp3 it was asked for.
 
-    `found` maps a search query to a video id. A video in `failing` exits with
+    `found` maps a search query to a video id, and a query in `search_failing`
+    exits with that stderr and lists nothing. A video in `failing` exits with
     that stderr and writes nothing; one in `crashing` raises, the way a worker
     that dies mid-import would leave the stage half-built.
     """
-    state = SimpleNamespace(found={}, failing={}, crashing=set(), searches=[], downloads=[], timeouts=[])
+    state = SimpleNamespace(found={}, search_failing={}, failing={}, crashing=set(),
+                            searches=[], downloads=[], timeouts=[])
 
     def run(command, **kwargs):
         if "--flat-playlist" in command:
             query = command[-1].split(":", 1)[1]
             state.searches.append(query)
+            if query in state.search_failing:
+                return SimpleNamespace(returncode=1, stdout="", stderr=state.search_failing[query])
             video = state.found.get(query)
             entries = [{"id": video, "title": query, "duration": 180.0}] if video else []
             return SimpleNamespace(returncode=0, stdout=json.dumps({"entries": entries}), stderr="")
@@ -523,6 +628,27 @@ def test_an_unmatched_and_a_failed_song_are_skipped_by_name_while_the_rest_land(
     assert result["skipped"] == [
         "Down by the Bay - Raffi: no close match on YouTube.",
         "Shake My Sillies Out - Raffi: ERROR: [youtube] yt0004: Video unavailable",
+    ]
+
+
+def test_a_failed_search_is_skipped_with_its_reason_not_as_no_close_match(stage_ready, web, youtube, monkeypatch):
+    serve_car_songs(web, youtube)
+    youtube.search_failing["Raffi Down by the Bay"] = "ERROR: [youtube:search] HTTP Error 429: Too Many Requests"
+    run = music.subprocess.run
+
+    def stalls_on_the_sillies(command, **kwargs):
+        if command[-1].endswith("Shake My Sillies Out"):
+            raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(music.subprocess, "run", stalls_on_the_sillies)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-search-failed")
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+    assert result["skipped"] == [
+        "Down by the Bay - Raffi: ERROR: [youtube:search] HTTP Error 429: Too Many Requests",
+        "Shake My Sillies Out - Raffi: the search timed out.",
     ]
 
 

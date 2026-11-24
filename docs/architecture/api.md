@@ -173,8 +173,9 @@ An unreadable Spotify page is 502, and an artist link is 400.
 
 The song list comes from Spotify's public embed page, so only public lists work. The audio is not
 Spotify's: each song is found with a YouTube search and accepted only when its length is within 30
-seconds of Spotify's. A song with no close match, or one that fails to download, is left out and
-named in the collection's `skipped` list.
+seconds of Spotify's. A song with no close match, one whose search fails or times out, or one that
+fails to download, is left out and named in the collection's `skipped` list with the reason. A
+failed search is never reported as no close match.
 
 ## Upload one collection from several files
 

@@ -90,9 +90,12 @@ def is_artist_url(url: str) -> bool:
 
 # ----------------------------------------------------------------- listing
 
-def _artist_names(text: str) -> str:
-    # Spotify joins artists with a comma and a no-break space.
-    return " ".join((text or "").replace(" ", " ").split())
+def _artist_names(text: object) -> str:
+    # Spotify joins artists with a comma and a no-break space. Anything but
+    # text is a page Spotify changed, and the names are optional.
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.replace(" ", " ").split())
 
 
 def _seconds(milliseconds: object) -> float | None:
@@ -102,7 +105,8 @@ def _seconds(milliseconds: object) -> float | None:
 
 
 def _cover(entity: dict) -> str | None:
-    images = (entity.get("visualIdentity") or {}).get("image")
+    identity = entity.get("visualIdentity")
+    images = identity.get("image") if isinstance(identity, dict) else None
     widest: tuple[float, str] | None = None
     for image in images if isinstance(images, list) else []:
         if not isinstance(image, dict) or not isinstance(image.get("url"), str) or not image["url"]:
@@ -127,7 +131,7 @@ def _raw_songs(kind: str, entity: dict) -> list[dict[str, Any]]:
                  "duration": entity.get("duration"), "playable": entity.get("isPlayable"),
                  "explicit": entity.get("isExplicit")}]
     items = entity.get("trackList")
-    return [{"uri": item.get("uri"), "title": item.get("title"), "artists": item.get("subtitle") or "",
+    return [{"uri": item.get("uri"), "title": item.get("title"), "artists": item.get("subtitle"),
              "duration": item.get("duration"), "playable": item.get("isPlayable"),
              "explicit": item.get("isExplicit")}
             for item in items if isinstance(item, dict)] if isinstance(items, list) else []
@@ -162,7 +166,7 @@ def read(url: str) -> Listing:
     if not songs:
         raise RuntimeError(SPOTIFY_UNREADABLE)
 
-    owner = _track_artists(entity) if kind == "track" else _artist_names(entity.get("subtitle") or "")
+    owner = _track_artists(entity) if kind == "track" else _artist_names(entity.get("subtitle"))
     return Listing(kind=kind, title=entity["name"], owner=owner, cover=_cover(entity), songs=songs,
                    reached_limit=kind == "playlist" and len(raw) >= PLAYLIST_LIMIT)
 
@@ -196,10 +200,24 @@ def _number(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def _closest(song: Song, entries: list[Any]) -> str | None:
+class SearchFailed(Exception):
+    """The YouTube search itself failed, so nobody knows whether a close match exists.
+
+    The message says why, in yt-dlp's words where it gave any, so the skipped
+    line never blames the song for a refused or stalled search.
+    """
+
+
+def _videos(info: object) -> list[dict[str, Any]]:
+    """The search results that name a video, in rank order."""
+    entries = info.get("entries") if isinstance(info, dict) else None
+    return [entry for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"]
+            ] if isinstance(entries, list) else []
+
+
+def _closest(song: Song, found: list[dict[str, Any]]) -> str | None:
     """The video whose length is closest to the song's, or None when none is near enough."""
-    found = [entry for entry in entries
-             if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"]]
     if song.duration is None:
         # With no length to compare, search rank is all there is to go on.
         return found[0]["id"] if found else None
@@ -222,9 +240,11 @@ def find_video(song: Song) -> str | None:
 
     The search is flat, so nothing downloads. A song with no close match is
     skipped rather than given the first result: a wrong recording that nobody
-    notices is worse than a named gap. The query is one argv element that
-    begins `ytsearch5:`, so a title that starts with `-` or holds quotes is
-    never read as an option and never meets a shell.
+    notices is worse than a named gap. A search that timed out, or exited
+    with an error and listed no video, raises SearchFailed instead, since it
+    says nothing about whether a match exists. The query is one argv element
+    that begins `ytsearch5:`, so a title that starts with `-` or holds quotes
+    is never read as an option and never meets a shell.
     """
     if not shutil.which("yt-dlp"):
         raise RuntimeError(YT_DLP_MISSING)
@@ -236,11 +256,17 @@ def find_video(song: Song) -> str | None:
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=SEARCH_TIMEOUT)
-        info = json.loads(proc.stdout or "{}")
-    except (subprocess.TimeoutExpired, json.JSONDecodeError):
-        return None
-    entries = info.get("entries") if isinstance(info, dict) else None
-    return _closest(song, entries) if isinstance(entries, list) else None
+    except subprocess.TimeoutExpired:
+        raise SearchFailed("the search timed out.") from None
+    try:
+        found = _videos(json.loads(proc.stdout or "{}"))
+    except json.JSONDecodeError:
+        found = []
+    # One refused entry makes yt-dlp exit non-zero after listing the rest, so
+    # the exit code alone does not mean the search failed.
+    if not found and proc.returncode != 0:
+        raise SearchFailed(ingest.error_summary(proc.stderr) or "the search failed.")
+    return _closest(song, found)
 
 
 # ------------------------------------------------------------------ import
@@ -379,7 +405,11 @@ def import_music(
             os.replace(earlier[key], target)
         if not target.is_file():
             progress(f"Finding {position}/{total}: {song.title}", audio.step_percent(position - 1, total))
-            video_id = find_video(song)
+            try:
+                video_id = find_video(song)
+            except SearchFailed as failed:
+                skipped.append(f"{song.label}: {failed}")
+                continue
             if video_id is None:
                 skipped.append(f"{song.label}: no close match on YouTube.")
                 continue

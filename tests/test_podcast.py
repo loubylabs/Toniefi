@@ -127,6 +127,20 @@ def test_an_unreadable_spotify_page_points_at_the_apple_link(web):
         podcast.resolve_feed("https://open.spotify.com/show/4aBcDeFg")
 
 
+@pytest.mark.parametrize("entity", [
+    {"name": 7, "subtitle": "Lantern Hill Audio"},
+    {"name": ["Moonbeam Bedtime Tales"], "subtitle": "Lantern Hill Audio"},
+    {"name": "Moonbeam Bedtime Tales", "subtitle": {"text": "Lantern Hill Audio"}},
+])
+def test_a_spotify_page_whose_name_or_publisher_is_not_text_is_unreadable(web, entity):
+    web.routes["open.spotify.com/embed/show/4aBcDeFg"] = reply(spotify_page(entity))
+
+    with pytest.raises(RuntimeError) as raised:
+        podcast.resolve_feed("https://open.spotify.com/show/4aBcDeFg")
+
+    assert str(raised.value) == podcast.SPOTIFY_UNREADABLE
+
+
 # -------------------------------------------------------------- feed reading
 
 ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"

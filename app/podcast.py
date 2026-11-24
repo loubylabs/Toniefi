@@ -154,7 +154,8 @@ def spotify_entity(kind: str, spotify_id: str, *, unreadable: str = SPOTIFY_UNRE
     Podcasts and music both read this page, so there is one fetch and one
     parse. Each caller passes the wording that suits its own users when the
     page cannot be read, and checks for the fields its own kind needs: a
-    song has no `subtitle`, so it is not demanded here.
+    song has no `subtitle`, so it is not demanded here. Every kind needs a
+    name that is text, so a page whose name is anything else is unreadable.
     """
     resp = _fetch(f"{SPOTIFY_EMBED}/{kind}/{spotify_id}", what="Spotify")
     match = _NEXT_DATA.search(resp.text)
@@ -162,7 +163,7 @@ def spotify_entity(kind: str, spotify_id: str, *, unreadable: str = SPOTIFY_UNRE
         entity = json.loads(match.group(1))["props"]["pageProps"]["state"]["data"]["entity"]
     except (AttributeError, KeyError, TypeError, ValueError):
         raise RuntimeError(unreadable) from None
-    if not isinstance(entity, dict) or not entity.get("name"):
+    if not isinstance(entity, dict) or not isinstance(entity.get("name"), str) or not entity["name"]:
         raise RuntimeError(unreadable)
     return entity
 
@@ -194,7 +195,7 @@ def resolve_feed(url: str) -> Resolved:
         entity = spotify_entity(kind, spotify_id)
         # Both show and episode pages name a publisher or show in `subtitle`,
         # and the feed search cannot run without it.
-        if not entity.get("subtitle"):
+        if not isinstance(entity.get("subtitle"), str) or not entity["subtitle"]:
             raise RuntimeError(SPOTIFY_UNREADABLE)
         if kind == "show":
             return Resolved(_search_feed(entity["name"], entity["subtitle"]))

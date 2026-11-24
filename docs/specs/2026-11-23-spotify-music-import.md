@@ -91,6 +91,12 @@ Rules:
 - A page with no entity, no name, or no songs raises the existing "Spotify changed its page"
   error, reworded so it no longer tells a music user to try Apple Podcasts. The podcast reader
   keeps its own wording.
+- A page Spotify changed must never crash the reader. A field of the wrong type is treated as
+  missing: a bad cover, owner, artist list or duration becomes empty or unknown, and the song
+  stays; a song whose `uri` or `title` is not text is dropped. A `name` that is not text, or a
+  list left with no usable song, raises the "Spotify changed its page" error, which the preview
+  answers as a 502. The shared reader demands a text `name` for every kind, and the podcast
+  reader also demands a text `subtitle`.
 - A playlist that returns exactly 100 songs has reached the page's limit.
 
 ## Preview
@@ -159,7 +165,7 @@ import. `prepare.run` routes a music link to it before the podcast and URL branc
      rename that file to the new position instead of downloading it again.
    - Report `Finding p/n: <song>` with a measured percent.
    - Find a YouTube video (below). No match adds `"<song> - <artists>: no close match on YouTube."`
-     to `skipped`.
+     to `skipped`; a failed search adds `"<song> - <artists>: <why it failed>"` instead.
    - Download it (below). A failure adds `"<song> - <artists>: <yt-dlp's error summary>"` to
      `skipped`.
 6. Fail with the step-3 message if no song was stored.
@@ -191,8 +197,13 @@ From the returned entries, in rank order:
   `duration`. Pick the one whose length is closest to the Spotify length; a tie goes to the higher
   rank. If the closest is more than 30 seconds away, there is no match.
 - When the Spotify length is unknown: take the first entry.
-- Entries without an `id` are never considered. No entries, unreadable output, or a timeout
-  (120 seconds) means no match.
+- Entries without an `id` are never considered. A search that exits cleanly with no entries or
+  unreadable output means no match, and the song is skipped as "no close match on YouTube."
+- A search that failed is not a missed match, so it is never worded as one. A search that exits
+  non-zero and lists no video skips the song with yt-dlp's error summary, or "the search
+  failed." when yt-dlp said nothing. A timeout (120 seconds) skips it with "the search timed
+  out." A non-zero exit that still lists videos is matched as usual, since one refused entry
+  makes yt-dlp exit non-zero after listing the rest.
 
 30 seconds is a constant named in the module. It is loose enough for an official video with a
 short intro, and tight enough to refuse a live set or an hour-long loop.
@@ -250,11 +261,12 @@ Python (`tests/test_music.py`):
 - Link shapes: playlist, album, track, with locale and embed segments; artist, show, episode and
   non-Spotify links are not music links.
 - Listing: playlist, album and single track; no-break spaces; a repeated uri listed once; cover
-  choice; unreadable page.
+  choice; unreadable page; each malformed field degrades or answers 502, never a crash.
 - Preview: shape, `kind`, the explicit suffix, `available`, `notice` at exactly 100 songs and
   absent at 99.
 - Match: closest length wins; a tie goes to rank; nothing within 30 seconds is no match; unknown
-  Spotify length takes the first; entries without duration or id; failed search.
+  Spotify length takes the first; entries without duration or id; a failed or timed-out search
+  is skipped with its reason, not as no match.
 - Import: picks by id in list order; unpicked takes available songs; a picked id that left the
   list; one unmatched and one failed song are skipped and named while the rest land; nothing
   stored fails; an existing file is not downloaded again; titles and `source` in the manifest; a
