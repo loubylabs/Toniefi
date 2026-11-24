@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable
 from uuid import uuid4
 
-from . import forge, ingest, library, podcast
+from . import forge, ingest, library, music, podcast
 
 DEFAULT_OPTIONS = {
     "use_chapters": True,
@@ -43,9 +43,17 @@ def run(payload: dict[str, Any], *, progress: Progress, checkpoint: Checkpoint) 
         def extracting(message: str, percent: float | None = None) -> None:
             progress(f"extracting: {message}", percent)
 
-        # A raw feed URL has no shape to know it by, so the preview's word for
-        # it travels in the payload.
-        if current.get("kind") == "podcast" or podcast.is_podcast_url(current["url"]):
+        # A music link is known by its shape alone, so it is routed before a
+        # podcast `kind` could claim it. A raw feed URL has no shape to know it
+        # by, so the preview's word for it travels in the payload.
+        if music.is_music_url(current["url"]):
+            extracted = music.import_music(
+                current["url"],
+                stage_id=stage_id,
+                track_ids=current.get("track_ids"),
+                progress=extracting,
+            )
+        elif current.get("kind") == "podcast" or podcast.is_podcast_url(current["url"]):
             extracted = podcast.import_feed(
                 current["url"],
                 stage_id=stage_id,

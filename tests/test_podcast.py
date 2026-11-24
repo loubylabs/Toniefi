@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app import audio, config, db, ingest, library, main, podcast, prepare
 
-from .conftest import reply, reply_json, spotify_page
+from .conftest import capture_jobs, reply, reply_json, spotify_page
 
 FEED_URL = "https://feeds.example.test/moonbeam.xml"
 APPLE_LINK = "https://podcasts.apple.com/us/podcast/moonbeam-bedtime-tales/id1234567890"
@@ -648,11 +648,29 @@ def test_preview_route_reports_an_unreadable_spotify_page(client, web, monkeypat
     assert response.json()["detail"] == podcast.SPOTIFY_UNREADABLE
 
 
-def capture_jobs(monkeypatch) -> list[dict]:
-    payloads: list[dict] = []
-    monkeypatch.setattr(main.jobs, "enqueue_many",
-                        lambda entries: payloads.extend(entry[2] for entry in entries) or ["job-1"])
-    return payloads
+def test_preview_route_answers_a_spotify_music_link_as_music_not_as_a_podcast(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    web.routes["open.spotify.com/embed/track/1a2b3c"] = reply(spotify_page({
+        "type": "track", "name": "Baby Beluga", "uri": "spotify:track:1a2b3c",
+        "artists": [{"name": "Raffi"}], "duration": 164_000, "isPlayable": True, "isExplicit": False,
+    }))
+
+    response = client.post("/api/playlist/preview", json={"url": "https://open.spotify.com/track/1a2b3c"})
+
+    assert response.status_code == 200
+    assert response.json()["kind"] == "music"
+    assert response.json()["entries"] == [
+        {"index": 1, "id": "spotify:track:1a2b3c", "title": "Baby Beluga - Raffi", "available": True}]
+
+
+def test_prepare_enqueues_a_spotify_music_link(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={"sources": [{"url": "https://open.spotify.com/album/1a2b3c"}]})
+
+    assert response.status_code == 200
+    assert payloads[0]["url"] == "https://open.spotify.com/album/1a2b3c"
+    assert payloads[0]["track_ids"] is None
 
 
 def test_prepare_carries_the_podcast_kind_into_the_job(client, monkeypatch):

@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
-from app import music
+from app import audio, config, db, library, main, music, prepare
 
-from .conftest import reply, spotify_page
+from .conftest import capture_jobs, reply, spotify_page
 
 PLAYLIST_URL = "https://open.spotify.com/playlist/37i9dQZF1DX"
 ALBUM_URL = "https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc"
@@ -394,3 +396,426 @@ def test_the_player_client_arguments_are_passed_through(search, monkeypatch):
 
     assert "--extractor-args" in commands[0]
     assert "youtube:player_client=android,web" in commands[0]
+
+
+# ------------------------------------------------------------------ import
+
+@pytest.fixture
+def stage_ready(monkeypatch):
+    """A real library and database under the test's tmp_path, with durations faked."""
+    config.ensure_dirs()
+    db.init()
+    monkeypatch.setattr(audio, "duration_seconds", lambda path: 10)
+
+
+@pytest.fixture
+def youtube(monkeypatch):
+    """Stand in for yt-dlp: a search answers from `found`, a download writes the mp3 it was asked for.
+
+    `found` maps a search query to a video id. A video in `failing` exits with
+    that stderr and writes nothing; one in `crashing` raises, the way a worker
+    that dies mid-import would leave the stage half-built.
+    """
+    state = SimpleNamespace(found={}, failing={}, crashing=set(), searches=[], downloads=[], timeouts=[])
+
+    def run(command, **kwargs):
+        if "--flat-playlist" in command:
+            query = command[-1].split(":", 1)[1]
+            state.searches.append(query)
+            video = state.found.get(query)
+            entries = [{"id": video, "title": query, "duration": 180.0}] if video else []
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"entries": entries}), stderr="")
+        state.downloads.append(list(command))
+        state.timeouts.append(kwargs.get("timeout"))
+        video = command[-1].rsplit("=", 1)[1]
+        if video in state.crashing:
+            raise RuntimeError("the worker died")
+        if video in state.failing:
+            return SimpleNamespace(returncode=1, stdout="", stderr=state.failing[video])
+        target = Path(command[command.index("-o") + 1].replace("%(ext)s", "mp3"))
+        target.write_bytes(f"audio of {video}".encode())
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(music.shutil, "which", lambda name: "/usr/bin/yt-dlp")
+    monkeypatch.setattr(music.subprocess, "run", run)
+    return state
+
+
+CAR_SONGS = [
+    listed(1, "Baby Beluga", "Raffi"),
+    listed(2, "Down by the Bay", "Raffi"),
+    listed(3, "Wheels on the Bus", "Kids Choir", playable=False),
+    listed(4, "Shake My Sillies Out", "Raffi"),
+]
+
+
+def serve_car_songs(web, youtube, tracks: list[dict] = CAR_SONGS) -> None:
+    serve(web, "playlist", "37i9dQZF1DX", playlist_entity(tracks))
+    for track in tracks:
+        query = " ".join(part for part in (track["subtitle"], track["title"]) if part)
+        youtube.found[query] = f"yt{track['uri'][-4:]}"
+
+
+def names(result) -> list[str]:
+    return [track["name"] for track in result["tracks"]]
+
+
+def titles(result) -> list[str]:
+    return [track["title"] for track in result["tracks"]]
+
+
+def test_picked_songs_are_stored_in_list_order_under_their_labels(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-pick",
+                                track_ids=["spotify:track:0004", "spotify:track:0001"])
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3", "002-shake-my-sillies-out-raffi.mp3"]
+    assert titles(result) == ["Baby Beluga - Raffi", "Shake My Sillies Out - Raffi"]
+    assert (Path(result["path"]) / "001-baby-beluga-raffi.mp3").read_bytes() == b"audio of yt0001"
+    assert result["title"] == "Car Songs"
+    assert result["source"] == "music"
+    assert result["url"] == PLAYLIST_URL
+    assert result["uploader"] == "Lantern Hill"
+    assert result["skipped"] == []
+
+
+def test_a_picked_song_that_is_unplayable_on_spotify_is_still_brought(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-unplayable", track_ids=["spotify:track:0003"])
+
+    assert titles(result) == ["Wheels on the Bus - Kids Choir"]
+
+
+def test_an_unpicked_import_takes_every_available_song(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-all")
+
+    assert titles(result) == ["Baby Beluga - Raffi", "Down by the Bay - Raffi", "Shake My Sillies Out - Raffi"]
+    assert names(result)[2] == "003-shake-my-sillies-out-raffi.mp3"
+
+
+@pytest.mark.parametrize(("gone", "line"), [
+    (["spotify:track:9998"], "1 picked song is no longer in the list."),
+    (["spotify:track:9998", "spotify:track:9999"], "2 picked songs are no longer in the list."),
+])
+def test_picked_songs_that_left_the_list_are_counted_in_skipped(stage_ready, web, youtube, gone, line):
+    serve_car_songs(web, youtube)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-gone", track_ids=["spotify:track:0002", *gone])
+
+    assert titles(result) == ["Down by the Bay - Raffi"]
+    assert result["skipped"] == [line]
+
+
+def test_an_unmatched_and_a_failed_song_are_skipped_by_name_while_the_rest_land(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+    del youtube.found["Raffi Down by the Bay"]
+    youtube.failing["yt0004"] = "ERROR: [youtube] yt0004: Video unavailable"
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-some-fail")
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+    assert result["skipped"] == [
+        "Down by the Bay - Raffi: no close match on YouTube.",
+        "Shake My Sillies Out - Raffi: ERROR: [youtube] yt0004: Video unavailable",
+    ]
+
+
+def test_an_import_that_stores_no_song_fails_rather_than_publishing_nothing(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+    youtube.found.clear()
+
+    with pytest.raises(RuntimeError, match=music.NONE_FOUND):
+        music.import_music(PLAYLIST_URL, stage_id="music-none-found")
+
+    assert library.find_published_stage("music-none-found") is None
+
+
+def test_a_pick_whose_every_song_left_the_list_fails_without_searching(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+
+    with pytest.raises(RuntimeError, match=music.NONE_FOUND):
+        music.import_music(PLAYLIST_URL, stage_id="music-all-gone", track_ids=["spotify:track:9999"])
+
+    assert youtube.searches == []
+
+
+def test_an_unpicked_import_of_a_list_where_every_song_is_unplayable_fails(stage_ready, web, youtube):
+    serve_car_songs(web, youtube, [listed(1, "Gone", playable=False), listed(2, "Also Gone", playable=False)])
+
+    with pytest.raises(RuntimeError, match=music.NONE_FOUND):
+        music.import_music(PLAYLIST_URL, stage_id="music-unplayable-all")
+
+    assert youtube.searches == []
+    assert library.find_published_stage("music-unplayable-all") is None
+
+
+def test_a_retried_import_keeps_stored_files_and_searches_a_skipped_song_again(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+    del youtube.found["Raffi Down by the Bay"]
+    youtube.crashing.add("yt0004")
+
+    with pytest.raises(RuntimeError, match="the worker died"):
+        music.import_music(PLAYLIST_URL, stage_id="music-retry")
+
+    youtube.found["Raffi Down by the Bay"] = "yt0002"
+    youtube.crashing.clear()
+    youtube.downloads.clear()
+    youtube.searches.clear()
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-retry")
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3", "002-down-by-the-bay-raffi.mp3",
+                             "003-shake-my-sillies-out-raffi.mp3"]
+    assert [command[-1] for command in youtube.downloads] == [
+        "https://www.youtube.com/watch?v=yt0002", "https://www.youtube.com/watch?v=yt0004"]
+    assert "Raffi Baby Beluga" not in youtube.searches
+    assert "Raffi Down by the Bay" in youtube.searches
+    assert result["skipped"] == []
+
+
+def test_titles_with_nothing_to_slug_still_get_valid_and_distinct_file_names(stage_ready, web, youtube):
+    serve_car_songs(web, youtube, [listed(1, "♪♪♪", ""), listed(2, "★ ★", "")])
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-symbols")
+
+    assert names(result) == ["001-untitled.mp3", "002-untitled.mp3"]
+    assert titles(result) == ["♪♪♪", "★ ★"]
+    assert (Path(result["path"]) / "002-untitled.mp3").read_bytes() == b"audio of yt0002"
+
+
+def test_finding_reports_each_song_with_a_measured_percent(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+    reported = []
+
+    music.import_music(PLAYLIST_URL, stage_id="music-progress",
+                       track_ids=["spotify:track:0001", "spotify:track:0002"],
+                       progress=lambda message, percent=None: reported.append((message, percent)))
+
+    assert ("Finding 1/2: Baby Beluga", 0.0) in reported
+    assert ("Finding 2/2: Down by the Bay", 50.0) in reported
+
+
+def test_the_download_lands_in_scratch_under_the_work_dir_and_moves_in_under_its_final_name(
+    stage_ready, web, youtube, monkeypatch,
+):
+    monkeypatch.setattr(music.config, "YTDLP_PLAYER_CLIENTS", "android,web")
+    serve_car_songs(web, youtube)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-argv", track_ids=["spotify:track:0001"])
+
+    command = youtube.downloads[0]
+    scratch = Path(command[command.index("-o") + 1]).parent
+    assert command == [
+        "yt-dlp", "--no-playlist", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+        "--no-progress", "--no-warnings",
+        "--extractor-args", "youtube:player_client=android,web",
+        "-o", str(scratch / "song.%(ext)s"), "https://www.youtube.com/watch?v=yt0001",
+    ]
+    assert scratch.parent == config.WORK_DIR
+    assert not scratch.exists()
+    assert youtube.timeouts == [1800]
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+
+
+def test_a_download_is_judged_by_the_mp3_it_left_not_by_its_exit_code(stage_ready, web, youtube, monkeypatch):
+    serve_car_songs(web, youtube)
+    real = music.subprocess.run
+
+    def exits_badly(command, **kwargs):
+        answer = real(command, **kwargs)
+        if "--flat-playlist" in command:
+            return answer
+        return SimpleNamespace(returncode=1, stdout="", stderr="ERROR: postprocessing hiccup")
+
+    monkeypatch.setattr(music.subprocess, "run", exits_badly)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-exit-code", track_ids=["spotify:track:0001"])
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+    assert result["skipped"] == []
+
+
+def test_a_clean_exit_that_left_no_mp3_skips_the_song(stage_ready, web, youtube, monkeypatch):
+    serve_car_songs(web, youtube)
+    real = music.subprocess.run
+
+    def writes_nothing_for_the_bay(command, **kwargs):
+        if command[-1].endswith("=yt0002"):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(music.subprocess, "run", writes_nothing_for_the_bay)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-no-mp3",
+                                track_ids=["spotify:track:0001", "spotify:track:0002"])
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+    assert result["skipped"] == ["Down by the Bay - Raffi: yt-dlp produced no audio."]
+
+
+def test_a_download_that_times_out_skips_the_song(stage_ready, web, youtube, monkeypatch):
+    serve_car_songs(web, youtube)
+    real = music.subprocess.run
+
+    def stalls_on_the_bay(command, **kwargs):
+        if command[-1].endswith("=yt0002"):
+            raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(music.subprocess, "run", stalls_on_the_bay)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-stall",
+                                track_ids=["spotify:track:0001", "spotify:track:0002"])
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+    assert result["skipped"] == ["Down by the Bay - Raffi: the download took longer than 30 minutes."]
+
+
+def test_the_cover_is_saved_beside_the_songs(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+    web.routes["img.example.test/640.jpg"] = reply(b"cover bytes", content_type="image/jpeg")
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-cover", track_ids=["spotify:track:0001"])
+
+    assert (Path(result["path"]) / "cover.jpg").read_bytes() == b"cover bytes"
+
+
+def test_a_cover_that_fails_to_download_is_ignored(stage_ready, web, youtube):
+    serve_car_songs(web, youtube)
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-no-cover", track_ids=["spotify:track:0001"])
+
+    assert not (Path(result["path"]) / "cover.jpg").exists()
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+
+
+def test_a_missing_yt_dlp_fails_the_import_before_reading_spotify(stage_ready, web, monkeypatch):
+    monkeypatch.setattr(music.shutil, "which", lambda name: None)
+
+    with pytest.raises(RuntimeError, match=music.YT_DLP_MISSING):
+        music.import_music(PLAYLIST_URL, stage_id="music-no-tool")
+
+    assert web.seen == []
+
+
+# ------------------------------------------------------------------ routes
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(main.app)
+
+
+def refuse(*args, **kwargs):
+    raise AssertionError("this path must not run")
+
+
+def test_the_preview_route_refuses_an_artist_link_with_a_400(client, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    monkeypatch.setattr(main.podcast, "preview", refuse)
+
+    response = client.post("/api/playlist/preview",
+                           json={"url": "https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == music.ARTIST_REFUSAL
+
+
+def test_the_preview_route_reports_an_unreadable_music_page_as_a_502(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    web.routes["open.spotify.com/embed/playlist/37i9dQZF1DX"] = reply("<html><body>Nothing</body></html>")
+
+    response = client.post("/api/playlist/preview", json={"url": PLAYLIST_URL})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == music.SPOTIFY_UNREADABLE
+
+
+def test_the_preview_route_carries_the_limit_notice(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    serve(web, "playlist", "37i9dQZF1DX", playlist_entity([listed(n) for n in range(1, 101)]))
+
+    response = client.post("/api/playlist/preview", json={"url": PLAYLIST_URL})
+
+    assert response.status_code == 200
+    assert response.json()["notice"] == music.LIMIT_NOTICE
+
+
+def test_prepare_carries_the_picked_track_ids_into_the_job(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={
+        "sources": [{"url": f"{PLAYLIST_URL}?si=abc", "track_ids": ["spotify:track:0002", "spotify:track:0001"]}],
+    })
+
+    assert response.status_code == 200
+    assert payloads[0]["track_ids"] == ["spotify:track:0002", "spotify:track:0001"]
+    assert payloads[0]["playlist_items"] is None
+    assert payloads[0]["episode_ids"] is None
+
+
+def test_prepare_carries_no_track_ids_for_other_sources(client, monkeypatch):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={"sources": [{"url": "https://example.test/story"}]})
+
+    assert response.status_code == 200
+    assert payloads[0]["track_ids"] is None
+
+
+@pytest.mark.parametrize(("source", "detail"), [
+    ({"url": PLAYLIST_URL, "track_ids": []}, "Pick at least one song, or remove that source."),
+    ({"url": "https://www.youtube.com/playlist?list=PL1", "track_ids": ["spotify:track:0001"]},
+     "Only a Spotify music source can pick songs."),
+    ({"url": "https://open.spotify.com/show/4aBcDeFg", "track_ids": ["spotify:track:0001"]},
+     "Only a Spotify music source can pick songs."),
+    ({"url": "https://feeds.example.test/moonbeam.xml", "kind": "podcast", "track_ids": ["spotify:track:0001"]},
+     "Only a Spotify music source can pick songs."),
+    ({"url": ALBUM_URL, "playlist_items": [1]},
+     "A Spotify music source picks songs with track_ids, not playlist_items or episode_ids."),
+    ({"url": TRACK_URL, "episode_ids": ["ep-1"]},
+     "A Spotify music source picks songs with track_ids, not playlist_items or episode_ids."),
+    ({"url": "https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg"}, music.ARTIST_REFUSAL),
+])
+def test_prepare_refuses_a_pick_that_does_not_fit_the_source(client, monkeypatch, source, detail):
+    payloads = capture_jobs(monkeypatch)
+
+    response = client.post("/api/prepare", json={"sources": [source]})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+    assert payloads == []
+
+
+def run_prepare(monkeypatch, payload: dict) -> dict:
+    seen: dict = {}
+    monkeypatch.setattr(prepare.music, "import_music",
+                        lambda url, **kw: seen.update(url=url, via="music", **kw) or {"slug": "car-songs"})
+    monkeypatch.setattr(prepare.podcast, "import_feed", refuse)
+    monkeypatch.setattr(prepare.ingest, "import_url", refuse)
+    monkeypatch.setattr(prepare.forge, "run_collection_stage", lambda stage_id, **kw: {"slug": "car-songs"})
+    monkeypatch.setattr(prepare.library, "find_published_stage", lambda stage_id: None)
+    monkeypatch.setattr(prepare.library, "collection_stage", lambda stage_id: None)
+    prepare.run({**payload, "stage_id": "url-music"},
+                progress=lambda message, percent=None: None,
+                checkpoint=lambda updated: None)
+    return seen
+
+
+def test_prepare_run_sends_a_music_link_to_the_music_import_with_its_picks(monkeypatch):
+    seen = run_prepare(monkeypatch, {"url": PLAYLIST_URL, "track_ids": ["spotify:track:0001"]})
+
+    assert seen["via"] == "music"
+    assert seen["url"] == PLAYLIST_URL
+    assert seen["stage_id"] == "url-music"
+    assert seen["track_ids"] == ["spotify:track:0001"]
+
+
+def test_prepare_run_sends_an_unpicked_music_link_to_the_music_import(monkeypatch):
+    seen = run_prepare(monkeypatch, {"url": ALBUM_URL})
+
+    assert seen["via"] == "music"
+    assert seen["track_ids"] is None

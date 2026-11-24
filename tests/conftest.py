@@ -8,7 +8,7 @@ from typing import Callable
 import httpx
 import pytest
 
-from app import config, db, ingest, podcast
+from app import config, db, ingest, main, podcast
 
 Answer = Callable[[httpx.Request], httpx.Response]
 
@@ -57,6 +57,14 @@ def web(monkeypatch):
 
     monkeypatch.setattr(podcast, "_client", client)
     return SimpleNamespace(routes=routes, seen=seen)
+
+
+def capture_jobs(monkeypatch) -> list[dict]:
+    """Collect the payloads /api/prepare would enqueue, instead of enqueueing them."""
+    payloads: list[dict] = []
+    monkeypatch.setattr(main.jobs, "enqueue_many",
+                        lambda entries: payloads.extend(entry[2] for entry in entries) or ["job-1"])
+    return payloads
 
 
 def spotify_page(entity) -> str:

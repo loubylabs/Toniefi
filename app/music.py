@@ -11,15 +11,20 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
-from . import config, ingest, podcast
+import httpx
+
+from . import audio, config, ingest, library, podcast
 
 TOLERANCE_SECONDS = 30
 SEARCH_RESULTS = 5
 PLAYLIST_LIMIT = 100
 SEARCH_TIMEOUT = 120
+DOWNLOAD_TIMEOUT = 30 * 60
 
 ARTIST_REFUSAL = "Paste a Spotify playlist, album or song link. Artist pages are not supported."
 SPOTIFY_UNREADABLE = "Spotify changed its page, so TonieFi could not read that link."
@@ -231,3 +236,135 @@ def find_video(song: Song) -> str | None:
         return None
     entries = info.get("entries") if isinstance(info, dict) else None
     return _closest(song, entries) if isinstance(entries, list) else None
+
+
+# ------------------------------------------------------------------ import
+
+Progress = Callable[..., None]
+
+
+def _noop(*_: Any, **__: Any) -> None:
+    return None
+
+
+def _download(video_id: str, dest: Path) -> str | None:
+    """Download one video's audio to `dest`. Returns None on success, or why it failed.
+
+    yt-dlp writes into a scratch directory under the work dir, and only a
+    finished mp3 is moved into the stage, so a half-written file never sits
+    where a resumed import would take it for a stored song. yt-dlp can exit
+    non-zero after it has written good audio, so the mp3 is the verdict, not
+    the exit code.
+    """
+    config.ensure_dirs()
+    with tempfile.TemporaryDirectory(dir=config.WORK_DIR) as tmpdir:
+        scratch = Path(tmpdir)
+        cmd = [
+            "yt-dlp", "--no-playlist",
+            "-x", "--audio-format", "mp3", "--audio-quality", "0",
+            "--no-progress", "--no-warnings",
+            *ingest.player_client_args(),
+            "-o", str(scratch / "song.%(ext)s"),
+            # The id sits inside a URL, so one that begins with `-` is never read as an option.
+            f"https://www.youtube.com/watch?v={video_id}",
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                                  timeout=DOWNLOAD_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return f"the download took longer than {DOWNLOAD_TIMEOUT // 60} minutes."
+        produced = scratch / "song.mp3"
+        if produced.is_file():
+            shutil.move(produced, dest)
+            return None
+        return ingest.error_summary(proc.stderr) or "yt-dlp produced no audio."
+
+
+def import_music(
+    url: str,
+    *,
+    stage_id: str,
+    track_ids: list[str] | None = None,
+    progress: Progress = _noop,
+) -> dict[str, Any]:
+    """Find the picked songs of a Spotify list on YouTube and download them into one collection stage.
+
+    Picks are track uris, since a song added to a playlist shifts every
+    position the preview showed. The list is read again here, so picked songs
+    that have since left it are counted in `skipped`, and a song with no close
+    match or a failed download is skipped and named rather than failing the
+    rest. No pick means every song Spotify marks playable.
+    """
+    published = library.find_published_stage(stage_id)
+    if published:
+        return published
+    # Checked before Spotify is read, so a container without yt-dlp says so
+    # instead of reading a page it can do nothing with.
+    if not shutil.which("yt-dlp"):
+        raise RuntimeError(YT_DLP_MISSING)
+    listing = read(url)
+    skipped: list[str] = []
+    if track_ids is None:
+        picked = [song for song in listing.songs if song.available]
+    else:
+        wanted = set(track_ids)
+        picked = [song for song in listing.songs if song.id in wanted]
+        missing = len(wanted - {song.id for song in picked})
+        if missing:
+            skipped.append(f"{missing} picked song is no longer in the list." if missing == 1
+                           else f"{missing} picked songs are no longer in the list.")
+    if not picked:
+        raise RuntimeError(NONE_FOUND)
+
+    with library.collection_lease():
+        stage = library.begin_collection_stage(stage_id, title=listing.title, source="music", extra={
+            "url": url,
+            # The collection page's Uploader row reads this key.
+            "uploader": listing.owner,
+            "skipped": [],
+        })
+        dest = stage.path
+
+        stored: dict[str, Song] = {}
+        total = len(picked)
+        for position, song in enumerate(picked, start=1):
+            # The position prefix keeps names distinct and valid even when the
+            # label slugs to nothing, since slugify falls back to "untitled".
+            name = f"{position:03d}-{audio.slugify(song.label)}.mp3"
+            # A file already here was moved in whole by an earlier run, so a
+            # retried job keeps it. A song that run skipped left no file, so it
+            # is searched again.
+            if not (dest / name).is_file():
+                progress(f"Finding {position}/{total}: {song.title}", audio.step_percent(position - 1, total))
+                video_id = find_video(song)
+                if video_id is None:
+                    skipped.append(f"{song.label}: no close match on YouTube.")
+                    continue
+                failure = _download(video_id, dest / name)
+                if failure:
+                    skipped.append(f"{song.label}: {failure}")
+                    continue
+            stored[name] = song
+        if not stored:
+            raise RuntimeError(NONE_FOUND)
+        if listing.cover and not (dest / "cover.jpg").is_file():
+            try:
+                with podcast._client(timeout=60.0) as client:
+                    ingest._stream_download(client, listing.cover, dest / "cover.jpg")
+            except httpx.HTTPError:
+                pass
+
+        library.rescan_collection_stage(stage_id)
+        # A resumed stage keeps the extras it was created with, so this run's
+        # skips are written once the downloads are done.
+        def describe(manifest: dict[str, Any]) -> None:
+            manifest["skipped"] = skipped
+            for track in manifest.get("tracks", []):
+                song = stored.get(track.get("name"))
+                if song is not None:
+                    track["title"] = song.label
+        library.mutate_at_path(dest, describe)
+
+        progress("Probing durations")
+        library.collection_stage(stage_id, refresh=True)
+        return library.complete_collection_stage(stage_id)
