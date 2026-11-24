@@ -350,8 +350,8 @@ def import_music(
     Picks are track uris, since a song added to a playlist shifts every
     position the preview showed. The list is read again here, so picked songs
     that have since left it are counted in `skipped`, and a song with no close
-    match or a failed download is skipped and named rather than failing the
-    rest. No pick means every song Spotify marks playable.
+    match, a failed search or a failed download is skipped and named rather
+    than failing the rest. No pick means every song Spotify marks playable.
     """
     published = library.find_published_stage(stage_id)
     if published:
