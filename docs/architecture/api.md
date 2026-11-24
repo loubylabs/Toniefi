@@ -14,7 +14,7 @@ access control, so treat network reachability as the only gate and do not expose
 | `GET` | `/api/settings/forge-defaults` | Read the complete saved Forge profile |
 | `PUT` | `/api/settings/forge-defaults` | Replace the complete saved Forge profile |
 | `POST` | `/api/prepare` | Queue one preparation job per source URL |
-| `POST` | `/api/playlist/preview` | List a playlist's entries or a podcast's episodes without downloading audio |
+| `POST` | `/api/playlist/preview` | List a playlist's entries, a podcast's episodes or a Spotify list's songs without downloading audio |
 | `GET` | `/api/librivox/search` | Search LibriVox (`q`, optional `limit`) |
 | `POST` | `/api/librivox/import` | Queue a LibriVox book |
 | `POST` | `/api/uploads/prepare` | Stage uploaded files as one collection and queue it |
@@ -117,8 +117,18 @@ rejected when it is empty and when any number in it is below 1.
 `kind` is optional and only ever `"podcast"`. The Desk sends it when the preview said the link is
 a podcast, which is how a raw RSS feed URL reaches the podcast import. Spotify show and episode
 links and Apple Podcasts links are recognized without it. Any other `kind` is rejected with 422.
-Spotify track, album, playlist and artist links are rejected with 400: "TonieFi imports podcasts
-from Spotify, not music."
+A Spotify playlist, album or song link (`open.spotify.com/playlist/<id>`, `/album/<id>` or
+`/track/<id>`, with an optional `intl-xx` and `embed` segment and any `?si=` query) is a music
+source. It is known by its shape, so it never carries `kind`. A Spotify artist link is rejected
+with 400: "Paste a Spotify playlist, album or song link. Artist pages are not supported."
+
+A music source picks with `track_ids`, the `id` of each picked preview entry (the song's
+`spotify:track:<id>` uri), and never with `playlist_items` or `episode_ids`, which are rejected
+with 400 there. Ids survive a playlist that gains or drops a song, where positions would shift.
+Picked songs download in list order; ids no longer in the list are counted in the collection's
+`skipped` list. An empty list is rejected with 400, and so is `track_ids` on any source that is not
+a music link. Omit it, or send `null`, to import every available song. The collection's manifest
+`source` is `"music"`, and the job kind stays `prepare_url`.
 
 A podcast source picks with `episode_ids`, the `id` of each picked preview entry, and never with
 `playlist_items`, which is rejected with 400 there. Ids survive a feed that gains or drops an
@@ -145,6 +155,27 @@ Podcast episodes are numbered oldest first. `preselect` names the episodes to ti
 for a show link, or the one episode a Spotify episode link names. A link without a `list` query
 parameter is read as an RSS feed before yt-dlp sees it; when neither can read it, yt-dlp's error
 is returned with 502. YouTube previews carry neither extra key.
+
+A Spotify music link answers in the same shape with `"kind": "music"` and no `preselect`, so every
+available song starts ticked. Each entry's `id` is the song's uri, its `title` is
+`"<song> - <artists>"` with ` (explicit)` appended for an explicit song, and `available` is
+Spotify's `isPlayable`. `notice` is present only when a playlist reached Spotify's 100-song limit.
+An unreadable Spotify page is 502, and an artist link is 400.
+
+```json
+{
+  "title": "Car Songs",
+  "entries": [{"index": 1, "id": "spotify:track:abc", "title": "Baby Beluga - Raffi", "available": true}],
+  "kind": "music",
+  "notice": "Spotify lists only the first 100 songs of a playlist. Songs after that are not shown."
+}
+```
+
+The song list comes from Spotify's public embed page, so only public lists work. The audio is not
+Spotify's: each song is found with a YouTube search and accepted only when its length is within 30
+seconds of Spotify's. A song with no close match, one whose search fails or times out, or one that
+fails to download, is left out and named in the collection's `skipped` list with the reason. A
+failed search is never reported as no close match.
 
 ## Upload one collection from several files
 

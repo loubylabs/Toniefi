@@ -1284,6 +1284,14 @@ img.collection-detail-cover {
   color: var(--ink-muted);
 }
 
+/* A skipped line borrows the track row's rules, but it is one span of free
+   text, so it shrinks and wraps instead of keeping the duration column's
+   fixed width and muted ink. */
+.skipped-list li > span:only-child {
+  flex: 1 1 auto;
+  color: inherit;
+}
+
 .assignment-panel > h2 {
   margin: 0;
   font-size: var(--type-lg);

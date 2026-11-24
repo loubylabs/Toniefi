@@ -1,14 +1,11 @@
 """Podcast import: link shapes, feed discovery, feed reading and the download.
 
-Nothing here touches the network. Every request goes through podcast._client,
+Nothing here touches the network. Every request goes through podcast.http_client,
 which the `web` fixture points at an in-memory transport serving invented shows.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Callable
 
 import httpx
 import pytest
@@ -16,44 +13,10 @@ from fastapi.testclient import TestClient
 
 from app import audio, config, db, ingest, library, main, podcast, prepare
 
+from .conftest import capture_jobs, reply, reply_json, spotify_page
+
 FEED_URL = "https://feeds.example.test/moonbeam.xml"
 APPLE_LINK = "https://podcasts.apple.com/us/podcast/moonbeam-bedtime-tales/id1234567890"
-
-Answer = Callable[[httpx.Request], httpx.Response]
-
-
-def reply(body: str | bytes = b"", status: int = 200, content_type: str = "text/html") -> Answer:
-    content = body.encode() if isinstance(body, str) else body
-    return lambda request: httpx.Response(status, content=content, headers={"content-type": content_type})
-
-
-def reply_json(payload) -> Answer:
-    return reply(json.dumps(payload), content_type="application/json")
-
-
-@pytest.fixture
-def web(monkeypatch):
-    """Serve canned answers keyed by host and path; anything else is a 404."""
-    routes: dict[str, Answer] = {}
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        answer = routes.get(f"{request.url.host}{request.url.path}")
-        return answer(request) if answer else httpx.Response(404, text="not here")
-
-    def client(timeout: float = 45.0) -> httpx.Client:
-        return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True,
-                            headers={"User-Agent": ingest.USER_AGENT})
-
-    monkeypatch.setattr(podcast, "_client", client)
-    return SimpleNamespace(routes=routes, seen=seen)
-
-
-def spotify_page(entity) -> str:
-    data = {"props": {"pageProps": {"state": {"data": {"entity": entity}}}}}
-    return ('<html><body><script id="__NEXT_DATA__" type="application/json">'
-            f"{json.dumps(data)}</script></body></html>")
 
 
 # ------------------------------------------------------------- link shapes
@@ -83,30 +46,12 @@ def test_other_links_are_not_podcast_links(url):
     assert not podcast.is_podcast_url(url)
 
 
-@pytest.mark.parametrize("kind", ["track", "album", "playlist", "artist"])
-def test_spotify_music_links_are_music(kind):
-    assert podcast.is_spotify_music_url(f"https://open.spotify.com/{kind}/1a2b3c")
-    assert podcast.is_spotify_music_url(f"https://open.spotify.com/embed/{kind}/1a2b3c")
-    assert not podcast.is_podcast_url(f"https://open.spotify.com/{kind}/1a2b3c")
-
-
-def test_a_spotify_show_link_is_not_music():
-    assert not podcast.is_spotify_music_url("https://open.spotify.com/show/4aBcDeFg")
-    assert not podcast.is_spotify_music_url(FEED_URL)
-
-
 def test_normalize_ignores_case_punctuation_and_ampersands():
     assert podcast.normalize("Moonbeam & Friends!") == podcast.normalize("moonbeam and friends")
     assert podcast.normalize("  Story-Time 2 ") == "storytime2"
 
 
 # ------------------------------------------------------------ feed discovery
-
-def test_resolving_a_music_link_is_refused_without_a_request(web):
-    with pytest.raises(RuntimeError, match="not music"):
-        podcast.resolve_feed("https://open.spotify.com/album/1a2b3c")
-    assert web.seen == []
-
 
 def test_a_raw_feed_url_is_its_own_feed(web):
     assert podcast.resolve_feed(FEED_URL) == podcast.Resolved(feed_url=FEED_URL)
@@ -180,6 +125,20 @@ def test_an_unreadable_spotify_page_points_at_the_apple_link(web):
 
     with pytest.raises(RuntimeError, match="Spotify changed its page"):
         podcast.resolve_feed("https://open.spotify.com/show/4aBcDeFg")
+
+
+@pytest.mark.parametrize("entity", [
+    {"name": 7, "subtitle": "Lantern Hill Audio"},
+    {"name": ["Moonbeam Bedtime Tales"], "subtitle": "Lantern Hill Audio"},
+    {"name": "Moonbeam Bedtime Tales", "subtitle": {"text": "Lantern Hill Audio"}},
+])
+def test_a_spotify_page_whose_name_or_publisher_is_not_text_is_unreadable(web, entity):
+    web.routes["open.spotify.com/embed/show/4aBcDeFg"] = reply(spotify_page(entity))
+
+    with pytest.raises(RuntimeError) as raised:
+        podcast.resolve_feed("https://open.spotify.com/show/4aBcDeFg")
+
+    assert str(raised.value) == podcast.SPOTIFY_UNREADABLE
 
 
 # -------------------------------------------------------------- feed reading
@@ -693,15 +652,6 @@ def test_preview_route_never_reads_a_youtube_playlist_as_a_feed(client, monkeypa
     assert "kind" not in response.json()
 
 
-def test_preview_route_refuses_spotify_music(client, monkeypatch):
-    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
-
-    response = client.post("/api/playlist/preview", json={"url": "https://open.spotify.com/track/1a2b3c"})
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == podcast.MUSIC_REFUSAL
-
-
 def test_preview_route_reports_an_unreadable_spotify_page(client, web, monkeypatch):
     monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
     web.routes["open.spotify.com/embed/show/4aBcDeFg"] = reply("<html><body>Nothing here</body></html>")
@@ -712,21 +662,29 @@ def test_preview_route_reports_an_unreadable_spotify_page(client, web, monkeypat
     assert response.json()["detail"] == podcast.SPOTIFY_UNREADABLE
 
 
-def capture_jobs(monkeypatch) -> list[dict]:
-    payloads: list[dict] = []
-    monkeypatch.setattr(main.jobs, "enqueue_many",
-                        lambda entries: payloads.extend(entry[2] for entry in entries) or ["job-1"])
-    return payloads
+def test_preview_route_answers_a_spotify_music_link_as_music_not_as_a_podcast(client, web, monkeypatch):
+    monkeypatch.setattr(main.ingest, "playlist_preview", refuse)
+    web.routes["open.spotify.com/embed/track/1a2b3c"] = reply(spotify_page({
+        "type": "track", "name": "Baby Beluga", "uri": "spotify:track:1a2b3c",
+        "artists": [{"name": "Raffi"}], "duration": 164_000, "isPlayable": True, "isExplicit": False,
+    }))
+
+    response = client.post("/api/playlist/preview", json={"url": "https://open.spotify.com/track/1a2b3c"})
+
+    assert response.status_code == 200
+    assert response.json()["kind"] == "music"
+    assert response.json()["entries"] == [
+        {"index": 1, "id": "spotify:track:1a2b3c", "title": "Baby Beluga - Raffi", "available": True}]
 
 
-def test_prepare_refuses_spotify_music(client, monkeypatch):
+def test_prepare_enqueues_a_spotify_music_link(client, monkeypatch):
     payloads = capture_jobs(monkeypatch)
 
     response = client.post("/api/prepare", json={"sources": [{"url": "https://open.spotify.com/album/1a2b3c"}]})
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == podcast.MUSIC_REFUSAL
-    assert payloads == []
+    assert response.status_code == 200
+    assert payloads[0]["url"] == "https://open.spotify.com/album/1a2b3c"
+    assert payloads[0]["track_ids"] is None
 
 
 def test_prepare_carries_the_podcast_kind_into_the_job(client, monkeypatch):

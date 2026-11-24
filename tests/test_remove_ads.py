@@ -47,7 +47,7 @@ def fakes(monkeypatch):
         seen["downloads"].append(url)
         dest.write_bytes(b"fresh")
 
-    monkeypatch.setattr(forge.ingest, "_stream_download", download)
+    monkeypatch.setattr(forge.ingest, "stream_download", download)
 
     def find_extra(track: Path, fresh: Path):
         seen["compared"].append((track.name, fresh.read_bytes()))
@@ -107,7 +107,7 @@ def test_a_failed_download_leaves_that_chapter_unchecked(isolated, fakes, monkey
             raise httpx.ConnectError("offline")
         dest.write_bytes(b"fresh")
 
-    monkeypatch.setattr(forge.ingest, "_stream_download", download)
+    monkeypatch.setattr(forge.ingest, "stream_download", download)
 
     result = forge.remove_ads(slug, operation_id="ads-c")
 
@@ -201,7 +201,7 @@ def test_downloads_happen_before_the_lease(isolated, fakes, monkeypatch):
         free.append(acquired[0])
         dest.write_bytes(b"fresh")
 
-    monkeypatch.setattr(forge.ingest, "_stream_download", download)
+    monkeypatch.setattr(forge.ingest, "stream_download", download)
 
     forge.remove_ads(slug, operation_id="ads-i")
 

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
-from . import archive, audio, config, db, ingest, jobs, library, podcast, push, tonie_history, tonies, version
+from . import archive, audio, config, db, ingest, jobs, library, music, podcast, push, tonie_history, tonies, version
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -161,6 +161,9 @@ class PrepareSource(RequestModel):
     # A podcast's pick, as the episode ids (guids) the preview showed. Picks
     # name episodes because a new episode shifts every position.
     episode_ids: list[str] | None = None
+    # A Spotify music pick, as the track uris the preview showed, for the same
+    # reason: a song added to a playlist shifts every position after it.
+    track_ids: list[str] | None = None
     # "podcast" when the preview read this link as a podcast. Spotify and
     # Apple links are known by their shape; a raw feed URL only this way.
     kind: Literal["podcast"] | None = None
@@ -361,13 +364,24 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
         raise fail(400, "At least one source URL is required.")
     if not all(valid_source_url(url) for url in sources):
         raise fail(400, "Sources must use HTTP or HTTPS.")
-    if any(podcast.is_spotify_music_url(url) for url in sources):
-        raise fail(400, podcast.MUSIC_REFUSAL)
     if len(set(sources)) != len(sources):
         raise fail(400, "Duplicate source URLs are not allowed.")
     if len(sources) > 50:
         raise fail(400, "A batch can contain at most 50 sources.")
     for url, source in zip(sources, body.sources, strict=True):
+        if music.is_artist_url(url):
+            raise fail(400, music.ARTIST_REFUSAL)
+        # A music link is known by its shape alone, so it is settled before a
+        # podcast `kind` could claim it.
+        if music.is_music_url(url):
+            if source.playlist_items is not None or source.episode_ids is not None:
+                raise fail(400, "A Spotify music source picks songs with track_ids, "
+                                "not playlist_items or episode_ids.")
+            if source.track_ids is not None and not source.track_ids:
+                raise fail(400, "Pick at least one song, or remove that source.")
+            continue
+        if source.track_ids is not None:
+            raise fail(400, "Only a Spotify music source can pick songs.")
         if source.kind == "podcast" or podcast.is_podcast_url(url):
             if source.playlist_items is not None:
                 raise fail(400, "A podcast source picks episodes with episode_ids, not playlist_items.")
@@ -389,6 +403,7 @@ def prepare_sources(body: PrepareBatch) -> dict[str, Any]:
             "url": url,
             "playlist_items": source.playlist_items,
             "episode_ids": source.episode_ids,
+            "track_ids": source.track_ids,
             "kind": source.kind,
             "options": options,
         })
@@ -405,8 +420,15 @@ def playlist_preview(body: PlaylistPreviewRequest) -> dict[str, Any]:
     url = body.url.strip()
     if not valid_source_url(url):
         raise fail(400, "Sources must use HTTP or HTTPS.")
-    if podcast.is_spotify_music_url(url):
-        raise fail(400, podcast.MUSIC_REFUSAL)
+    # An artist link is refused by name; left alone it would fall through to
+    # the feed and yt-dlp readers and fail with an error about neither.
+    if music.is_artist_url(url):
+        raise fail(400, music.ARTIST_REFUSAL)
+    if music.is_music_url(url):
+        try:
+            return music.preview(url)
+        except RuntimeError as exc:
+            raise fail(502, str(exc)) from exc
     if podcast.is_podcast_url(url):
         try:
             return podcast.preview(url)

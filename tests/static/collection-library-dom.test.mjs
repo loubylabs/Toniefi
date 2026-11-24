@@ -962,6 +962,88 @@ test("a collection that is not a podcast has no Remove ads panel", async () => {
   }
 });
 
+async function renderedCollection(collection) {
+  const dom = installDom();
+  const controller = new AbortController();
+  const snapshot = {
+    status: { usable_limit_seconds: 5370, tonie_limit_seconds: 5400 },
+    collections: [collection], jobs: [], stale: [], errors: {},
+  };
+  const refresh = { get snapshot() { return snapshot; }, subscribe: () => () => {}, request: async () => snapshot };
+  createCollectionDetail({
+    workspace: dom.workspace, slug: collection.slug,
+    request: async () => collection, refresh, player: { play() {} }, signal: controller.signal,
+  });
+  await flush();
+  return { dom, done() { controller.abort(); dom.restore(); } };
+}
+
+function skippedCollection(overrides) {
+  return {
+    slug: "car-songs", title: "Car Songs", stage: "forged", forge: {},
+    track_count: 1, total_duration: "3m", tonies_needed: 1,
+    tracks: [{ name: "001-baby-beluga-raffi.mp3", title: "Baby Beluga - Raffi", seconds: 180, duration: "3m" }],
+    plan: [{ index: 1, seconds: 180, duration: "3m", tracks: [] }],
+    ...overrides,
+  };
+}
+
+test("the collection screen names every skipped line verbatim, for songs and for episodes", async () => {
+  const cases = [
+    {
+      source: "music",
+      url: "https://open.spotify.com/playlist/37i9dQZF1DX",
+      skipped: [
+        "2 picked songs are no longer in the list.",
+        "Down by the Bay - Raffi: no close match on YouTube.",
+        "<b>Shake</b> - Raffi: ERROR: [youtube] yt0004: Video unavailable",
+      ],
+    },
+    {
+      source: "podcast",
+      url: "https://feeds.example.test/moonbeam.xml",
+      skipped: ["Two Snails Race: Server error '503 Service Unavailable'"],
+    },
+  ];
+  for (const { source, url, skipped } of cases) {
+    const view = await renderedCollection(skippedCollection({ source, url, skipped }));
+    try {
+      assert.match(view.dom.workspace.textContent, /Left out/);
+      const list = view.dom.workspace.querySelector(".skipped-list");
+      assert.deepEqual(list.querySelectorAll("li").map((item) => item.textContent), skipped, source);
+    } finally {
+      view.done();
+    }
+  }
+});
+
+test("the collection screen names skipped lines before Forge has finished too", async () => {
+  const view = await renderedCollection(skippedCollection({
+    source: "music", stage: "extracted", plan: [],
+    skipped: ["Down by the Bay - Raffi: the search timed out."],
+  }));
+  try {
+    assert.match(view.dom.workspace.textContent, /Finish preparation/);
+    const list = view.dom.workspace.querySelector(".skipped-list");
+    assert.deepEqual(list.querySelectorAll("li").map((item) => item.textContent),
+      ["Down by the Bay - Raffi: the search timed out."]);
+  } finally {
+    view.done();
+  }
+});
+
+test("the collection screen shows no Left out section when nothing was skipped", async () => {
+  for (const skipped of [[], undefined]) {
+    const view = await renderedCollection(skippedCollection({ source: "music", skipped }));
+    try {
+      assert.equal(view.dom.workspace.querySelector(".skipped-list"), null);
+      assert.doesNotMatch(view.dom.workspace.textContent, /Left out/);
+    } finally {
+      view.done();
+    }
+  }
+});
+
 test("Desk sends only the playlist videos left ticked", async () => {
   const dom = installDom();
   globalThis.window.matchMedia = () => ({ matches: true });
@@ -1077,43 +1159,46 @@ test("Desk holds back a playlist row with nothing ticked instead of sending it",
   }
 });
 
-test("Library says on the row when a prepared playlist left unavailable videos out", async () => {
-  const dom = installDom();
-  const controller = new AbortController();
-  const collection = {
-    slug: "story-time",
-    title: "Story Time",
-    stage: "extracted",
-    track_count: 2,
-    total_duration: "12m",
-    tonies_needed: 1,
-    url: "https://www.youtube.com/playlist?list=PL1",
-    skipped: ["ERROR: [youtube] aaa: Private video.", "ERROR: [youtube] bbb: Private video."],
-  };
-  const refresh = {
-    snapshot: { collections: [collection], jobs: [] },
-    subscribe() {
-      return () => {};
-    },
-    async request() {
-      return { collections: [collection], stale: [], errors: {} };
-    },
-  };
-  const request = async (url) => {
-    throw new Error(`Unexpected request ${url}`);
-  };
+test("Library says on the row that items were left out, in the source's own noun and without a count", async () => {
+  const cases = [
+    { source: "url", url: "https://www.youtube.com/playlist?list=PL1", noun: "videos",
+      skipped: ["ERROR: [youtube] aaa: Private video.", "ERROR: [youtube] bbb: Private video."] },
+    // One line here stands for three episodes, so a count of lines would be wrong.
+    { source: "podcast", url: "https://feeds.example.test/moonbeam.xml", noun: "episodes",
+      skipped: ["3 picked episodes are no longer in the feed."] },
+    { source: "music", url: "https://open.spotify.com/playlist/37i9dQZF1DX", noun: "songs",
+      skipped: ["2 picked songs are no longer in the list.", "Down by the Bay - Raffi: no close match on YouTube."] },
+  ];
+  for (const { source, url, noun, skipped } of cases) {
+    const dom = installDom();
+    const controller = new AbortController();
+    const collection = {
+      slug: "story-time", title: "Story Time", stage: "extracted",
+      track_count: 2, total_duration: "12m", tonies_needed: 1, source, url, skipped,
+    };
+    const refresh = {
+      snapshot: { collections: [collection], jobs: [] },
+      subscribe() {
+        return () => {};
+      },
+      async request() {
+        return { collections: [collection], stale: [], errors: {} };
+      },
+    };
+    const request = async (path) => {
+      throw new Error(`Unexpected request ${path}`);
+    };
 
-  try {
-    createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
-    await flush();
-    const lines = dom.workspace.querySelectorAll(".library-source").map((node) => node.textContent);
-    assert.ok(
-      lines.some((text) => /2 videos were unavailable and left out\./.test(text)),
-      "the row names the videos the download stepped over",
-    );
-  } finally {
-    controller.abort();
-    dom.restore();
+    try {
+      createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
+      await flush();
+      const lines = dom.workspace.querySelectorAll(".library-source").map((node) => node.textContent);
+      const note = lines.find((text) => /left out/.test(text));
+      assert.equal(note, `Some ${noun} were left out.`, source);
+    } finally {
+      controller.abort();
+      dom.restore();
+    }
   }
 });
 
@@ -1146,7 +1231,7 @@ test("Library leaves the row quiet when a collection skipped nothing", async () 
     createLibraryScreen({ request, refresh })({ workspace: dom.workspace, signal: controller.signal });
     await flush();
     const lines = dom.workspace.querySelectorAll(".library-source").map((node) => node.textContent);
-    assert.equal(lines.some((text) => /unavailable/.test(text)), false);
+    assert.equal(lines.some((text) => /left out/.test(text)), false);
   } finally {
     controller.abort();
     dom.restore();
@@ -1213,6 +1298,127 @@ test("Desk picker ticks only the episode a podcast preview preselects", async ()
     controller.abort();
     dom.restore();
   }
+});
+
+test("Desk picker offers songs for a Spotify playlist, shows the notice and posts track ids", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const host = dom.document.createElement("div");
+  host.id = "notifications";
+  dom.document.body.append(host);
+  globalThis.window.setTimeout = () => 0;
+  const preview = {
+    title: "",
+    kind: "music",
+    notice: "Spotify lists only the first 100 songs of a playlist. Songs after that are not shown.",
+    entries: [
+      { index: 1, id: "spotify:track:a", title: "Baby Beluga - Raffi", available: true },
+      { index: 2, id: "spotify:track:b", title: "Wheels on the Bus - Raffi", available: false },
+      { index: 3, id: "spotify:track:c", title: "Down by the Bay - Raffi", available: true },
+    ],
+  };
+
+  const posted = [];
+  const request = async (path, options = {}) => {
+    if (path === "/api/playlist/preview") return preview;
+    if (path === "/api/prepare") posted.push(JSON.parse(options.body));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    const paste = dom.document.getElementById("source-paste");
+    assert.match(paste.getAttribute("placeholder"), /https:\/\/open\.spotify\.com\/playlist\/\.\.\./);
+    paste.value = "https://open.spotify.com/playlist/37i9dQZF1DX?si=abc123";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+    await flush();
+    await buttonWithText(dom.workspace, "Pick songs").click();
+    await flush();
+
+    const list = dom.workspace.querySelector(".playlist-picker-list");
+    assert.equal(list.getAttribute("aria-label"), "Songs in this list");
+    assert.deepEqual(list.querySelectorAll("input").map((box) => box.checked), [true, false, true]);
+    assert.ok(buttonWithText(dom.workspace, "2 of 3 songs"));
+    assert.match(dom.workspace.querySelector(".playlist-picker-title").textContent, /^Spotify3 songs/);
+    const notice = host.querySelector(".notification");
+    assert.equal(notice.getAttribute("data-kind"), "info");
+    assert.match(notice.textContent, /first 100 songs/);
+
+    await dom.workspace.querySelector(".source-intake-form").dispatchEvent({ type: "submit" });
+    await flush();
+
+    assert.deepEqual(posted[0].sources, [
+      { url: "https://open.spotify.com/playlist/37i9dQZF1DX?si=abc123", track_ids: ["spotify:track:a", "spotify:track:c"] },
+    ]);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("Desk says Reading Spotify while a music preview loads and heads an untitled list Spotify", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  let answer;
+  const pending = new Promise((resolve) => {
+    answer = resolve;
+  });
+  const request = async (path) => (path === "/api/playlist/preview" ? pending : {});
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    dom.document.getElementById("source-paste").value = "https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+    await flush();
+    buttonWithText(dom.workspace, "Pick songs").click();
+
+    const reading = buttonWithText(dom.workspace, "Reading Spotify");
+    assert.ok(reading, "the pick control says what it is reading");
+    assert.equal(reading.disabled, true);
+
+    answer({
+      title: "",
+      kind: "music",
+      entries: [{ index: 1, id: "spotify:track:a", title: "Baby Beluga - Raffi", available: true }],
+    });
+    await flush();
+    await flush();
+
+    assert.equal(dom.workspace.querySelector(".playlist-picker-title").querySelector("strong").textContent, "Spotify");
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("sourceLabel names a Spotify music collection by what the link points at", () => {
+  const label = (url) => sourceLabel({ source: "music", url });
+  assert.equal(label("https://open.spotify.com/playlist/37i9dQZF1DX?si=abc"), "Spotify playlist");
+  assert.equal(label("https://open.spotify.com/album/4aBcDeFg"), "Spotify album");
+  assert.equal(label("https://open.spotify.com/track/1a2b3c"), "Spotify song");
+  assert.equal(label("https://open.spotify.com/intl-de/album/4aBcDeFg"), "Spotify album");
+  assert.equal(label("https://open.spotify.com/embed/playlist/37i9dQZF1DX"), "Spotify playlist");
+  assert.equal(sourceLabel({ source: "podcast", url: "https://open.spotify.com/show/4aBcDeFg" }), "Spotify episode");
 });
 
 test("sourceLabel names the kind of source and never prints the raw address", () => {

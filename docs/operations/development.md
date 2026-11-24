@@ -73,6 +73,7 @@ app/
   version.py    Normalized build label and commit URL
   prepare.py    Extract-to-Forge preparation orchestration
   ingest.py     URL, LibriVox, and staged upload extraction
+  music.py      Spotify music links: song list, YouTube match by length, download
   forge.py      Trim, loudness, title cleanup, and splitting
   audio.py      ffmpeg and ffprobe wrappers plus capacity packing
   library.py    On-disk manifests, writer leases, atomic staged publication

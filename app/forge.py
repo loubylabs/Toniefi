@@ -250,7 +250,7 @@ def remove_ads(slug: str, *, operation_id: str, progress: Progress = _noop) -> d
             if episode is not None:
                 needed.setdefault(episode.guid, episode)
         fresh: dict[str, Path] = {}
-        with podcast._client(timeout=300.0) as client:
+        with podcast.http_client(timeout=300.0) as client:
             for index, episode in enumerate(needed.values(), start=1):
                 progress(
                     f"Downloading {index}/{len(needed)}: {episode.title}",
@@ -258,7 +258,7 @@ def remove_ads(slug: str, *, operation_id: str, progress: Progress = _noop) -> d
                 )
                 target = scratch / f"{index - 1:03d}{podcast._extension(episode.url)}"
                 try:
-                    ingest._stream_download(client, episode.url, target)
+                    ingest.stream_download(client, episode.url, target)
                     fresh[episode.guid] = target
                 except httpx.HTTPError:
                     pass

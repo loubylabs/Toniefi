@@ -18,7 +18,8 @@ browser never cancels work.
 | `app/main.py` | FastAPI routes and the application shell |
 | `app/prepare.py` | Extract-to-Forge preparation orchestration |
 | `app/ingest.py` | URL, LibriVox, and staged upload extraction |
-| `app/podcast.py` | Podcast links to public feeds, feed reading, and episode download |
+| `app/podcast.py` | Podcast links to public feeds, feed reading, and episode download; also the Spotify embed page reader and HTTP client that `music.py` shares |
+| `app/music.py` | Spotify playlist, album and song links: the song list, a length-matched YouTube search per song, and download |
 | `app/forge.py` | Trim, loudness, title cleanup, splitting |
 | `app/adcut.py` | Podcast ad removal: aligns a chapter with a fresh download and cuts the difference |
 | `app/audio.py` | ffmpeg and ffprobe wrappers, capacity packing |
