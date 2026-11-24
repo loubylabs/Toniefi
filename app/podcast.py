@@ -1,8 +1,13 @@
-"""Podcasts: from a show link to the publisher's own audio files.
+"""Podcasts, and the Spotify embed page reader that music shares.
 
-Audio only ever comes from a public feed's enclosures. A Spotify link is read
-for nothing but its show name, which Apple's directory turns into a feed URL.
-Spotify-only shows have no feed, so they are refused rather than worked around.
+Podcast audio only ever comes from a public feed's enclosures. A Spotify link
+is read for nothing but its show name, which Apple's directory turns into a
+feed URL. Spotify-only shows have no feed, so they are refused rather than
+worked around.
+
+The reader of Spotify's public embed page lives here too, with the link
+helpers and the outbound HTTP client it needs. `music` reads playlists, albums
+and songs through the same fetch and parse, so neither copies the other.
 """
 from __future__ import annotations
 
@@ -42,10 +47,12 @@ LICENSE = "Published by the podcast's maker in a public feed"
 
 Progress = Callable[..., None]
 
-_SPOTIFY_HOST = "open.spotify.com"
+SPOTIFY_HOST = "open.spotify.com"
 _APPLE_HOST = "podcasts.apple.com"
-# Share links often carry a locale segment, as in /intl-de/show/<id>.
-_SPOTIFY_PODCAST = re.compile(r"^/(?:intl-[a-z-]+/)?(?:embed/)?(show|episode)/([A-Za-z0-9]+)/?$")
+# What may come before the kind in a Spotify path. Share links often carry a
+# locale segment, as in /intl-de/show/<id>, and an embed link adds /embed.
+SPOTIFY_PATH_PREFIX = r"^/(?:intl-[a-z-]+/)?(?:embed/)?"
+_SPOTIFY_PODCAST = re.compile(SPOTIFY_PATH_PREFIX + r"(show|episode)/([A-Za-z0-9]+)/?$")
 _APPLE_PODCAST = re.compile(r"^/[a-z]{2}/podcast/(?:[^/]+/)?id(\d+)/?$")
 _NEXT_DATA = re.compile(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
 
@@ -78,8 +85,8 @@ class Feed:
     episodes: list[Episode]
 
 
-def _client(timeout: float = 45.0) -> httpx.Client:
-    """Every outbound podcast request goes through here, so tests can swap the transport."""
+def http_client(timeout: float = 45.0) -> httpx.Client:
+    """Every outbound podcast, Spotify page and cover request goes through here, so tests can swap the transport."""
     return httpx.Client(timeout=timeout, follow_redirects=True,
                         headers={"User-Agent": ingest.USER_AGENT})
 
@@ -88,7 +95,7 @@ def _noop(*_: Any, **__: Any) -> None:
     return None
 
 
-def _host_and_path(url: str) -> tuple[str, str]:
+def host_and_path(url: str) -> tuple[str, str]:
     try:
         parsed = urlparse(url)
         return (parsed.hostname or "").lower(), parsed.path
@@ -97,13 +104,13 @@ def _host_and_path(url: str) -> tuple[str, str]:
 
 
 def _spotify_podcast(url: str) -> tuple[str, str] | None:
-    host, path = _host_and_path(url)
-    match = _SPOTIFY_PODCAST.match(path) if host == _SPOTIFY_HOST else None
+    host, path = host_and_path(url)
+    match = _SPOTIFY_PODCAST.match(path) if host == SPOTIFY_HOST else None
     return (match.group(1), match.group(2)) if match else None
 
 
 def _apple_id(url: str) -> str | None:
-    host, path = _host_and_path(url)
+    host, path = host_and_path(url)
     match = _APPLE_PODCAST.match(path) if host == _APPLE_HOST else None
     return match.group(1) if match else None
 
@@ -124,7 +131,7 @@ def normalize(text: str) -> str:
 
 def _fetch(url: str, *, what: str, params: dict[str, str] | None = None) -> httpx.Response:
     try:
-        with _client() as client:
+        with http_client() as client:
             resp = client.get(url, params=params)
             resp.raise_for_status()
             return resp
@@ -213,7 +220,7 @@ def _feed_error(reason: object) -> RuntimeError:
 def _download_feed(feed_url: str) -> bytes:
     body = bytearray()
     try:
-        with _client() as client, client.stream("GET", feed_url) as resp:
+        with http_client() as client, client.stream("GET", feed_url) as resp:
             resp.raise_for_status()
             for chunk in resp.iter_bytes(chunk_size=1 << 16):
                 body.extend(chunk)
@@ -423,7 +430,7 @@ def import_feed(
 
         stored: dict[str, Episode] = {}
         total = len(picked)
-        with _client(timeout=300.0) as client:
+        with http_client(timeout=300.0) as client:
             for position, episode in enumerate(picked, start=1):
                 name = f"{position:03d}-{audio.slugify(episode.title)}{_extension(episode.url)}"
                 if not (dest / name).is_file():
@@ -432,7 +439,7 @@ def import_feed(
                         audio.step_percent(position - 1, total),
                     )
                     try:
-                        ingest._stream_download(client, episode.url, dest / name)
+                        ingest.stream_download(client, episode.url, dest / name)
                     except httpx.HTTPError as exc:
                         skipped.append(f"{episode.title}: {exc}")
                         continue
@@ -441,7 +448,7 @@ def import_feed(
                 raise RuntimeError(NONE_DOWNLOADED)
             if feed.cover and not (dest / "cover.jpg").is_file():
                 try:
-                    ingest._stream_download(client, feed.cover, dest / "cover.jpg")
+                    ingest.stream_download(client, feed.cover, dest / "cover.jpg")
                 except httpx.HTTPError:
                     pass
 

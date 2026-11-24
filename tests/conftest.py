@@ -55,7 +55,7 @@ def web(monkeypatch):
         return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True,
                             headers={"User-Agent": ingest.USER_AGENT})
 
-    monkeypatch.setattr(podcast, "_client", client)
+    monkeypatch.setattr(podcast, "http_client", client)
     return SimpleNamespace(routes=routes, seen=seen)
 
 

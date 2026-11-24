@@ -1,6 +1,6 @@
 """Podcast import: link shapes, feed discovery, feed reading and the download.
 
-Nothing here touches the network. Every request goes through podcast._client,
+Nothing here touches the network. Every request goes through podcast.http_client,
 which the `web` fixture points at an in-memory transport serving invented shows.
 """
 from __future__ import annotations

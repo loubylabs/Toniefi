@@ -954,7 +954,7 @@ def test_a_cover_that_fails_to_download_is_ignored(stage_ready, web, youtube):
 def test_a_missing_yt_dlp_fails_the_import_before_reading_spotify(stage_ready, web, monkeypatch):
     monkeypatch.setattr(music.shutil, "which", lambda name: None)
 
-    with pytest.raises(RuntimeError, match=music.YT_DLP_MISSING):
+    with pytest.raises(RuntimeError, match=music.ingest.YT_DLP_MISSING):
         music.import_music(PLAYLIST_URL, stage_id="music-no-tool")
 
     assert web.seen == []

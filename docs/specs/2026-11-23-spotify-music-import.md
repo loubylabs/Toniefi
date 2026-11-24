@@ -69,7 +69,10 @@ Show and episode links stay podcast links and are untouched.
 
 `GET https://open.spotify.com/embed/<kind>/<id>` returns a page whose `__NEXT_DATA__` script holds
 `props.pageProps.state.data.entity`. This is the same page and the same parse the podcast import
-uses. The one reader is shared, not copied.
+uses. The one reader is shared, not copied. It lives in `podcast.py` with the public helpers music
+also uses: `spotify_entity`, `host_and_path`, `SPOTIFY_HOST`, `SPOTIFY_PATH_PREFIX` (the optional
+locale and embed segments) and `http_client`. `ingest` owns `stream_download` and
+`YT_DLP_MISSING`. Music reaches no private name of another module.
 
 | Kind | Collection title | Owner | Songs |
 |---|---|---|---|

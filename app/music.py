@@ -32,12 +32,9 @@ ARTIST_REFUSAL = "Paste a Spotify playlist, album or song link. Artist pages are
 SPOTIFY_UNREADABLE = "Spotify changed its page, so TonieFi could not read that link."
 NONE_FOUND = "None of the picked songs could be found on YouTube."
 LIMIT_NOTICE = "Spotify lists only the first 100 songs of a playlist. Songs after that are not shown."
-YT_DLP_MISSING = "yt-dlp is not installed in this container."
 
-# Share links often carry a locale segment, as in /intl-de/playlist/<id>.
-_PREFIX = r"^/(?:intl-[a-z-]+/)?(?:embed/)?"
-_MUSIC = re.compile(_PREFIX + r"(playlist|album|track)/([A-Za-z0-9]+)/?$")
-_ARTIST = re.compile(_PREFIX + r"artist/[A-Za-z0-9]+/?$")
+_MUSIC = re.compile(podcast.SPOTIFY_PATH_PREFIX + r"(playlist|album|track)/([A-Za-z0-9]+)/?$")
+_ARTIST = re.compile(podcast.SPOTIFY_PATH_PREFIX + r"artist/[A-Za-z0-9]+/?$")
 # A stored song is `<position>-<key>.mp3`; see _file_keys.
 _STORED_NAME = re.compile(r"^\d{3,}-(.+)\.mp3$")
 PARTIAL_SUFFIX = ".part"
@@ -72,8 +69,8 @@ class Listing:
 
 
 def _music_shape(url: str) -> tuple[str, str] | None:
-    host, path = podcast._host_and_path(url)
-    match = _MUSIC.match(path) if host == podcast._SPOTIFY_HOST else None
+    host, path = podcast.host_and_path(url)
+    match = _MUSIC.match(path) if host == podcast.SPOTIFY_HOST else None
     return (match.group(1), match.group(2)) if match else None
 
 
@@ -84,8 +81,8 @@ def is_music_url(url: str) -> bool:
 
 def is_artist_url(url: str) -> bool:
     """An artist page is not a list the operator chose, so it is refused by name."""
-    host, path = podcast._host_and_path(url)
-    return host == podcast._SPOTIFY_HOST and bool(_ARTIST.match(path))
+    host, path = podcast.host_and_path(url)
+    return host == podcast.SPOTIFY_HOST and bool(_ARTIST.match(path))
 
 
 # ----------------------------------------------------------------- listing
@@ -247,7 +244,7 @@ def find_video(song: Song) -> str | None:
     is never read as an option and never meets a shell.
     """
     if not shutil.which("yt-dlp"):
-        raise RuntimeError(YT_DLP_MISSING)
+        raise RuntimeError(ingest.YT_DLP_MISSING)
     query = " ".join(part for part in (song.artists, song.title) if part)
     cmd = [
         "yt-dlp", "--flat-playlist", "--dump-single-json", "--no-warnings",
@@ -362,7 +359,7 @@ def import_music(
     # Checked before Spotify is read, so a container without yt-dlp says so
     # instead of reading a page it can do nothing with.
     if not shutil.which("yt-dlp"):
-        raise RuntimeError(YT_DLP_MISSING)
+        raise RuntimeError(ingest.YT_DLP_MISSING)
     listing = read(url)
     skipped: list[str] = []
     if track_ids is None:
@@ -422,8 +419,8 @@ def import_music(
         raise RuntimeError(NONE_FOUND)
     if listing.cover and not (dest / "cover.jpg").is_file():
         try:
-            with podcast._client(timeout=60.0) as client:
-                ingest._stream_download(client, listing.cover, dest / "cover.jpg")
+            with podcast.http_client(timeout=60.0) as client:
+                ingest.stream_download(client, listing.cover, dest / "cover.jpg")
         except httpx.HTTPError:
             pass
 

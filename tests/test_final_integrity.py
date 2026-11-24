@@ -837,7 +837,7 @@ def test_librivox_network_failure_resumes_hidden_stage_and_publishes_one_collect
             raise RuntimeError("network stopped")
         target.write_bytes(url.encode("utf-8"))
 
-    monkeypatch.setattr(ingest, "_stream_download", interrupted_download)
+    monkeypatch.setattr(ingest, "stream_download", interrupted_download)
     monkeypatch.setattr(forge.audio, "duration_seconds", lambda path: 60)
 
     with pytest.raises(RuntimeError, match="network stopped"):

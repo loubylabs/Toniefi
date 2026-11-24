@@ -24,6 +24,7 @@ work that is still running.
 
 LIBRIVOX_API = "https://librivox.org/api/feed/audiobooks/"
 USER_AGENT = "toniefi/1.0 (self-hosted personal library tool)"
+YT_DLP_MISSING = "yt-dlp is not installed in this container."
 
 
 def _noop(*_: Any, **__: Any) -> None:
@@ -130,7 +131,7 @@ def import_librivox(
                         f"Downloading {position}/{total}: {label}",
                         audio.step_percent(position - 1, total),
                     )
-                    _stream_download(client, section["listen_url"], target)
+                    stream_download(client, section["listen_url"], target)
 
         # LibriVox section titles are already clean; keep them as the track titles.
         library.rescan_collection_stage(stage_id)
@@ -147,7 +148,7 @@ def import_librivox(
         return library.complete_collection_stage(stage_id)
 
 
-def _stream_download(client: httpx.Client, url: str, dest: Path) -> None:
+def stream_download(client: httpx.Client, url: str, dest: Path) -> None:
     tmp = dest.with_suffix(dest.suffix + ".part")
     with client.stream("GET", url) as resp:
         resp.raise_for_status()
@@ -241,7 +242,7 @@ def playlist_preview(url: str) -> dict[str, Any]:
     `--playlist-items` counts when the download runs.
     """
     if not shutil.which("yt-dlp"):
-        raise RuntimeError("yt-dlp is not installed in this container.")
+        raise RuntimeError(YT_DLP_MISSING)
     cmd = [
         "yt-dlp",
         "--flat-playlist", "--dump-single-json",
@@ -300,7 +301,7 @@ def import_url(
     if published:
         return published
     if not shutil.which("yt-dlp"):
-        raise RuntimeError("yt-dlp is not installed in this container.")
+        raise RuntimeError(YT_DLP_MISSING)
 
     config.ensure_dirs()
     with tempfile.TemporaryDirectory(dir=config.WORK_DIR) as tmpdir:
