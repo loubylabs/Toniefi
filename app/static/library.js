@@ -179,8 +179,10 @@ function stageLabel(stage) {
   return stage === "forged" ? "Ready to send" : "Needs Forge";
 }
 
-// The manifest's `source` names the importer ("url", "podcast", "librivox",
-// "upload") and `url` holds the address it read. The row shows what kind of
+const SPOTIFY_MUSIC_NOUNS = { playlist: "playlist", album: "album", track: "song" };
+
+// The manifest's `source` names the importer ("url", "podcast", "music",
+// "librivox", "upload") and `url` holds the address it read. The row shows what kind of
 // thing this is; the full address stays in the row's title attribute.
 export function sourceLabel(collection) {
   const kind = collection?.source;
@@ -198,6 +200,10 @@ export function sourceLabel(collection) {
     return parsed.searchParams.has("list") || parsed.pathname.startsWith("/playlist")
       ? "YouTube playlist"
       : "YouTube video";
+  }
+  if (kind === "music" && onHost("spotify.com")) {
+    const noun = SPOTIFY_MUSIC_NOUNS[parsed.pathname.match(/\/(playlist|album|track)\//)?.[1]];
+    if (noun) return `Spotify ${noun}`;
   }
   if (onHost("spotify.com")) return "Spotify episode";
   if (onHost("podcasts.apple.com")) return "Apple Podcasts";

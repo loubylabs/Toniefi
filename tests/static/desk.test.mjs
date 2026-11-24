@@ -13,6 +13,7 @@ import {
   forgeOption,
   forgeProfileStatus,
   moveSourceEntries,
+  looksLikeMusic,
   looksLikePlaylist,
   looksLikePodcast,
   parseSourceLines,
@@ -1019,6 +1020,62 @@ test("a podcast row with every episode unticked asks for an episode", () => {
 
   assert.equal(parsed.valid, false);
   assert.equal(parsed.rows[0].error, "Pick at least one episode from this podcast, or remove the row.");
+});
+
+test("Spotify playlist, album and song links are music links, share links included", () => {
+  assert.equal(looksLikeMusic("https://open.spotify.com/playlist/37i9dQZF1DX"), true);
+  assert.equal(looksLikeMusic("https://open.spotify.com/playlist/37i9dQZF1DX?si=abc123def"), true);
+  assert.equal(looksLikeMusic("https://open.spotify.com/album/4aBcDeFg"), true);
+  assert.equal(looksLikeMusic("https://open.spotify.com/track/1a2b3c?si=zz&utm_source=copy-link"), true);
+  assert.equal(looksLikeMusic("https://open.spotify.com/intl-de/album/4aBcDeFg"), true);
+  assert.equal(looksLikeMusic("https://open.spotify.com/embed/playlist/37i9dQZF1DX"), true);
+  assert.equal(looksLikeMusic("https://open.spotify.com/intl-fr/embed/track/1a2b3c"), true);
+  assert.equal(looksLikeMusic("https://open.spotify.com/show/4aBcDeFg"), false);
+  assert.equal(looksLikeMusic("https://open.spotify.com/episode/7xYzWv?si=abc"), false);
+  assert.equal(looksLikeMusic("https://open.spotify.com/artist/0abc"), false);
+  assert.equal(looksLikeMusic("https://example.test/playlist/abc"), false);
+  assert.equal(looksLikeMusic("not a url"), false);
+  assert.equal(looksLikePodcast("https://open.spotify.com/playlist/37i9dQZF1DX"), false);
+});
+
+test("the pick label counts songs for a music link", () => {
+  assert.equal(playlistPickLabel({ kind: "music" }), "Pick songs");
+  assert.equal(playlistPickLabel({ total: 12, picked: [], kind: "music" }), "No songs picked");
+  assert.equal(playlistPickLabel({ total: 12, picked: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], kind: "music" }), "All 12 songs");
+  assert.equal(playlistPickLabel({ total: 12, picked: [1, 3, 5], kind: "music" }), "3 of 12 songs");
+});
+
+test("a music row with every song unticked asks for a song", () => {
+  const parsed = parseSourceLines([
+    { value: "https://open.spotify.com/playlist/37i9dQZF1DX", picked: [], kind: "music" },
+  ]);
+
+  assert.equal(parsed.valid, false);
+  assert.equal(parsed.rows[0].error, "Pick at least one song from this list, or remove the row.");
+});
+
+test("prepare payload sends a music row's track ids, and null until it is opened", () => {
+  const payload = buildPreparePayload([
+    {
+      value: "https://open.spotify.com/playlist/37i9dQZF1DX?si=abc",
+      picked: [3, 1],
+      kind: "music",
+      playlist: {
+        kind: "music",
+        entries: [
+          { index: 1, id: "spotify:track:a", title: "Baby Beluga - Raffi", available: true },
+          { index: 2, id: "spotify:track:b", title: "Wheels on the Bus - Raffi", available: true },
+          { index: 3, id: "spotify:track:c", title: "Down by the Bay - Raffi", available: true },
+        ],
+      },
+    },
+    "https://open.spotify.com/album/4aBcDeFg?si=xyz",
+  ]);
+
+  assert.deepEqual(payload.sources, [
+    { url: "https://open.spotify.com/playlist/37i9dQZF1DX?si=abc", track_ids: ["spotify:track:a", "spotify:track:c"] },
+    { url: "https://open.spotify.com/album/4aBcDeFg?si=xyz", track_ids: null },
+  ]);
 });
 
 

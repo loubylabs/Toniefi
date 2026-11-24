@@ -1215,6 +1215,82 @@ test("Desk picker ticks only the episode a podcast preview preselects", async ()
   }
 });
 
+test("Desk picker offers songs for a Spotify playlist, shows the notice and posts track ids", async () => {
+  const dom = installDom();
+  const controller = new AbortController();
+  const refresh = {
+    snapshot: { status: {}, jobs: [], collections: [], stale: [], errors: {} },
+    subscribe: () => () => {},
+    request: async () => refresh.snapshot,
+  };
+  const host = dom.document.createElement("div");
+  host.id = "notifications";
+  dom.document.body.append(host);
+  globalThis.window.setTimeout = () => 0;
+  const preview = {
+    title: "",
+    kind: "music",
+    notice: "Spotify lists only the first 100 songs of a playlist. Songs after that are not shown.",
+    entries: [
+      { index: 1, id: "spotify:track:a", title: "Baby Beluga - Raffi", available: true },
+      { index: 2, id: "spotify:track:b", title: "Wheels on the Bus - Raffi", available: false },
+      { index: 3, id: "spotify:track:c", title: "Down by the Bay - Raffi", available: true },
+    ],
+  };
+
+  const posted = [];
+  const request = async (path, options = {}) => {
+    if (path === "/api/playlist/preview") return preview;
+    if (path === "/api/prepare") posted.push(JSON.parse(options.body));
+    return {};
+  };
+
+  try {
+    createDeskScreen({ request, refresh })({
+      workspace: dom.workspace,
+      navigate() {},
+      signal: controller.signal,
+    });
+    const paste = dom.document.getElementById("source-paste");
+    assert.match(paste.getAttribute("placeholder"), /https:\/\/open\.spotify\.com\/playlist\/\.\.\./);
+    paste.value = "https://open.spotify.com/playlist/37i9dQZF1DX?si=abc123";
+    await buttonWithText(dom.workspace, "Add to tray").click();
+    await flush();
+    await flush();
+    await buttonWithText(dom.workspace, "Pick songs").click();
+    await flush();
+
+    const list = dom.workspace.querySelector(".playlist-picker-list");
+    assert.equal(list.getAttribute("aria-label"), "Songs in this list");
+    assert.deepEqual(list.querySelectorAll("input").map((box) => box.checked), [true, false, true]);
+    assert.ok(buttonWithText(dom.workspace, "2 of 3 songs"));
+    assert.match(dom.workspace.querySelector(".playlist-picker-title").textContent, /^Spotify3 songs/);
+    const notice = host.querySelector(".notification");
+    assert.equal(notice.getAttribute("data-kind"), "info");
+    assert.match(notice.textContent, /first 100 songs/);
+
+    await dom.workspace.querySelector(".source-intake-form").dispatchEvent({ type: "submit" });
+    await flush();
+
+    assert.deepEqual(posted[0].sources, [
+      { url: "https://open.spotify.com/playlist/37i9dQZF1DX?si=abc123", track_ids: ["spotify:track:a", "spotify:track:c"] },
+    ]);
+  } finally {
+    controller.abort();
+    dom.restore();
+  }
+});
+
+test("sourceLabel names a Spotify music collection by what the link points at", () => {
+  const label = (url) => sourceLabel({ source: "music", url });
+  assert.equal(label("https://open.spotify.com/playlist/37i9dQZF1DX?si=abc"), "Spotify playlist");
+  assert.equal(label("https://open.spotify.com/album/4aBcDeFg"), "Spotify album");
+  assert.equal(label("https://open.spotify.com/track/1a2b3c"), "Spotify song");
+  assert.equal(label("https://open.spotify.com/intl-de/album/4aBcDeFg"), "Spotify album");
+  assert.equal(label("https://open.spotify.com/embed/playlist/37i9dQZF1DX"), "Spotify playlist");
+  assert.equal(sourceLabel({ source: "podcast", url: "https://open.spotify.com/show/4aBcDeFg" }), "Spotify episode");
+});
+
 test("sourceLabel names the kind of source and never prints the raw address", () => {
   assert.equal(sourceLabel({ source: "url", url: "https://www.youtube.com/playlist?list=PL1" }), "YouTube playlist");
   assert.equal(sourceLabel({ source: "url", url: "https://www.youtube.com/watch?v=abc&list=PL1" }), "YouTube playlist");

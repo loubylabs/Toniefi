@@ -70,7 +70,7 @@ Your stories are saved in the `library` folder inside `toniefi`. Settings and jo
 
 ![The Library with two stories ticked and a Creative Tonie chosen, ready to send](docs/screenshots/02-library.png)
 
-You can also paste podcast links and search LibriVox (free public-domain audiobooks). The
+You can also paste podcast and Spotify music links and search LibriVox (free public-domain audiobooks). The
 [user guide](docs/operations/user-guide.md) covers both. **Creative Tonies** lets you tidy what is
 already on a Tonie. **Activity** shows every job and lets you retry one that failed.
 

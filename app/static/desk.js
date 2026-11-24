@@ -37,19 +37,27 @@ export const DEFAULT_FORGE_OPTIONS = Object.freeze({
 // No pick and a pick of nothing are different answers: the first leaves the
 // link to speak for itself, the second is a contradiction the intake refuses.
 // `kind` is "podcast" once a preview said so, which is how a raw feed URL
-// reaches the podcast import. `entries` is that preview's list, which turns a
-// podcast's picked positions into the episode ids the server picks by.
+// reaches the podcast import. A Spotify music link is known by its shape, so
+// it is "music" before any preview. `entries` is that preview's list, which
+// turns a picked position into the episode or song id the server picks by.
 function sourceRecords(lines) {
   const items = Array.isArray(lines) ? lines : String(lines ?? "").split(/\r?\n/);
   return items
-    .map((item) => (item && typeof item === "object")
-      ? {
-        value: String(item.value ?? "").trim(),
-        picked: Array.isArray(item.picked) ? item.picked : null,
-        kind: item.kind === "podcast" ? "podcast" : null,
-        entries: Array.isArray(item.playlist?.entries) ? item.playlist.entries : [],
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        const value = String(item ?? "").trim();
+        return { value, picked: null, kind: looksLikeMusic(value) ? "music" : null, entries: [] };
       }
-      : { value: String(item ?? "").trim(), picked: null, kind: null, entries: [] })
+      const value = String(item.value ?? "").trim();
+      return {
+        value,
+        picked: Array.isArray(item.picked) ? item.picked : null,
+        kind: item.kind === "podcast" || item.kind === "music"
+          ? item.kind
+          : looksLikeMusic(value) ? "music" : null,
+        entries: Array.isArray(item.playlist?.entries) ? item.playlist.entries : [],
+      };
+    })
     .filter((record) => record.value);
 }
 
@@ -88,6 +96,55 @@ export function looksLikePodcast(value) {
   }
 }
 
+const SPOTIFY_MUSIC_PATH = /^\/(?:intl-[a-z-]+\/)?(?:embed\/)?(?:playlist|album|track)\/[A-Za-z0-9]+\/?$/;
+
+// A Spotify playlist, album or song. The path alone decides, so a share link's
+// `?si=...` query makes no difference. Artist, show and episode links are not
+// music here.
+export function looksLikeMusic(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && url.hostname.toLowerCase() === "open.spotify.com"
+      && SPOTIFY_MUSIC_PATH.test(url.pathname);
+  } catch (_error) {
+    return false;
+  }
+}
+
+// What the picker calls a row's entries, by the kind of link behind it. A row
+// with no kind is a video playlist.
+const PICK_NOUNS = {
+  video: {
+    singular: "video",
+    plural: "videos",
+    list: "Videos in this playlist",
+    fallbackTitle: "Playlist",
+    reading: "Reading playlist",
+    emptyPick: "Pick at least one video from this playlist, or remove the row.",
+  },
+  podcast: {
+    singular: "episode",
+    plural: "episodes",
+    list: "Episodes in this podcast",
+    fallbackTitle: "Podcast",
+    reading: "Reading podcast",
+    emptyPick: "Pick at least one episode from this podcast, or remove the row.",
+  },
+  music: {
+    singular: "song",
+    plural: "songs",
+    list: "Songs in this list",
+    fallbackTitle: "Spotify",
+    reading: "Reading Spotify",
+    emptyPick: "Pick at least one song from this list, or remove the row.",
+  },
+};
+
+function pickNouns(kind) {
+  return PICK_NOUNS[kind] || PICK_NOUNS.video;
+}
+
 // A podcast preview names what to tick: every episode for a show, or the one
 // a Spotify episode link pointed at. Anything else starts with every
 // available entry ticked.
@@ -97,7 +154,7 @@ export function previewPicks(preview = {}) {
 }
 
 export function playlistPickLabel({ total = 0, picked = null, kind = null } = {}) {
-  const noun = kind === "podcast" ? "episodes" : "videos";
+  const noun = pickNouns(kind).plural;
   if (!total || !picked) return `Pick ${noun}`;
   if (!picked.length) return `No ${noun} picked`;
   if (picked.length >= total) return `All ${total} ${noun}`;
@@ -130,12 +187,7 @@ export function parseSourceLines(lines) {
       return { value, error: "Only 50 unique source URLs can be prepared at once." };
     }
     if (picked && !picked.length) {
-      return {
-        value,
-        error: kind === "podcast"
-          ? "Pick at least one episode from this podcast, or remove the row."
-          : "Pick at least one video from this playlist, or remove the row.",
-      };
+      return { value, error: pickNouns(kind).emptyPick };
     }
     return { value, error: "" };
   });
@@ -166,9 +218,12 @@ export function buildPreparePayload(lines, options = {}) {
     sources: parsed.rows.map((row, index) => {
       const { picked, kind, entries } = records[index];
       const numbers = picked ? [...picked].sort((first, second) => first - second) : null;
-      if (kind !== "podcast") return { url: row.value, playlist_items: numbers };
-      // A new episode shifts every position, so a podcast pick names episodes.
+      if (kind !== "podcast" && kind !== "music") return { url: row.value, playlist_items: numbers };
+      // A new episode or song shifts every position, so these picks name ids.
       const ids = new Map(entries.map((entry) => [entry.index, entry.id]));
+      if (kind === "music") {
+        return { url: row.value, track_ids: numbers ? numbers.map((number) => ids.get(number)) : null };
+      }
       return {
         url: row.value,
         episode_ids: numbers ? numbers.map((number) => ids.get(number)) : null,
@@ -1151,7 +1206,7 @@ export function createDeskScreen({
     const paste = element("textarea", {
       id: "source-paste",
       rows: "4",
-      placeholder: "https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/playlist?list=...\nhttps://open.spotify.com/show/...",
+      placeholder: "https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/playlist?list=...\nhttps://open.spotify.com/show/...\nhttps://open.spotify.com/playlist/...",
       spellcheck: "false",
       autocapitalize: "off",
       autocomplete: "off",
@@ -1196,11 +1251,10 @@ export function createDeskScreen({
         if (live) live.open = false;
         renderSources({ focusKey: `${row.id}-pick` });
       });
-      const podcast = row.playlist.kind === "podcast";
-      const noun = podcast ? "episode" : "video";
+      const nouns = pickNouns(row.playlist.kind);
       const heading = element("p", { className: "playlist-picker-title" }, [
-        element("strong", { text: row.playlist.title || (podcast ? "Podcast" : "Playlist") }),
-        element("span", { text: total ? `${total} ${total === 1 ? noun : `${noun}s`}` : `No ${noun}s` }),
+        element("strong", { text: row.playlist.title || nouns.fallbackTitle }),
+        element("span", { text: total ? `${total} ${total === 1 ? nouns.singular : nouns.plural}` : `No ${nouns.plural}` }),
       ]);
       if (!total) {
         heading.append(close);
@@ -1209,7 +1263,7 @@ export function createDeskScreen({
           element("p", { className: "playlist-picker-empty", text: "That link is a single video, not a playlist." }),
         ]);
       }
-      const list = element("ul", { className: "playlist-picker-list", "aria-label": podcast ? "Episodes in this podcast" : "Videos in this playlist" });
+      const list = element("ul", { className: "playlist-picker-list", "aria-label": nouns.list });
       for (const item of row.playlist.entries) {
         const box = element("input", {
           type: "checkbox",
@@ -1319,7 +1373,7 @@ export function createDeskScreen({
       const controls = element("span", { className: "source-row-controls" }, [moveUp, moveDown, remove]);
       const field = element("div", { className: "source-row-field" }, [input]);
       if (row.error) field.append(element("span", { id: errorId, className: "inline-error", text: row.error }));
-      if (!row.error && (looksLikePlaylist(row.value) || looksLikePodcast(row.value))) field.append(pickControl(row));
+      if (!row.error && (looksLikePlaylist(row.value) || looksLikePodcast(row.value) || looksLikeMusic(row.value))) field.append(pickControl(row));
       return element("li", { className: "source-row", "data-invalid": Boolean(row.error) }, [
         iconNode("link", "source-row-icon"),
         field,
@@ -1328,7 +1382,8 @@ export function createDeskScreen({
     }
 
     function pickControl(row) {
-      const kind = row.kind || (looksLikePodcast(row.value) ? "podcast" : null);
+      const kind = row.kind
+        || (looksLikeMusic(row.value) ? "music" : looksLikePodcast(row.value) ? "podcast" : null);
       const label = element("span", {
         text: playlistPickLabel({ total: row.playlist?.entries.length || 0, picked: row.picked, kind }),
       });
@@ -1349,7 +1404,7 @@ export function createDeskScreen({
           return;
         }
         button.disabled = true;
-        label.textContent = kind === "podcast" ? "Reading podcast" : "Reading playlist";
+        label.textContent = pickNouns(kind).reading;
         try {
           const preview = await request("/api/playlist/preview", {
             method: "POST",
@@ -1358,9 +1413,10 @@ export function createDeskScreen({
           if (signal.aborted) return;
           for (const entry of entries) entry.open = false;
           live.playlist = preview;
-          live.kind = preview.kind === "podcast" ? "podcast" : null;
+          live.kind = preview.kind === "podcast" || preview.kind === "music" ? preview.kind : null;
           live.picked = previewPicks(preview);
           live.open = true;
+          if (preview.notice) notify(preview.notice);
           renderSources({ focusKey: `${row.id}-pick` });
         } catch (error) {
           if (signal.aborted) return;

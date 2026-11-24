@@ -23,6 +23,15 @@ Paste a Spotify show or episode link, an Apple Podcasts link, or the show's RSS 
 from the publisher's own feed, so only shows with a public feed work. Spotify-only shows cannot be
 imported.
 
+### Music
+
+Paste a Spotify playlist, album or song link. Press **Pick songs** and tick the ones you want. The
+playlist must be public, because TonieFi reads it without logging in to Spotify. A playlist stops
+at its first 100 songs. The audio does not come from Spotify. TonieFi searches YouTube for each
+song and keeps a result only when its length is close to the song's, so it can be a different
+recording from the one you know. A song with no close match is skipped and listed on the
+collection's page. Use this for music you have the right to copy.
+
 ### Remove ads
 
 Podcast hosts stitch ads into each download. A podcast collection's page has a **Remove ads**

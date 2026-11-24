@@ -20,7 +20,7 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 
 ## Operating Context
 
-- A user commonly starts with YouTube video or playlist links, podcast links (Spotify, Apple Podcasts, or an RSS feed, for shows with a public feed), LibriVox books, or local audio files.
+- A user commonly starts with YouTube video or playlist links, podcast links (Spotify, Apple Podcasts, or an RSS feed, for shows with a public feed), Spotify playlist, album or song links, LibriVox books, or local audio files.
 - Each source becomes its own independent collection. A batch of five audiobook links produces five collections.
 - URL imports run through extraction and the default Forge cleanup automatically, then appear in the Library, where the operator selects what to send.
 - Long-running extraction, Forge, and transfer work runs in background jobs and can survive the browser closing.
@@ -33,6 +33,7 @@ TonieFi combines a self-hosted, inspectable audio library with an end-to-end pre
 - A Creative Tonie has a 90-minute capacity, with configurable headroom used to prevent rounding-related rejection.
 - TonieFi preserves source order when packing chapters across multiple Tonies.
 - Default Forge processing normalizes perceived loudness to −16 LUFS with a −1.5 dBTP ceiling, cleans source-title noise, and splits oversized tracks. This is the strongest safe loudness target currently supported without clipping.
+- Spotify music links need no Spotify account. TonieFi reads the song list of a public playlist, album or song, up to 100 songs for a playlist. The audio does not come from Spotify: each song is matched on YouTube by length and can be a different recording from the one on Spotify. Songs with no close match are skipped and listed on the collection. This is for music the user has the right to copy.
 - Each collection progresses and fails independently so one bad source does not block the rest of a batch.
 - Nothing is sent to a Creative Tonie without explicit user selection and confirmation.
 - A Creative Tonie can be renamed from TonieFi. The rename writes only the name through the Tonie Cloud, so it changes nothing about the Tonie's chapters and triggers no re-transcoding, and it is visible in the myTonies app as well.
