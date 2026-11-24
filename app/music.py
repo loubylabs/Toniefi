@@ -8,10 +8,12 @@ live set, a cover or a lyric video of a different length.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -36,6 +38,9 @@ YT_DLP_MISSING = "yt-dlp is not installed in this container."
 _PREFIX = r"^/(?:intl-[a-z-]+/)?(?:embed/)?"
 _MUSIC = re.compile(_PREFIX + r"(playlist|album|track)/([A-Za-z0-9]+)/?$")
 _ARTIST = re.compile(_PREFIX + r"artist/[A-Za-z0-9]+/?$")
+# A stored song is `<position>-<key>.mp3`; see _file_keys.
+_STORED_NAME = re.compile(r"^\d{3,}-(.+)\.mp3$")
+PARTIAL_SUFFIX = ".part"
 
 
 @dataclass(frozen=True)
@@ -247,14 +252,16 @@ def _noop(*_: Any, **__: Any) -> None:
     return None
 
 
-def _download(video_id: str, dest: Path) -> str | None:
-    """Download one video's audio to `dest`. Returns None on success, or why it failed.
+def _download(video_id: str, target: Path) -> str | None:
+    """Download one video's audio to `target`. Returns None on success, or why it failed.
 
-    yt-dlp writes into a scratch directory under the work dir, and only a
-    finished mp3 is moved into the stage, so a half-written file never sits
-    where a resumed import would take it for a stored song. yt-dlp can exit
-    non-zero after it has written good audio, so the mp3 is the verdict, not
-    the exit code.
+    yt-dlp writes into a scratch directory under the work dir. The work dir
+    and the library are separate mounts, so moving the finished mp3 into the
+    stage is a copy that a killed worker can cut short. The copy therefore
+    lands under `<name>.part` and is renamed onto its final name inside the
+    stage, which is atomic, so a resumed import never takes half a song for a
+    stored one. yt-dlp can exit non-zero after it has written good audio, so
+    the mp3 is the verdict, not the exit code.
     """
     config.ensure_dirs()
     with tempfile.TemporaryDirectory(dir=config.WORK_DIR) as tmpdir:
@@ -275,9 +282,37 @@ def _download(video_id: str, dest: Path) -> str | None:
             return f"the download took longer than {DOWNLOAD_TIMEOUT // 60} minutes."
         produced = scratch / "song.mp3"
         if produced.is_file():
-            shutil.move(produced, dest)
+            partial = target.with_name(target.name + PARTIAL_SUFFIX)
+            shutil.move(produced, partial)
+            os.replace(partial, target)
             return None
         return ingest.error_summary(proc.stderr) or "yt-dlp produced no audio."
+
+
+def _file_keys(songs: list[Song]) -> list[str]:
+    """Each song's file name without its position prefix: the slug of its label.
+
+    The key, not the position, is what a retried import recognizes a stored
+    song by, since a song added to the list shifts every position after it.
+    Two different songs can share a label, such as two recordings of one
+    nursery rhyme by the same choir. Every song in such a group also carries
+    the slug of its Spotify id, so the two never collapse into one file and
+    each keeps its own name on a retry.
+    """
+    slugs = [audio.slugify(song.label) for song in songs]
+    counts = Counter(slugs)
+    return [slug if counts[slug] == 1 else f"{slug}-{audio.slugify(song.id.rsplit(':', 1)[-1])}"
+            for slug, song in zip(slugs, songs)]
+
+
+def _stored_songs(dest: Path) -> dict[str, Path]:
+    """The songs an earlier run stored in this stage, by key. A `.part` file is never one."""
+    found: dict[str, Path] = {}
+    for path in sorted(dest.glob("*.mp3")):
+        match = _STORED_NAME.match(path.name)
+        if match and path.is_file():
+            found.setdefault(match.group(1), path)
+    return found
 
 
 def import_music(
@@ -323,38 +358,56 @@ def import_music(
             "uploader": listing.owner,
             "skipped": [],
         })
-        dest = stage.path
+    dest = stage.path
 
-        stored: dict[str, Song] = {}
-        total = len(picked)
-        for position, song in enumerate(picked, start=1):
-            # The position prefix keeps names distinct and valid even when the
-            # label slugs to nothing, since slugify falls back to "untitled".
-            name = f"{position:03d}-{audio.slugify(song.label)}.mp3"
-            # A file already here was moved in whole by an earlier run, so a
-            # retried job keeps it. A song that run skipped left no file, so it
-            # is searched again.
-            if not (dest / name).is_file():
-                progress(f"Finding {position}/{total}: {song.title}", audio.step_percent(position - 1, total))
-                video_id = find_video(song)
-                if video_id is None:
-                    skipped.append(f"{song.label}: no close match on YouTube.")
-                    continue
-                failure = _download(video_id, dest / name)
-                if failure:
-                    skipped.append(f"{song.label}: {failure}")
-                    continue
-            stored[name] = song
-        if not stored:
-            raise RuntimeError(NONE_FOUND)
-        if listing.cover and not (dest / "cover.jpg").is_file():
-            try:
-                with podcast._client(timeout=60.0) as client:
-                    ingest._stream_download(client, listing.cover, dest / "cover.jpg")
-            except httpx.HTTPError:
-                pass
+    # The searches and downloads run without the lease. It is the one lock
+    # behind the Library listing, the collection page and the other worker, and
+    # a long list keeps the network busy for many minutes. The stage needs no
+    # lock meanwhile: it is a hidden directory that only this job's identity
+    # creates, resumes or discards, nothing reads its audio before the rescan
+    # below, and every manifest write happens under the lease at the end.
+    earlier = _stored_songs(dest)
+    stored: dict[str, Song] = {}
+    total = len(picked)
+    for position, (song, key) in enumerate(zip(picked, _file_keys(picked)), start=1):
+        name = f"{position:03d}-{key}.mp3"
+        target = dest / name
+        # A file an earlier run stored is kept, even when a song added to or
+        # removed from the list since then has moved it to a new position. A
+        # song that run skipped left no file, so it is searched again.
+        if not target.is_file() and key in earlier:
+            os.replace(earlier[key], target)
+        if not target.is_file():
+            progress(f"Finding {position}/{total}: {song.title}", audio.step_percent(position - 1, total))
+            video_id = find_video(song)
+            if video_id is None:
+                skipped.append(f"{song.label}: no close match on YouTube.")
+                continue
+            failure = _download(video_id, target)
+            if failure:
+                skipped.append(f"{song.label}: {failure}")
+                continue
+        stored[name] = song
+    if not stored:
+        raise RuntimeError(NONE_FOUND)
+    if listing.cover and not (dest / "cover.jpg").is_file():
+        try:
+            with podcast._client(timeout=60.0) as client:
+                ingest._stream_download(client, listing.cover, dest / "cover.jpg")
+        except httpx.HTTPError:
+            pass
 
+    with library.collection_lease():
+        # The rescan publishes every audio file in the stage. A song an earlier
+        # run stored that this run no longer picks, and the `.part` file of a
+        # worker that died mid-copy, would otherwise reach the Tonie.
+        for path in dest.iterdir():
+            leftover = path.name.endswith(PARTIAL_SUFFIX) or (
+                path.suffix.lower() in audio.AUDIO_EXTENSIONS and path.name not in stored)
+            if leftover and path.is_file():
+                path.unlink()
         library.rescan_collection_stage(stage_id)
+
         # A resumed stage keeps the extras it was created with, so this run's
         # skips are written once the downloads are done.
         def describe(manifest: dict[str, Any]) -> None:

@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -582,9 +584,139 @@ def test_titles_with_nothing_to_slug_still_get_valid_and_distinct_file_names(sta
 
     result = music.import_music(PLAYLIST_URL, stage_id="music-symbols")
 
-    assert names(result) == ["001-untitled.mp3", "002-untitled.mp3"]
+    assert names(result) == ["001-untitled-0001.mp3", "002-untitled-0002.mp3"]
     assert titles(result) == ["♪♪♪", "★ ★"]
-    assert (Path(result["path"]) / "002-untitled.mp3").read_bytes() == b"audio of yt0002"
+    assert (Path(result["path"]) / "002-untitled-0002.mp3").read_bytes() == b"audio of yt0002"
+
+
+def stage_files(stage_id: str) -> list[str]:
+    """What sits in a stage besides its manifest and marker."""
+    return sorted(path.name for path in Path(library.collection_stage(stage_id)["path"]).iterdir()
+                  if not path.name.startswith(".") and path.name != library.MANIFEST)
+
+
+def test_a_retry_after_a_song_was_added_renumbers_stored_songs_instead_of_downloading_them_again(
+    stage_ready, web, youtube,
+):
+    first = [listed(1, "Baby Beluga", "Raffi"), listed(2, "Down by the Bay", "Raffi"),
+             listed(4, "Shake My Sillies Out", "Raffi")]
+    serve_car_songs(web, youtube, first)
+    youtube.crashing.add("yt0004")
+    with pytest.raises(RuntimeError, match="the worker died"):
+        music.import_music(PLAYLIST_URL, stage_id="music-shift")
+
+    serve_car_songs(web, youtube, [listed(5, "Spider on the Floor", "Raffi"), *first])
+    youtube.crashing.clear()
+    youtube.downloads.clear()
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-shift")
+
+    expected = ["001-spider-on-the-floor-raffi.mp3", "002-baby-beluga-raffi.mp3",
+                "003-down-by-the-bay-raffi.mp3", "004-shake-my-sillies-out-raffi.mp3"]
+    assert names(result) == expected
+    assert [name for name in stage_files("music-shift") if name.endswith(".mp3")] == expected
+    assert [command[-1] for command in youtube.downloads] == [
+        "https://www.youtube.com/watch?v=yt0005", "https://www.youtube.com/watch?v=yt0004"]
+    assert (Path(result["path"]) / "002-baby-beluga-raffi.mp3").read_bytes() == b"audio of yt0001"
+    assert titles(result)[1:3] == ["Baby Beluga - Raffi", "Down by the Bay - Raffi"]
+
+
+def test_a_stored_song_that_is_no_longer_picked_is_removed_before_the_stage_is_published(
+    stage_ready, web, youtube,
+):
+    serve_car_songs(web, youtube)
+    youtube.crashing.add("yt0004")
+    with pytest.raises(RuntimeError, match="the worker died"):
+        music.import_music(PLAYLIST_URL, stage_id="music-stale")
+    assert "002-down-by-the-bay-raffi.mp3" in stage_files("music-stale")
+
+    serve_car_songs(web, youtube, [listed(1, "Baby Beluga", "Raffi"), listed(4, "Shake My Sillies Out", "Raffi")])
+    youtube.crashing.clear()
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-stale")
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3", "002-shake-my-sillies-out-raffi.mp3"]
+    assert not any("down-by-the-bay" in name for name in stage_files("music-stale"))
+
+
+def test_two_different_songs_with_the_same_label_are_both_kept_and_survive_a_retry(stage_ready, web, youtube):
+    twins = [listed(1, "Twinkle Twinkle", "Kids Choir"), listed(2, "Twinkle Twinkle", "Kids Choir"),
+             listed(3, "Baby Beluga", "Raffi")]
+    serve_car_songs(web, youtube, twins)
+    youtube.crashing.add("yt0003")
+    with pytest.raises(RuntimeError, match="the worker died"):
+        music.import_music(PLAYLIST_URL, stage_id="music-twins")
+    youtube.crashing.clear()
+    youtube.downloads.clear()
+
+    result = music.import_music(PLAYLIST_URL, stage_id="music-twins")
+
+    assert names(result) == ["001-twinkle-twinkle-kids-choir-0001.mp3",
+                             "002-twinkle-twinkle-kids-choir-0002.mp3", "003-baby-beluga-raffi.mp3"]
+    assert titles(result)[:2] == ["Twinkle Twinkle - Kids Choir", "Twinkle Twinkle - Kids Choir"]
+    assert [command[-1] for command in youtube.downloads] == ["https://www.youtube.com/watch?v=yt0003"]
+
+
+def test_a_worker_killed_while_moving_a_song_in_leaves_nothing_under_its_final_name(
+    stage_ready, web, youtube, monkeypatch,
+):
+    serve_car_songs(web, youtube)
+    move = music.shutil.move
+
+    def dies_mid_copy(source, target):
+        # Across two mounts a move is a copy, so a kill leaves the first bytes behind.
+        Path(target).write_bytes(b"half a song")
+        raise RuntimeError("the worker died")
+
+    monkeypatch.setattr(music.shutil, "move", dies_mid_copy)
+    with pytest.raises(RuntimeError, match="the worker died"):
+        music.import_music(PLAYLIST_URL, stage_id="music-killed", track_ids=["spotify:track:0001"])
+    assert stage_files("music-killed") == ["001-baby-beluga-raffi.mp3.part"]
+
+    monkeypatch.setattr(music.shutil, "move", move)
+    result = music.import_music(PLAYLIST_URL, stage_id="music-killed", track_ids=["spotify:track:0001"])
+
+    assert names(result) == ["001-baby-beluga-raffi.mp3"]
+    assert (Path(result["path"]) / "001-baby-beluga-raffi.mp3").read_bytes() == b"audio of yt0001"
+    assert stage_files("music-killed") == ["001-baby-beluga-raffi.mp3"]
+    assert len(youtube.downloads) == 2
+
+
+def lease_is_free() -> bool:
+    # The lock is reentrant, so only another thread can tell whether this one holds it.
+    acquired: list[bool] = []
+
+    def probe() -> None:
+        acquired.append(library._manifest_lock.acquire(blocking=False))
+        if acquired[0]:
+            library._manifest_lock.release()
+
+    thread = threading.Thread(target=probe)
+    thread.start()
+    thread.join()
+    return acquired[0]
+
+
+def test_no_search_or_download_runs_while_the_library_lock_is_held(stage_ready, web, youtube, monkeypatch):
+    serve_car_songs(web, youtube)
+    run = music.subprocess.run
+    free: list[bool] = []
+
+    def watched(command, **kwargs):
+        free.append(lease_is_free())
+        return run(command, **kwargs)
+
+    def cover(request):
+        free.append(lease_is_free())
+        return httpx.Response(200, content=b"cover bytes")
+
+    monkeypatch.setattr(music.subprocess, "run", watched)
+    web.routes["img.example.test/640.jpg"] = cover
+
+    music.import_music(PLAYLIST_URL, stage_id="music-unlocked")
+
+    # Three searches, three downloads and the cover.
+    assert free == [True] * 7
 
 
 def test_finding_reports_each_song_with_a_measured_percent(stage_ready, web, youtube):

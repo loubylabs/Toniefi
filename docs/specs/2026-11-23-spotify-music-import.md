@@ -151,7 +151,12 @@ import. `prepare.run` routes a music link to it before the podcast and URL branc
 4. Begin the collection stage with `source="music"` and extras `url`, `uploader` (the owner), and
    `skipped`. The stage is not restarted, so a retried job resumes.
 5. For each picked song, at position `p` from 1:
-   - The file is `<p:03d>-<slug of "song - artists">.mp3`. If it already exists, keep it.
+   - The song's key is the slug of `"song - artists"`. When two picked songs share a key, each of
+     them gets `-<slug of its Spotify id>` appended, so neither is lost and both keep their names
+     on a retry.
+   - The file is `<p:03d>-<key>.mp3`. If it already exists, keep it. If an earlier run stored the
+     same key under another position, because a song was added to or removed from the list since,
+     rename that file to the new position instead of downloading it again.
    - Report `Finding p/n: <song>` with a measured percent.
    - Find a YouTube video (below). No match adds `"<song> - <artists>: no close match on YouTube."`
      to `skipped`.
@@ -160,8 +165,15 @@ import. `prepare.run` routes a music link to it before the podcast and URL branc
 6. Fail with the step-3 message if no song was stored.
 7. Download the cover to `cover.jpg` when there is one and the file is absent. A failure is
    ignored.
-8. Rescan the stage, write `skipped`, set each track's title to `"<song> - <artists>"`, probe
+8. Delete every audio file in the stage that is not a song stored by this run, and every `.part`
+   file. A retry after the list changed would otherwise publish a song nobody picks any more.
+9. Rescan the stage, write `skipped`, set each track's title to `"<song> - <artists>"`, probe
    durations, and complete the stage, the way the podcast import does.
+
+The library lease (`library.collection_lease()`) is held only for step 4 and for steps 8 and 9.
+It is the one lock behind the Library listing, the collection page and the other worker, so no
+search or download runs under it. The stage needs no lock in between: only this job's identity
+creates, resumes or discards it, and nothing reads its audio before step 9.
 
 The default Forge sequence then runs as for any URL source.
 
@@ -192,8 +204,11 @@ yt-dlp --no-playlist -x --audio-format mp3 --audio-quality 0 --no-progress --no-
        <player-client args> -o <scratch>/song.%(ext)s https://www.youtube.com/watch?v=<id>
 ```
 
-The download lands in a temporary directory under `config.WORK_DIR` and is moved into the stage
-under its final name, so a half-written file never sits in the stage. The timeout is 30 minutes.
+The download lands in a temporary directory under `config.WORK_DIR`. The work dir and the library
+are separate mounts, so the move into the stage is a copy: it lands as `<final name>.part` and is
+then renamed with `os.replace` onto its final name, which is atomic inside the stage. A killed
+worker leaves at most a `.part` file, which is never taken for a stored song and is deleted in
+step 8. The timeout is 30 minutes.
 Success is judged by the mp3 existing, not by the exit code. The player-client arguments and the
 error summary come from `ingest`, made public there rather than copied.
 
@@ -242,7 +257,10 @@ Python (`tests/test_music.py`):
   Spotify length takes the first; entries without duration or id; failed search.
 - Import: picks by id in list order; unpicked takes available songs; a picked id that left the
   list; one unmatched and one failed song are skipped and named while the rest land; nothing
-  stored fails; an existing file is not downloaded again; titles and `source` in the manifest.
+  stored fails; an existing file is not downloaded again; titles and `source` in the manifest; a
+  retry after a song was added renames stored songs instead of downloading them again; a stored
+  song no longer picked is deleted; two songs with one label both land; a killed move leaves only
+  a `.part` file, which the retry deletes; no search or download runs while the lease is held.
 - Routes: preview answers for a music link; artist is 400; unreadable is 502; prepare carries
   `track_ids` into the job; each refused combination; `prepare.run` routes a music link to the
   music import.
