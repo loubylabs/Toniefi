@@ -163,7 +163,7 @@ def _strip_html(text: str) -> str:
 
 # --------------------------------------------------------------- URL ingest
 
-def _player_client_args() -> list[str]:
+def player_client_args() -> list[str]:
     """Ask yt-dlp for a working YouTube client. See config.YTDLP_PLAYER_CLIENTS."""
     if not config.YTDLP_PLAYER_CLIENTS:
         return []
@@ -220,7 +220,7 @@ def _error_lines(stderr: str) -> list[str]:
     return lines
 
 
-def _error_summary(stderr: str, limit: int = 3) -> str:
+def error_summary(stderr: str, limit: int = 3) -> str:
     """One readable line for the operator, however many entries went wrong."""
     lines = _error_lines(stderr) or [
         line.strip() for line in (stderr or "").strip().splitlines() if line.strip()
@@ -246,7 +246,7 @@ def playlist_preview(url: str) -> dict[str, Any]:
         "yt-dlp",
         "--flat-playlist", "--dump-single-json",
         "--no-warnings", "--ignore-no-formats-error",
-        *_player_client_args(),
+        *player_client_args(),
         url,
     ]
     proc = subprocess.run(
@@ -262,7 +262,7 @@ def playlist_preview(url: str) -> dict[str, Any]:
     if not (info.get("entries") or info.get("id") or info.get("title")):
         raise RuntimeError(
             "yt-dlp could not read that playlist: "
-            f"{_error_summary(proc.stderr) or 'unknown error'}")
+            f"{error_summary(proc.stderr) or 'unknown error'}")
     return {
         "title": info.get("title") or "",
         "entries": [_preview_entry(index, entry)
@@ -334,7 +334,7 @@ def import_url(
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
             "--no-progress", "--newline", "--no-warnings",
-            *_player_client_args(),
+            *player_client_args(),
             "-o", str(tmp / "%(playlist_index|0)03d-%(title).70s.%(ext)s"),
         ]
         if use_chapters:
@@ -354,7 +354,7 @@ def import_url(
         produced = _order_produced_audio(tmp, chapters_dir)
         skipped = _error_lines(proc.stderr)
         if not produced:
-            summary = _error_summary(proc.stderr)
+            summary = error_summary(proc.stderr)
             raise RuntimeError(f"yt-dlp failed: {summary}" if summary
                                else "yt-dlp produced no audio files.")
         if skipped:

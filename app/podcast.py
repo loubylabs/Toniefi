@@ -23,7 +23,6 @@ ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
 ITUNES_SEARCH = "https://itunes.apple.com/search"
 SPOTIFY_EMBED = "https://open.spotify.com/embed"
 
-MUSIC_REFUSAL = "TonieFi imports podcasts from Spotify, not music."
 SPOTIFY_UNREADABLE = (
     "Spotify changed its page, so TonieFi could not read that link. "
     "Try the show's Apple Podcasts link instead."
@@ -47,7 +46,6 @@ _SPOTIFY_HOST = "open.spotify.com"
 _APPLE_HOST = "podcasts.apple.com"
 # Share links often carry a locale segment, as in /intl-de/show/<id>.
 _SPOTIFY_PODCAST = re.compile(r"^/(?:intl-[a-z-]+/)?(?:embed/)?(show|episode)/([A-Za-z0-9]+)/?$")
-_SPOTIFY_MUSIC = re.compile(r"^/(?:intl-[a-z-]+/)?(?:embed/)?(?:track|album|playlist|artist)/")
 _APPLE_PODCAST = re.compile(r"^/[a-z]{2}/podcast/(?:[^/]+/)?id(\d+)/?$")
 _NEXT_DATA = re.compile(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
 
@@ -119,11 +117,6 @@ def is_podcast_url(url: str) -> bool:
     return _spotify_podcast(url) is not None or _apple_id(url) is not None
 
 
-def is_spotify_music_url(url: str) -> bool:
-    host, path = _host_and_path(url)
-    return host == _SPOTIFY_HOST and bool(_SPOTIFY_MUSIC.match(path))
-
-
 def normalize(text: str) -> str:
     """Casefold, read & as "and", and keep only letters and digits."""
     return "".join(ch for ch in (text or "").casefold().replace("&", "and") if ch.isalnum())
@@ -155,15 +148,22 @@ def _apple_feed(apple_id: str) -> str:
     return feed_url
 
 
-def _spotify_entity(kind: str, spotify_id: str) -> dict:
+def spotify_entity(kind: str, spotify_id: str, *, unreadable: str = SPOTIFY_UNREADABLE) -> dict:
+    """Read what Spotify's public embed page says about one show, episode, playlist, album or song.
+
+    Podcasts and music both read this page, so there is one fetch and one
+    parse. Each caller passes the wording that suits its own users when the
+    page cannot be read, and checks for the fields its own kind needs: a
+    song has no `subtitle`, so it is not demanded here.
+    """
     resp = _fetch(f"{SPOTIFY_EMBED}/{kind}/{spotify_id}", what="Spotify")
     match = _NEXT_DATA.search(resp.text)
     try:
         entity = json.loads(match.group(1))["props"]["pageProps"]["state"]["data"]["entity"]
     except (AttributeError, KeyError, TypeError, ValueError):
-        raise RuntimeError(SPOTIFY_UNREADABLE) from None
-    if not isinstance(entity, dict) or not entity.get("name") or not entity.get("subtitle"):
-        raise RuntimeError(SPOTIFY_UNREADABLE)
+        raise RuntimeError(unreadable) from None
+    if not isinstance(entity, dict) or not entity.get("name"):
+        raise RuntimeError(unreadable)
     return entity
 
 
@@ -185,15 +185,17 @@ def _search_feed(show: str, publisher: str | None) -> str:
 
 def resolve_feed(url: str) -> Resolved:
     """Turn a pasted link into the feed URL that holds its audio."""
-    if is_spotify_music_url(url):
-        raise RuntimeError(MUSIC_REFUSAL)
     apple_id = _apple_id(url)
     if apple_id:
         return Resolved(_apple_feed(apple_id))
     spotify = _spotify_podcast(url)
     if spotify:
         kind, spotify_id = spotify
-        entity = _spotify_entity(kind, spotify_id)
+        entity = spotify_entity(kind, spotify_id)
+        # Both show and episode pages name a publisher or show in `subtitle`,
+        # and the feed search cannot run without it.
+        if not entity.get("subtitle"):
+            raise RuntimeError(SPOTIFY_UNREADABLE)
         if kind == "show":
             return Resolved(_search_feed(entity["name"], entity["subtitle"]))
         # An episode page names its show but not the publisher.
